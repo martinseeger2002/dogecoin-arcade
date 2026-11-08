@@ -1864,11 +1864,20 @@ function step2(s, d, offer, read, typed) {
                   + `them on a ${coinsOf(f.postage || 0)} ${COIN()} coin; the ${what.name} moves when it arrives. `
                   + "The fees include that coin."));
   } else body.append(row, kv("Network fee", `${read.coinsOf(read.fee)} ${COIN()}`));
+  // Every other cost read from the bytes too (wallet.mainnetCosts), as ArcadeCore's review lists them (2026-11-08): the
+  // arcade's fee and a data output's coins, and the total that leaves. An account's own send only: the node's
+  // wallet builds and signs its own.
+  const costs = !NODE_SIDE && what.kind !== "token20" && what.kind !== "dd" && wallet.mainnetCosts
+    ? wallet.mainnetCosts(offer, read) : null;
+  if (costs && costs.operator) body.append(kv("Arcade's fee", `${coinsOf(costs.operator)} ${COIN()}`));
+  if (costs && costs.data) body.append(kv("Data", `${coinsOf(costs.data)} ${COIN()}`));
   if (read.change && what.kind !== "token20") body.append(kv(what.kind === "coin" ? "Comes back to you" : `${COIN()} back to you`, `${read.coinsOf(read.change)} ${COIN()}`));
+  const extra = costs && (costs.operator || costs.data);
   const total = el("div", "wl-kv total");
   total.append(el("span", "", "Leaves your wallet"), el("span", "", what.kind === "coin"
-    ? `${coinsOf(amount + Number(read.fee || 0))} ${COIN()}`
+    ? `${coinsOf(extra ? costs.total : amount + Number(read.fee || 0))} ${COIN()}`
     : what.kind === "token20" ? `${sayWhat(what, amount)} + about ${coinsOf(fees20)} ${COIN()}`
+    : extra ? `${sayWhat(what, amount)} + ${coinsOf(costs.total)} ${COIN()} in all`
     : `${sayWhat(what, amount)} + ${read.coinsOf(read.fee)} ${COIN()} fee`));
   body.append(total);
   if (mine(offer.to)) body.append(el("div", "wl-warn", "That's your own address. Nothing leaves your wallet but the fee: this splits a coin into two, which selling and answering offers need."));
@@ -2397,6 +2406,9 @@ function dgPageGo(n) {
 //: The chains whose inscriptions the wallet shows (arcade/ord_chains.py): one word for one, its coin, how its coins are
 //: named, and whether one is sent, listed (on which Exchange tab) and swapped (priced first in which coin) from here.
 const ORD = {{ ord_wallet()|tojson }};
+// Listing one for sale waits on this arcade's buyers while the seller is away, so it is offered only where the operator
+// has that on (node_trades; the arcade refuses it otherwise), as ArcadeCore's Assets offers it (2026-11-08).
+const LISTS = {{ 'true' if node_trades() else 'false' }};
 const ORD_WORDS = Object.fromEntries(Object.entries(ORD).map(([net, o]) => [net, o.words]));
 
 // --- The Wallet's Doginals in order, each with its card (2026-11-05, the operator: "they should be ordered by inscription
@@ -2634,7 +2646,7 @@ async function openDgCard(g, wantPrice = false) {
       const send = el("button", "dg-send", "Send"); send.type = "button";
       send.onclick = () => { close(); openSend("", g); };
       acts.append(send);
-      if (can.list) {
+      if (can.list && LISTS) {
         const box = el("span", "dg-pricebox");
         const price = el("input"); price.inputMode = "decimal"; price.placeholder = "Price";
         price.setAttribute("aria-label", `Price in ${C}`);
@@ -2657,7 +2669,7 @@ async function openDgCard(g, wantPrice = false) {
       }
     }
     parts.push(acts);
-    if (!listing && can.list) parts.push(el("p", "wl-note", "List puts it on the NFT Exchange at your price. It stays held until it sells or you unlist it."));
+    if (!listing && can.list && LISTS) parts.push(el("p", "wl-note", "List puts it on the NFT Exchange at your price. It stays held until it sells or you unlist it."));
   }
   body.replaceChildren(...parts);
 }
@@ -2847,7 +2859,7 @@ async function drawDoginals() {
         send.onclick = () => openSend("", g);
         if (sendShort) { send.disabled = true; send.title = `Needs ${C} besides the ${W} for the network fee`; }
         row.append(send);
-        if (can.list) {
+        if (can.list && LISTS) {
           const list = el("button", "wl-piecesend ghost", "List"); list.type = "button";
           list.setAttribute("aria-label", `List ${W} ${g.id}`);
           list.onclick = () => openDgCard(g, true);

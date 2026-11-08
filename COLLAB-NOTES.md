@@ -88,6 +88,55 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-assets` (on `team/core-cohesive` 02808d6d) · ArcadeCore's Assets does what the website Wallet does with tokens, ords and NFTs
+
+SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing", and "if things are
+getting chosen chose the lites version of things". The audit's asset gaps, closed in ArcadeCore. Every read and every
+transaction is the full Wallet's own route; no send is built a second way.
+- **Assets moved to `arcade/lite/templates/_assets.html`** (out of `_wallet.html`). It is a tab whenever there is a wallet:
+  an account's, or the operator's node wallet. Only the ords part waits for the Ord indexes module.
+  - **Arcade tokens** (`/account/tokens`): starred as the Exchange stars their markets (`/account/favorites`, the
+    same keys), with the issuer's Manage (the token's page in the window) and Send.
+  - **DRC-20 / PRC-20** on Dogecoin and Pepecoin main (`/account/token20`): on hand, transferable, on its way and
+    listed, as the full Wallet counts them, and Send.
+  - **Ords**: the full Wallet's view. All, Pictures & pages and Text with counts, the collection, the order (kept under
+    the full Wallet's own key, so both looks agree; newest first until chosen), Go to #number or id, and each one's
+    card (`/account/doginal-card`) with its collection's facts, traits and links. List and Unlist
+    (`/account/doginals/list`, `/list/sign`, `/cancel`) on the card.
+  - **Each chain's ord rules** (`ord_chains.wallet_table`, now in the window's context as `ord_wallet`): no Send or List
+    where the chain says not; listed ones offer Unlist; Send waits while there is too little coin for the fee.
+  - **Stray Doginals** (`/account/doge-stray`): moved home after a review, or the fee filled in on the Send tab first.
+  - **Arcade NFTs by collection** (`/account/nfts/collections`, `/pieces`): search, sort, Show more. Each piece has
+    Send, Sell or Change the price (`wallet.offerListing` / `checkedListing` / `list`, with a claim phrase),
+    Cancel listing (`/account/list/cancel`) and Take the old price off (`/account/nft/sell`, `unlist`).
+  - **Escrows** (`/account/escrows`, `wallet.reclaimEscrow`), and **Inscribe…**: the arcade's own inscriber
+    (`/me/nfts`), in the window.
+  - **The node wallet's** tokens and NFTs (`/node/wallet/tokens`, `/nfts/*`), sent by `/node/wallet/token|nft/send`
+    under a ticket.
+- **Send** (`_wallet.html`) gets its own list beside the Wallet picker: coins, the tokens and DRC-20 held on that wallet,
+  and the ord or NFT picked under Assets.
+  - A token is sent by the amount, checked against what is on hand.
+  - The review checks the offer is that token, that amount and that payee. An account's is checked from the bytes too.
+  - It lists every cost (`wallet.mainnetCosts`), and a mainnet send says it can't be taken back.
+  - A DRC-20 is `wallet.startToken20` then `sendToken20`, its note and three fees listed first.
+- **Everything else that signs is reviewed under Assets first**: listing, unlisting, selling, cancelling, taking a price
+  off, moving strays and taking an escrow back. The review lists every cost read by `wallet.checked`, then one press.
+- **The website brought to ArcadeCore's way:** the Wallet offers List on an ord only while the operator has selling
+  while away on (`node_trades`). The arcade refuses a listing otherwise, and the List button was a dead end.
+  `test_doginal_wallet_browser`'s card test switches it on.
+  The Wallet's send review also lists the arcade's fee and data outputs from the bytes (`wallet.mainnetCosts`). When
+  either is there, "Leaves your wallet" is their total, as ArcadeCore's review has it.
+- **exchange-safety.md:** no rule changes. The ord listing signs SINGLE|ANYONECANPAY exactly as the full Wallet's
+  `dgList` does, after `coins.verifyDoginalAsk`.
+- **Tests:** `tests/test_core_assets_browser.py` (+10, Firefox). It covers tokens (star, Manage, Send, more than held),
+  DRC-20, the ord view and card, an ord's List review, a chain whose ords stay put, NFT collections with Sell, Cancel
+  listing, Take the old price off and Send, escrows, strays and Inscribe. It also covers the node wallet on a regtest
+  node, where a token is sent and arrives.
+  With the Lite, ord, token, escrow, node-wallet and safety suites: 775 passed. Four failed in the long run. Two
+  fail on `team/core-cohesive` too, on this machine: `test_ord_slim` (its SQLite has no `unhex`) and
+  `test_ord_inscribe_browser` (snap Firefox can't read `/tmp`). The DigiDollar wallet's two pass on their own.
+- **For the operator:** please merge into `main` after `team/core-cohesive`. Nothing to set on a node.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-cohesive` (on `main` 17c3f88d) · One wallet in every look: framed pages wear the look, DigiDollar is the module's everywhere, module forms on the website
 
 SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing - when you change

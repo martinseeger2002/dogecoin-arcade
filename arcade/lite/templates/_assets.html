@@ -1,0 +1,951 @@
+{#- Assets: what the wallet holds besides coins, and everything the full arcade's Wallet does with it, drawn in the window
+    (2026-11-08, SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing - when
+    you change the theme, thats it everything is styled differently but the availability and capability doesnt change").
+    Every read and every transaction is the full Wallet's own route; nothing here builds or signs a second way:
+    - arcade tokens (/account/tokens, starred as the Exchange stars their markets) and DRC-20 / PRC-20 (/account/token20);
+    - the ords on the account's coins (/account/doginals/page) with the kind, collection and order the full Wallet
+      offers, a box to go to one, and each one's card (/account/doginal-card); listed (/account/doginals/list, /list/sign)
+      and unlisted (/account/doginals/cancel) as each chain's rules allow (ord_chains.wallet_table);
+    - Doginals at the account's testnet key's Dogecoin address, moved home (/account/doge-stray);
+    - arcade NFTs by collection (/account/nfts/collections, /pieces), sold (wallet.list), and their listings and older
+      prices taken off (/account/list/cancel, /account/nft/sell);
+    - escrows a game holds (/account/escrows, wallet.reclaimEscrow), and Inscribe (the full arcade's own inscriber,
+      /me/nfts, in the window);
+    - for the operator, the node wallet's tokens and NFTs (/node/wallet/tokens, /nfts/*).
+    Sending any of them is the Send tab's (_wallet.html: window.liteWallet.send). Everything else that spends or signs is
+    reviewed here first, from the transaction's own bytes, with every cost listed and a mainnet one said to be final
+    (exchange-safety R1). -#}
+{% if wallet %}
+<section data-panel="assets" hidden>
+  <fieldset><legend>Your assets</legend>
+    <div class="grid"><label for="a-chain">Wallet</label><select id="a-chain"></select></div>
+    {% if wallet == 'account' %}<p class="muted" style="margin:8px 0 0">Send picks one for the Send tab. Listing,
+      selling and taking back are reviewed here first.
+      <button type="button" id="a-inscribe">Inscribe…</button></p>{% endif %}
+  </fieldset>
+  <fieldset id="a-review" hidden><legend id="a-review-what">Review</legend>
+    <dl id="a-terms"></dl>
+    <p id="a-note" class="muted" hidden></p>
+    <p id="a-warn" class="warn" hidden>Real coins. This can't be taken back.</p>
+    <form id="a-unlock" class="grid" hidden>
+      <label for="a-password">Password</label><input id="a-password" type="password" autocomplete="current-password">
+      <span></span><span><button type="submit">Unlock</button> <span class="muted">Your words open in this browser
+        only.</span></span>
+    </form>
+    <p><button type="button" id="a-go">Sign</button> <button type="button" id="a-cancel">Cancel</button></p>
+  </fieldset>
+  <p id="a-said" hidden></p>
+  <fieldset id="a-tokens-box"><legend>Tokens</legend>
+    <table><thead><tr>{% if wallet == 'account' %}<th></th>{% endif %}<th>Token</th><th class="num">Balance</th>
+      <th></th></tr></thead><tbody id="a-tokens"></tbody></table>
+  </fieldset>
+  {% if wallet == 'account' %}
+  <fieldset id="a-t20-box" hidden><legend id="a-t20-word">DRC-20</legend>
+    <table><thead><tr><th>Token</th><th>Held</th><th class="num">Balance</th><th></th></tr></thead>
+      <tbody id="a-t20"></tbody></table>
+    <p class="muted" id="a-t20-note" hidden></p>
+  </fieldset>
+  {% endif %}
+  {% if ords_on and wallet == 'account' %}
+  <fieldset id="a-ords-box"><legend id="a-ords-word">Inscriptions</legend>
+    <p class="muted" id="a-status"></p>
+    <div id="a-stray"></div>
+    <p class="muted" id="a-notes" hidden></p>
+    <div id="a-bar" class="a-bar" hidden></div>
+    <div id="a-grid" class="a-grid"></div>
+    <p id="a-pager" hidden><button type="button" id="a-prev">‹ Newer</button> <span id="a-page"></span>
+      <button type="button" id="a-next">Older ›</button></p>
+  </fieldset>
+  {% endif %}
+  <fieldset id="a-nfts-box" hidden><legend>Arcade NFTs</legend>
+    {% if wallet == 'account' %}
+    <form id="a-sell" class="grid" hidden>
+      <span>Selling</span><b id="a-sell-what"></b>
+      <label for="a-sell-price">Price</label><span><input id="a-sell-price" inputmode="decimal" autocomplete="off"
+        placeholder="price" required> <input id="a-sell-token" inputmode="numeric" autocomplete="off"
+        placeholder="token # (blank = coins)" title="Blank to sell for coins, or a token's number to sell for it"></span>
+      <span></span><label><input type="checkbox" id="a-sell-claim"> Hide it behind a phrase (a claim)</label>
+      <label for="a-sell-phrase" data-claimrow hidden>Phrase</label><input id="a-sell-phrase" data-claimrow hidden
+        autocomplete="off" spellcheck="false" placeholder="at least 8 characters">
+      <span></span><span><button type="submit"{% if not node_trades %} disabled{% endif %}>Review…</button>
+        <button type="button" id="a-sell-cancel">Cancel</button></span>
+      <span></span><span class="muted">{% if node_trades %}Anybody can buy it at that price, even while you are away, for
+        30 days. Listing costs nothing: it is your signature, not a transaction.{% else %}Selling while you are away is
+        switched off by this arcade's operator: somebody who wants it makes an offer, and you answer it.{% endif %}</span>
+    </form>
+    {% endif %}
+    <div id="a-nfts"></div>
+  </fieldset>
+  {% if wallet == 'account' %}
+  <fieldset id="a-escrows-box" hidden><legend>Held in escrow</legend>
+    <p class="muted" style="margin:0 0 6px">A game holds these for you. Until the time shown, the game's referee decides
+      who gets them; after it, take them back here.</p>
+    <table><tbody id="a-escrows"></tbody></table>
+  </fieldset>
+  {% endif %}
+</section>
+{% if wallet == 'account' %}
+{#- Inscribe, and a token's Manage: the full arcade's own pages, in the window, wearing its look. -#}
+<section data-panel="a-page" class="frame" hidden><iframe title="Inscribe" data-src="/me/nfts"></iframe></section>
+{% endif %}
+<div class="dialog" id="a-card" role="dialog" aria-labelledby="a-card-title">
+  <div class="window" style="width:min(860px,96vw)">
+    <header><span id="a-card-title"></span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wbody a-card"><div id="a-card-pic"></div><div id="a-card-side"></div></div>
+  </div>
+</div>
+<style>
+.a-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.a-grid figure{margin:0;border:1px solid var(--line);border-radius:4px;background:var(--win);padding:6px;display:flex;
+  flex-direction:column;gap:4px;min-width:0}
+.a-grid figure.on{outline:2px solid var(--sel)}
+.a-grid .a-open{display:flex;flex-direction:column;gap:4px;background:none;border:0;padding:0;margin:0;text-align:left;
+  cursor:pointer;min-width:0}
+.a-grid .a-pic{width:100%;aspect-ratio:1;border:0;display:block;background:transparent;pointer-events:none;
+  image-rendering:pixelated;object-fit:contain}
+.a-grid .a-kind{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:.8rem;
+  color:var(--muted,#777);border:1px dashed var(--line);overflow:hidden;padding:4px;text-align:center;word-break:break-word}
+.a-grid figcaption,.a-grid .a-sub{font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.a-grid .a-sub{color:var(--muted)}
+.a-grid .a-acts{display:flex;gap:4px;flex-wrap:wrap;order:2}
+.a-grid .a-acts:empty{display:none}
+.a-grid .a-acts button{padding:2px 8px}
+.a-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 10px}
+.a-bar button[aria-pressed=true]{background:var(--sel);color:var(--sel-ink)}
+.a-bar b{margin-left:5px;font-weight:600}
+.a-colls{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.a-colls button{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left}
+.a-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:2px;width:100%;aspect-ratio:1;background:var(--win)}
+.a-mosaic span{overflow:hidden;background:var(--bar)}
+.a-mosaic img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
+.a-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0 10px}
+.a-star{background:none !important;border:0 !important;padding:0 4px !important;font-size:1.15rem;line-height:1;
+  color:var(--muted)}
+.a-star[aria-pressed=true]{color:var(--sel)}
+.a-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.a-card iframe,.a-card pre{width:100%;aspect-ratio:1;border:1px solid var(--line);background:transparent;margin:0}
+.a-card pre{overflow:auto;white-space:pre-wrap;font:12px var(--mono);padding:6px}
+.a-card p{margin:0 0 6px}
+.a-traits{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:4px;margin:0 0 8px}
+.a-traits div{border:1px solid var(--line);padding:3px 5px;font-size:.8rem}
+.a-traits i{display:block;color:var(--muted);font-style:normal}
+.a-links{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+@media (max-width:700px){.a-card{grid-template-columns:1fr}}
+</style>
+<script type="module">
+import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
+const NODE = {{ 'true' if wallet == 'node' else 'false' }};
+const API = NODE ? "/node/wallet" : "/account";
+const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
+const ORDS = {{ 'true' if ords_on and wallet == 'account' else 'false' }};
+//: What the Wallet may do with each chain's ords (arcade/ord_chains.py wallet_table): [word, coin, coins word], and
+//: whether one is sent and listed from here.
+const ORD = {{ ord_wallet|tojson }};
+const TRADES = {{ 'true' if node_trades else 'false' }};
+const T20 = {doge: "DRC-20", main: "PRC-20"};
+const $ = (id) => document.getElementById(id);
+const panel = () => document.querySelector('main [data-panel="assets"]');
+const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
+const chains = () => (window.liteWallet ? window.liteWallet.chains() : []);
+const chainOf = (n) => chains().find((c) => c.network === n) || {};
+const unit = (c) => (c.coin || c.label || "") + (c.mainnet === false && !/test/i.test(c.coin || "") ? " test" : "");
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function button(text, onclick, label) {
+  const b = el("button", "", text); b.type = "button"; b.onclick = onclick;
+  if (label) b.setAttribute("aria-label", label);
+  return b;
+}
+function cells(tr, ...list) {
+  for (const x of list) {
+    const td = tr.insertCell();
+    if (x && typeof x === "object" && x.nodeType) td.append(x);
+    else if (x && typeof x === "object") { td.textContent = x.text; if (x.cls) td.className = x.cls; }
+    else td.textContent = x == null ? "" : String(x);
+  }
+  return tr;
+}
+function say(text, cls) { const p = $("a-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
+async function getJson(path) {
+  const r = await fetch(path, {credentials: "same-origin", cache: "no-store"});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.detail || `the arcade could not say (${r.status})`), {status: r.status});
+  return j;
+}
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json", ...(NODE ? {"X-Arcade-Admin": "1"} : {})}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || "the arcade would not do that");
+  return j;
+}
+/** A page of the full arcade's in the window: its tab when it has one (a module's), else the window's page frame. */
+function openPage(href) {
+  const w = window.liteWindow, tab = w && w.route(href.split(/[?#]/)[0]);
+  if (tab) w.open(tab, href);
+  else if (w && document.querySelector('main [data-panel="a-page"]')) w.open("a-page", href);
+  else location.href = href;
+}
+
+/* --- what is held: read where the full Wallet reads it, kept a minute ------------------------------------------- */
+let tokRead = null;
+const t20Read = {};
+function units20(units, dec) {
+  const neg = String(units).startsWith("-"), digits = String(units).replace(/^-/, "").replace(/^0+(?=\d)/, "");
+  if (!dec) return (neg ? "-" : "") + BigInt(digits || "0").toLocaleString();
+  const pad = digits.padStart(dec + 1, "0");
+  const whole = BigInt(pad.slice(0, -dec)).toLocaleString(), frac = pad.slice(-dec).replace(/0+$/, "");
+  return (neg ? "-" : "") + whole + (frac ? "." + frac : "");
+}
+async function tokensOn(n, fresh) {
+  if (fresh || !tokRead || Date.now() - tokRead.at > 60000) {
+    try { tokRead = {at: Date.now(), chains: (await getJson(`${API}/tokens`)).chains || []}; }
+    catch (e) { tokRead = {at: Date.now(), chains: []}; }
+  }
+  const row = tokRead.chains.find((x) => x.network === n) || {};
+  return (row.tokens || []).map((t) => ({
+    kind: "token", net: n, property_id: t.property_id, divisible: !!t.divisible,
+    name: t.sensitive ? `Token ${t.property_id}` : (t.name || `Token ${t.property_id}`), balance: Number(t.balance || 0),
+    shown: t.display ?? String(t.balance), mine: !!t.issuer_is_me, managed: !!t.managed, sensitive: !!t.sensitive,
+    sendable: Number(t.balance || 0) > 0}));
+}
+/** DRC-20 / PRC-20 (the account's own, Dogecoin's and Pepecoin's), from the most complete copy of the chain's ord
+ * index. On hand is what is neither set aside as transferable, on its way out, nor listed. */
+async function token20On(n, fresh) {
+  if (NODE || !T20[n]) return null;
+  const kept = t20Read[n];
+  if (!fresh && kept && Date.now() - kept.at < 60000) return kept.said;
+  let said;
+  try { said = await getJson(`/account/token20?chain=${encodeURIComponent(n)}`); } catch (e) { said = {error: e.message}; }
+  if (!said.error && said.balances == null) said = {error: "no arcade's index answered"};
+  t20Read[n] = {at: Date.now(), said};
+  return said;
+}
+function t20Assets(n, said) {
+  return ((said && said.balances) || []).map((b) => {
+    const big = (x) => BigInt(String(x || "0"));
+    const onWay = big(b.pending_units), listed = big(b.listed_units), dec = Number(b.decimals || 0);
+    const left = big(b.units) - big(b.transferable_units) - onWay - listed, shownLeft = big(b.units) - onWay - listed;
+    const onHand = (left > 0n ? left : 0n).toString();
+    return {kind: "t20", net: n, word: T20[n], tick: b.tick, name: b.tick, decimals: dec, balance: onHand,
+            shown: units20(onHand, dec), held: units20((shownLeft > 0n ? shownLeft : 0n).toString(), dec),
+            transferable: big(b.transferable_units), onWay, listed, sendable: left > 0n};
+  });
+}
+/** Every token held on `n`, for Assets and for Send's own list. */
+async function held(n, fresh = false) {
+  const [toks, t20] = await Promise.all([tokensOn(n, fresh), token20On(n, fresh)]);
+  return toks.concat(t20Assets(n, t20));
+}
+
+/* --- the review: every cost from the transaction's own bytes, then one press ------------------------------------ */
+let pending = null, again = null;
+function review(title, list, {note = "", mainnet = false, label = "Sign", run}) {
+  $("a-review-what").textContent = title;
+  const dl = $("a-terms"); dl.textContent = "";
+  for (const [k, v] of list) dl.append(el("dt", "", k), el("dd", "", v));
+  $("a-note").textContent = note; $("a-note").hidden = !note;
+  $("a-warn").hidden = !mainnet;
+  $("a-unlock").hidden = true;
+  $("a-go").hidden = false; $("a-go").disabled = false; $("a-go").textContent = label;
+  pending = run;
+  $("a-review").hidden = false;
+  $("a-review").scrollIntoView({block: "nearest"});
+  $("a-go").focus();
+}
+function endReview() { pending = null; $("a-review").hidden = true; }
+$("a-cancel").onclick = () => { endReview(); again = null; say("Nothing was signed.", "muted"); };
+$("a-go").onclick = async () => {
+  if (!pending) return;
+  const run = pending; pending = null; $("a-go").disabled = true;          // one press, one signature
+  try { say(await run(), "ok"); } catch (x) { say(String(x.message || x), "bad"); }
+  endReview();
+  refresh();
+};
+/** The wallet's keys, or the password box first and then `fn` again once it is open. */
+async function withKeys(fn) {
+  const keys = await wallet.opened(TAGCHAIN).catch(() => null);
+  if (keys) return fn(keys);
+  again = fn;
+  $("a-review-what").textContent = "Unlock your wallet";
+  $("a-terms").textContent = ""; $("a-note").hidden = true; $("a-warn").hidden = true; $("a-go").hidden = true;
+  $("a-unlock").hidden = false; $("a-review").hidden = false; $("a-password").focus();
+}
+$("a-unlock").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await wallet.unlockHere(ME, $("a-password").value, TAGCHAIN);
+    $("a-password").value = ""; $("a-unlock").hidden = true;
+    const fn = again; again = null; endReview();
+    if (fn) await fn(await wallet.opened(TAGCHAIN));
+  } catch (x) { say(String(x.message || x), "bad"); }
+};
+/** The lines R1 asks for: every cost of an offer, read from its bytes by `wallet.checked`. */
+function costs(o, read, u) {
+  const c = wallet.mainnetCosts(o, read), out = [["Network fee", `${coinsOf(read.fee)} ${u}`]];
+  if (c.operator) out.push(["Arcade's fee", `${coinsOf(c.operator)} ${u}`]);
+  if (c.data) out.push(["Data", `${coinsOf(c.data)} ${u}`]);
+  if (c.others) out.push(["Paid to others", `${coinsOf(c.others)} ${u}`]);
+  if (read.change) out.push(["Comes back to you", `${coinsOf(read.change)} ${u}`]);
+  out.push(["Leaves your wallet", `${coinsOf(c.total)} ${u}`]);
+  return out;
+}
+/** An offer the arcade built (to spend a listing's coins, a price, ...), reviewed with every cost, then signed here. */
+async function offerReview(title, route, body, net, intro, done) {
+  say("");
+  await withKeys(async (keys) => {
+    const o = await post(route, body);
+    const read = await wallet.checked(o, keys);
+    const c = chainOf(o.chain || net);
+    review(title, [...intro, ...costs(o, read, unit(c))], {mainnet: !!c.mainnet, label: title.replace(/\?$/, ""),
+      run: async () => { const out = await wallet.confirm(keys, o, {reviewed: true}); return done(out); }});
+  }).catch((x) => say(String(x.message || x), "bad"));
+}
+
+/* --- the chain picked, and drawing it all ----------------------------------------------------------------------- */
+const A_NET = `lite_assets_${NODE ? "node" : ME || "visitor"}`;
+let aNet = "", drawnAt = 0;
+function pickChain() {
+  const box = $("a-chain"), list = chains();
+  if (box.options.length !== list.length) {
+    box.textContent = "";
+    for (const c of list) box.add(new Option(c.label + (c.mainnet ? "" : " (test)"), c.network));
+    let was = ""; try { was = localStorage.getItem(A_NET) || ""; } catch (e) {}
+    box.value = list.some((c) => c.network === was) ? was : (list[0] || {}).network || "";
+  }
+  return box.value;
+}
+async function drawAssets(fresh = false) {
+  aNet = pickChain();
+  if (!aNet) { $("a-tokens").textContent = ""; cells($("a-tokens").insertRow(), {text: "No wallet is ready yet: the chains are still syncing.", cls: "muted"}); return; }
+  drawnAt = Date.now();
+  drawTokens(aNet, fresh);
+  if (ORDS) drawOrds(aNet, fresh);
+  drawNfts(aNet, fresh);
+  if (!NODE) drawEscrows();
+}
+function refresh() { drawAssets(true); }
+$("a-chain").onchange = () => {
+  try { localStorage.setItem(A_NET, $("a-chain").value); } catch (e) {}
+  dg = null; nft = {open: null}; $("a-sell") && ($("a-sell").hidden = true);
+  drawAssets();
+};
+document.querySelector('[data-tab="assets"]').addEventListener("click", () => drawAssets());
+document.addEventListener("lite:wallet", () => { if (!panel().hidden) drawAssets(); });   // opened at /#assets
+// For the Send tab (_wallet.html): what is held, and a send just gone (read afresh).
+window.liteAssets = {held, sent() { tokRead = null; for (const k in t20Read) delete t20Read[k]; nftsRead = null;
+                                    if (dg) dg.fresh = true; if (!panel().hidden) drawAssets(true); }};
+if (!NODE) $("a-inscribe").onclick = () => openPage("/me/nfts#inscribing");
+
+/* --- tokens: the arcade's, starred as the Exchange stars their markets ------------------------------------------ */
+// A token's star is its market's (/exchange/pair/<id>@<chain>), kept with the account (/account/favorites) or, until it
+// keeps them, in this browser, as the full Wallet and the Exchange keep it.
+const favs = {set: null, saved: false};
+async function favsRead() {
+  if (favs.set) return;
+  try { const d = await getJson("/account/favorites"); favs.saved = !!d.saved; favs.set = d.favorites || []; }
+  catch (e) { favs.saved = false; }
+  if (!favs.saved) { try { favs.set = JSON.parse(localStorage.getItem("arcade-favorites") || "[]"); } catch (e) { favs.set = []; } }
+}
+async function favToggle(key) {
+  const on = !favs.set.includes(key);
+  favs.set = on ? [key].concat(favs.set) : favs.set.filter((k) => k !== key);
+  if (!favs.saved) { try { localStorage.setItem("arcade-favorites", JSON.stringify(favs.set)); } catch (e) {} return; }
+  try {
+    const r = await fetch("/account/favorites", {method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({key, on})});
+    const d = await r.json(); if (d.favorites) favs.set = d.favorites;
+  } catch (e) {}
+}
+async function drawTokens(n, fresh) {
+  const [toks, t20] = await Promise.all([tokensOn(n, fresh), token20On(n, fresh)]);
+  if (!NODE) await favsRead();
+  if (n !== aNet) return;
+  const tb = $("a-tokens"); tb.textContent = "";
+  const key = (t) => `/exchange/pair/${t.property_id}@${n}`, starred = (t) => !NODE && favs.set.includes(key(t));
+  const list = toks.filter((t) => t.balance > 0 || t.mine).map((t, i) => [t, i])
+    .sort((a, b) => (starred(b[0]) - starred(a[0])) || (a[1] - b[1])).map((p) => p[0]);
+  for (const t of list) {
+    const tr = tb.insertRow();
+    if (!NODE) {
+      const star = button(starred(t) ? "★" : "☆", async () => { await favToggle(key(t)); drawTokens(n); },
+                          `Favorite ${t.name}`);
+      star.className = "a-star"; star.setAttribute("aria-pressed", String(starred(t)));
+      cells(tr, star);
+    }
+    const name = el("span"); name.append(el("b", "", t.name), el("span", "muted", `  #${t.property_id}${t.mine ? " · you made it" : ""}`));
+    const acts = el("span", "a-acts");
+    if (t.sendable) acts.append(button("Send", () => window.liteWallet.send(t), `Send ${t.name}`));
+    if (!NODE && t.managed && t.mine) {
+      acts.append(" ", button("Manage", () => openPage(`/tokens/${t.property_id}`), `Manage ${t.name}`));
+    }
+    cells(tr, name, {text: t.shown, cls: "num"}, acts);
+  }
+  if (!list.length) cells(tb.insertRow(), {text: `No ${T20[n] ? "arcade " : ""}tokens on ${chainOf(n).label || n} yet.`, cls: "muted"});
+  if (!NODE) drawT20(n, t20);
+}
+/** DRC-20 / PRC-20 on Dogecoin and Pepecoin main: on hand, set aside, on the way and listed, and Send. */
+function drawT20(n, said) {
+  const box = $("a-t20-box");
+  box.hidden = !T20[n];
+  if (!T20[n]) return;
+  $("a-t20-word").textContent = T20[n];
+  const tb = $("a-t20"), note = $("a-t20-note"); tb.textContent = ""; note.hidden = true;
+  if (said.error) {
+    cells(tb.insertRow(), {text: `${T20[n]} balances can't be read right now: ${said.error}. Asked again in a minute.`, cls: "muted"});
+    return;
+  }
+  const walked = Number(said.walked_to || 0), tip = Number(said.tip || 0), reading = walked && tip && walked < tip - 30;
+  for (const a of t20Assets(n, said)) {
+    const bits = [a.word];
+    if (a.transferable > 0n) bits.push(`${units20(a.transferable.toString(), a.decimals)} transferable`);
+    if (a.onWay > 0n) bits.push(`${units20(a.onWay.toString(), a.decimals)} on its way`);
+    if (a.listed > 0n) bits.push(`${units20(a.listed.toString(), a.decimals)} listed`);
+    cells(tb.insertRow(), el("b", "", a.tick), {text: bits.join(" · "), cls: "muted"}, {text: a.held, cls: "num"},
+          a.sendable ? button("Send", () => window.liteWallet.send(a), `Send ${a.tick}`) : "");
+  }
+  if (!tb.rows.length) {
+    cells(tb.insertRow(), {text: reading ? `No ${T20[n]} tokens found yet: the arcades' index has read up to block `
+      + `${walked.toLocaleString()} of ${tip.toLocaleString()}, and balances appear as it reaches them.`
+      : `No ${T20[n]} tokens on your address.`, cls: "muted"});
+  } else if (reading) {
+    note.textContent = `Read from the arcades' ord index at block ${walked.toLocaleString()} of ${tip.toLocaleString()}: `
+      + "these balances update as it walks.";
+    note.hidden = false;
+  }
+}
+
+/* --- the ords on the account's coins, as the full Wallet shows them --------------------------------------------- */
+// The view (kind, collection, order) is kept in this browser under the full Wallet's own key, so both looks show the
+// same. Newest first unless chosen otherwise (ArcadeCore's own order, 2026-11-08).
+const DG_VIEW = "arcade.wallet.dgview:";
+let dg = null;
+function viewOf(n) {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(DG_VIEW + n) || "{}") || {}; } catch (e) {}
+  return {kind: ["all", "art", "text"].includes(v.kind) ? v.kind : "all", coll: typeof v.coll === "string" ? v.coll : "",
+          order: v.order === "old" ? "old" : "new"};
+}
+function viewSet(change) {
+  dg.view = {...dg.view, ...change};
+  try { localStorage.setItem(DG_VIEW + dg.net, JSON.stringify(dg.view)); } catch (e) {}
+  dg.page = 0;
+  drawOrds(dg.net);
+}
+const ordName = (g) => (g.collection && g.collection.item) || (g.number != null ? `#${Number(g.number).toLocaleString()}`
+                                                                                : g.id.slice(0, 10) + "…");
+const texts = {};
+function ordPic(g) {
+  if (g.text) {
+    const s = el("span", "a-kind", texts[g.id] || "text");
+    if (texts[g.id] == null) {
+      texts[g.id] = "";
+      fetch(`/content/${encodeURIComponent(g.id)}`).then((r) => (r.ok ? r.text() : "")).then((t) => {
+        texts[g.id] = (t || "").slice(0, 120) || "(empty)"; s.textContent = texts[g.id];
+      }).catch(() => {});
+    }
+    return s;
+  }
+  const frame = el("iframe", "a-pic");
+  frame.loading = "lazy"; frame.title = g.id; frame.src = `/content/${encodeURIComponent(g.id)}/fit`;
+  frame.setAttribute("sandbox", "allow-scripts"); frame.setAttribute("scrolling", "no");
+  return frame;
+}
+async function drawOrds(n, fresh = false) {
+  const can = ORD[n], c = chainOf(n);
+  $("a-ords-box").hidden = !can;
+  if (!can) return;
+  const [W, C] = can.words;
+  $("a-ords-word").textContent = `${W}s`;
+  if (!dg || dg.net !== n) dg = {net: n, page: 0, view: viewOf(n), listed: null, go: "", focus: null, poll: null};
+  if (fresh) dg.fresh = true;
+  clearTimeout(dg.poll); dg.poll = null;
+  const mine = dg, seq = mine.seq = (mine.seq || 0) + 1;
+  const q = new URLSearchParams({chain: n, page: String(mine.page), size: "24", kind: mine.view.kind,
+                                 coll: mine.view.coll, order: mine.view.order});
+  if (mine.go) q.set("go", mine.go);
+  if (mine.fresh) { q.set("fresh", "1"); mine.fresh = false; mine.listed = null; }
+  if (!mine.listed) {
+    mine.listed = new Set();
+    getJson("/account/listed").then((got) => {
+      mine.listed = new Set(((got.doginals || {})[n]) || []);
+      if (mine.listed.size && dg === mine && mine.got) drawGrid(mine);
+    }).catch(() => {});
+  }
+  let got = null, why = "";
+  try { got = await getJson(`/account/doginals/page?${q}`); } catch (e) { why = e.message; }
+  if (dg !== mine || seq !== mine.seq) return;
+  if (n === "doge" && !mine.strayAsked) { mine.strayAsked = true; strayDoginals(); }
+  if (!got) {
+    $("a-status").textContent = /does not check inscriptions/.test(why) ? `This arcade does not read ${c.label}'s inscriptions.` : why;
+    $("a-grid").textContent = ""; $("a-pager").hidden = true; $("a-bar").hidden = true;
+    return;
+  }
+  mine.got = got; mine.page = got.page;
+  if (mine.go) {
+    if (got.missed) say("That one is not among those shown here.", "muted");
+    else if (got.focus) { mine.focus = got.focus; const g = (got.items || []).find((x) => x.id === got.focus); if (g) openCard(g); }
+    mine.go = "";
+  }
+  const counts = got.counts || {}, all = counts.all || 0, tokens = counts.tokens || 0;
+  $("a-status").textContent = !got.done || got.building
+    ? `Reading your ${c.label} coins for inscriptions: ${got.checked || 0} of ${got.of || "…"}.`
+    : all ? `${all.toLocaleString()} on ${c.label}${tokens ? `, and ${tokens} token notes (their balances are under ${T20[n] || "Tokens"})` : ""}.`
+    : `No ${W}s on your ${c.label} coins yet.`;
+  // Sending one costs C on top of it (the fee); one can be sent and listed only where the chain's rules say so.
+  const short = c.spendable != null && Number(c.doginal_send_need || 0) > 0 && Number(c.spendable) < Number(c.doginal_send_need);
+  mine.short = short;
+  const notes = !can.send && all ? `Your ${W}s, read from the chain. Sending and listing a ${W} from the arcade is not `
+      + "ready yet: they stay safe here, and an ordinary send never spends one."
+    : short && all ? `To send a ${W} you need some ${C} besides it for the network fee: about `
+      + `${coinsOf(c.doginal_send_need)} ${C}. This wallet has ${coinsOf(c.spendable)} ${C} to spend.` : "";
+  $("a-notes").textContent = notes; $("a-notes").hidden = !notes;
+  drawBar(mine, counts, got);
+  drawGrid(mine);
+  $("a-pager").hidden = (got.pages || 1) < 2;
+  $("a-page").textContent = `Page ${got.page + 1} of ${got.pages}`;
+  $("a-prev").disabled = got.page <= 0; $("a-next").disabled = got.page >= got.pages - 1;
+  $("a-prev").textContent = mine.view.order === "new" ? "‹ Newer" : "‹ Earlier";
+  $("a-next").textContent = mine.view.order === "new" ? "Older ›" : "Later ›";
+  if ((!got.done || got.building) && !panel().hidden) mine.poll = setTimeout(() => drawOrds(n), 3000);
+}
+/** Which kind, which collection, which order, and a box to go to one by number or id. */
+function drawBar(mine, counts, got) {
+  const bar = $("a-bar"), v = mine.view, [W] = ORD[mine.net].words;
+  bar.textContent = "";
+  bar.hidden = !(counts.all || v.kind !== "all" || v.coll);
+  for (const [kind, label, n] of [["all", "All", counts.all], ["art", "Pictures & pages", counts.art], ["text", "Text", counts.text]]) {
+    const b = button(label, () => viewSet({kind}));
+    b.append(el("b", "", Number(n || 0).toLocaleString()));
+    b.setAttribute("aria-pressed", String(v.kind === kind)); b.dataset.kind = kind;
+    bar.append(b);
+  }
+  const coll = el("select"); coll.setAttribute("aria-label", "Collection"); coll.id = "a-coll";
+  coll.add(new Option("Every collection", ""));
+  for (const k of got.collections || []) coll.add(new Option(`${k.name} (${Number(k.n).toLocaleString()})`, k.key));
+  coll.add(new Option(`Not in a collection (${Number(got.loose || 0).toLocaleString()})`, "-"));
+  coll.value = v.coll || ""; coll.onchange = () => viewSet({coll: coll.value});
+  const order = el("select"); order.setAttribute("aria-label", "Order"); order.id = "a-order";
+  order.add(new Option("Newest first", "new")); order.add(new Option("Earliest first", "old"));
+  order.value = v.order; order.onchange = () => viewSet({order: order.value});
+  const go = el("input"); go.type = "search"; go.id = "a-go-to"; go.placeholder = "Go to #number or id";
+  go.setAttribute("aria-label", `Go to a ${W} by number or id`);
+  go.onkeydown = (e) => { if (e.key === "Enter" && go.value.trim()) { mine.go = go.value.trim(); drawOrds(mine.net); } };
+  bar.append(coll, order, go);
+}
+function drawGrid(mine) {
+  const n = mine.net, can = ORD[n], [W, C] = can.words, grid = $("a-grid");
+  grid.textContent = "";
+  for (const g of mine.got.items || []) {
+    const a = {kind: "ord", net: n, id: g.id, txid: g.txid, vout: g.vout, name: ordName(g)};
+    const f = el("figure"); f.dataset.ord = g.id;
+    if (mine.focus === g.id) f.classList.add("on");
+    const open = el("button", "a-open"); open.type = "button"; open.setAttribute("aria-label", `${a.name}: open its card`);
+    const k = g.collection;
+    open.append(ordPic(g), el("figcaption", "", a.name));
+    open.title = g.id;
+    if (k && k.item && g.number != null) open.append(el("span", "a-sub", `#${Number(g.number).toLocaleString()}`));
+    open.onclick = () => openCard(g);
+    const acts = el("span", "a-acts");
+    if (can.send && mine.listed && mine.listed.has(g.id)) {
+      acts.append(button("Unlist", () => openCard(g), `Unlist ${W} ${g.id}`));
+    } else if (can.send) {
+      const send = button("Send", () => window.liteWallet.send(a), `Send ${W} ${g.id}`);
+      if (mine.short) { send.disabled = true; send.title = `Needs ${C} besides the ${W} for the network fee`; }
+      acts.append(send);
+      if (can.list && TRADES) acts.append(button("List", () => openCard(g, true), `List ${W} ${g.id}`));
+    }
+    f.append(acts, open);                        // Send first in the card's buttons; drawn below its picture (CSS)
+    grid.append(f);
+  }
+}
+if (ORDS) {
+  $("a-prev").onclick = () => { dg.page = Math.max(0, dg.page - 1); drawOrds(dg.net); };
+  $("a-next").onclick = () => { dg.page += 1; drawOrds(dg.net); };
+}
+/** One ord's card: everything the index says of it, its collection with traits, its content and pages, and Send, and
+ * one price box with List (or Unlist when listed), as the full Wallet's card has them. */
+async function openCard(g, wantPrice = false) {
+  const n = dg.net, can = ORD[n], [W, C] = can.words, c = chainOf(n);
+  $("a-card-title").textContent = g.number != null ? `${W} #${Number(g.number).toLocaleString()}` : W;
+  const pic = $("a-card-pic"), side = $("a-card-side");
+  pic.textContent = "";
+  if (g.text) {
+    const pre = el("pre", "", texts[g.id] || "…"); pic.append(pre);
+    fetch(`/content/${encodeURIComponent(g.id)}`).then((r) => (r.ok ? r.text() : "")).then((t) => { pre.textContent = t.slice(0, 4000); });
+  } else {
+    const frame = el("iframe"); frame.src = `/content/${encodeURIComponent(g.id)}/fit`; frame.title = g.id;
+    frame.setAttribute("sandbox", "allow-scripts"); frame.setAttribute("scrolling", "no");
+    pic.append(frame);
+  }
+  side.replaceChildren(el("p", "muted", "Reading its details…"));
+  $("a-card").classList.add("open");
+  let got = null;
+  try { got = await getJson(`/account/doginal-card?chain=${encodeURIComponent(n)}&id=${encodeURIComponent(g.id)}`); }
+  catch (e) { side.replaceChildren(el("p", "bad", `Its details can't be read just now: ${e.message}`)); }
+  const parts = [];
+  if (got) {
+    const ins = got.inscription || {id: g.id}, k = got.collection;
+    $("a-card-title").textContent = `${W} #${Number(ins.number).toLocaleString()}`;
+    parts.push(el("p", "", k ? (k.item && k.item !== k.name ? `${k.name} · ${k.item}` : (k.name || k.item || "")) : "No collection"));
+    if (k) {
+      if (k.description) parts.push(el("p", "muted", k.description));
+      const facts = [k.supply ? `${Number(k.supply).toLocaleString()} pieces` : "",
+                     k.holders ? `${Number(k.holders).toLocaleString()} holders` : "",
+                     k.created ? `since ${new Date(k.created * 1000).toLocaleDateString()}` : ""].filter(Boolean);
+      if (facts.length) parts.push(el("p", "muted", facts.join(" · ")));
+      if (k.traits && k.traits.length) {
+        const box = el("div", "a-traits");
+        for (const t of k.traits) {
+          const d = el("div"); d.append(el("i", "", t.trait), t.value);
+          if (t.share != null) d.append(el("span", "muted", ` ${(t.share * 100).toFixed(t.share < 0.1 ? 1 : 0)}%`));
+          box.append(d);
+        }
+        parts.push(box);
+      }
+    }
+    const dl = el("dl");
+    const row = (a, b) => dl.append(el("dt", "", a), el("dd", "", b));
+    row("Inscription id", ins.id);
+    row("Content", `${ins.content_type || "unknown"}${ins.size != null ? ` · ${Number(ins.size).toLocaleString()} bytes` : ""}`);
+    if (ins.height != null) row("Inscribed", `block ${Number(ins.height).toLocaleString()}${got.made ? " · " + new Date(got.made * 1000).toLocaleDateString() : ""}`);
+    if (ins.output) row("On coin", `${ins.output} · offset ${ins.offset ?? 0}${g.value != null ? ` · ${coinsOf(g.value)} ${C}` : ""}`);
+    if (ins.owner) row("Owner", ins.owner + (can.send ? " (you)" : ""));
+    parts.push(dl);
+    const links = el("p", "a-links");
+    const content = el("a", "", "Open content ↗"); content.href = got.content || `/content/${g.id}`;
+    content.target = "_blank"; content.rel = "noopener";
+    links.append(content);
+    if (k && k.root) links.append(button("Collection page", () => { closeCard(); openPage(`/exchange/ord/${k.root}`); }));
+    links.append(button("In Explore", () => { closeCard(); openPage(`/explore?net=${encodeURIComponent(n)}&id=${encodeURIComponent(g.id)}`); }));
+    links.append(button("Copy id", () => navigator.clipboard && navigator.clipboard.writeText(ins.id)));
+    parts.push(links);
+  }
+  if (can.send) {
+    const listing = got && got.listing, acts = el("p", "a-acts");
+    if (listing) {
+      acts.append(el("span", "", `Listed for ${Number(listing.price) / 1e8} ${C}. `),
+                  button("Unlist", () => { closeCard(); ordUnlist(g, listing.id); }));
+    } else {
+      const send = button("Send", () => { closeCard(); window.liteWallet.send({kind: "ord", net: n, id: g.id, txid: g.txid,
+                                                                                vout: g.vout, name: ordName(g)}); });
+      if (dg.short) send.disabled = true;
+      acts.append(send);
+      if (can.list && TRADES) {
+        const price = el("input"); price.inputMode = "decimal"; price.placeholder = "Price"; price.id = "a-card-price";
+        price.setAttribute("aria-label", `Price in ${C}`); price.size = 10;
+        const list = button("List", () => {
+          const amount = price.value.trim();
+          if (!(Number(amount) > 0)) { price.focus(); return; }
+          closeCard(); ordList(g, amount);
+        });
+        price.onkeydown = (e) => { if (e.key === "Enter") list.click(); };
+        acts.append(" ", price, ` ${C} `, list);
+        if (wantPrice) setTimeout(() => price.focus(), 0);
+      }
+    }
+    parts.push(acts);
+    if (!listing && can.list && TRADES) parts.push(el("p", "muted", "List puts it on the NFT Exchange at your price. It stays held until it sells or you unlist it."));
+  }
+  if (got || can.send) side.replaceChildren(...parts);
+}
+function closeCard() { $("a-card").classList.remove("open"); }
+/** List one at a price: the Exchange's own two calls. The arcade builds the ask; this browser checks it is this coin, this
+ * price, paid to this wallet (coins.verifyDoginalAsk), then signs one SINGLE|ANYONECANPAY input on a yes. */
+async function ordList(g, amount) {
+  const n = dg.net, [W, C] = ORD[n].words, c = chainOf(n);
+  say("");
+  await withKeys(async (keys) => {
+    const coins = await import("/coins.js");
+    const ask = await post("/account/doginals/list", {chain: n, txid: g.txid, vout: g.vout, inscription: g.id, amount});
+    const mineKeys = wallet.keysOn(keys, n);
+    const digest = await coins.verifyDoginalAsk(ask, mineKeys);
+    review(`List this ${W}?`, [["Listing", `${ordName(g)} (${g.id})`], ["Price", `${Number(ask.price) / 1e8} ${C}`],
+                               ["Paid to", `your own address, ${mineKeys.address}`],
+                               ["Costs", "nothing now: a signature, not a transaction"]],
+      {note: `Anybody can buy it for that price until you unlist it. It stays held as listed meanwhile. Unlisting is a `
+             + `small send of the ${W} to yourself.`, mainnet: !!c.mainnet, label: "List it",
+       run: async () => {
+         const signature = coins.hex(await coins.signInput(mineKeys.key, digest, coins.SINGLE_ANYONECANPAY));
+         await post("/account/doginals/list/sign", {chain: n, txid: ask.coin.txid, vout: ask.coin.vout,
+                                                    inscription: ask.inscription, amount, signature,
+                                                    pubkey: coins.hex(mineKeys.pubkey)});
+         return `Listed for ${amount} ${C} on the NFT Exchange.`;
+       }});
+  }).catch((x) => say(String(x.message || x), "bad"));
+}
+/** Unlist: the ord moves to this wallet's own address, which ends the signature the listing gave. */
+function ordUnlist(g, listing) {
+  const n = dg.net, [W] = ORD[n].words;
+  return offerReview("Unlist it?", "/account/doginals/cancel", {chain: n, listing}, n,
+                     [["Unlisting", `${ordName(g)}: it moves to your own address, which ends the listing`]],
+                     (out) => `Unlisted: it ends when its block lands (transaction ${out.txid}).`);
+}
+/** Doginals sent to this account's TESTNET key's Dogecoin address: the account's own coins, moved home in one
+ * transaction. This browser checks the bytes itself (every output pays this wallet's own Dogecoin address) and signs
+ * every input with that key, as the full Wallet does. */
+async function strayDoginals() {
+  const box = $("a-stray"); box.textContent = "";
+  let said;
+  try { said = await getJson("/account/doge-stray"); } catch (e) { return; }
+  if (!said.doginals || !said.doginals.length) {
+    if (said.checking) box.append(el("p", "muted", "Checking your other Dogecoin address for Doginals…"));
+    return;
+  }
+  const n = said.doginals.length, names = said.doginals.flatMap((d) => d.names.filter(Boolean));
+  const p = el("p", "warn", `${n} Doginal${n === 1 ? " was" : "s were"} sent to ${said.stray}, an address of yours made `
+    + `from your Pepecoin test key. ${names.length ? names.join(", ") + ". " : ""}Move them here with one transaction. `);
+  p.append(said.fee_short
+    ? button("Send the fee there first", () => window.liteWallet.send({kind: "coin", net: "doge"}, said.stray,
+                                                                       String(said.fee_short / 1e8)))
+    : button(`Move ${n === 1 ? "it" : "them"} to my wallet`, () => strayMove(said, n)));
+  box.append(p);
+}
+async function strayMove(said, n) {
+  say("");
+  try {
+    const [w, coins] = [wallet, await import("/coins.js")];
+    const DOGE = {network: "doge", version: (ORD.doge || {}).version || 30};
+    let held = await w.opened(DOGE).catch(() => null);
+    if (!held) { await withKeys(() => strayMove(said, n)); return; }
+    const test = held.on && held.on.test, home = held.on && held.on.doge;
+    if (!test || !home) throw new Error("this wallet has no Pepecoin test or Dogecoin key open here");
+    if (home.address !== said.home) throw new Error("the node named another home address. Nothing was signed.");
+    const move = await post("/account/doge-stray/move", {});
+    const tx = coins.parseTx(move.raw), mine = coins.p2pkh(await coins.hash160(home.pubkey));
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    if (!tx.outputs.every((o) => same(o.script, mine))) throw new Error("that transaction pays somewhere else. Nothing was signed.");
+    if (tx.inputs.length !== move.inputs.length) throw new Error("the node's inputs do not match. Nothing was signed.");
+    const kept = tx.outputs.reduce((s, o) => s + Number(o.value), 0);
+    review(`Move ${n} Doginal${n === 1 ? "" : "s"} to your wallet?`,
+           [["Moving", `${n} Doginal${n === 1 ? "" : "s"}, each whole`], ["From", said.stray], ["To", `${said.home}, your Dogecoin address here`],
+            ["Network fee", `${coinsOf(move.fee)} DOGE`], ["Arrives", `${coinsOf(kept)} DOGE in coins, every output yours`]],
+           {mainnet: true, label: "Move them", run: async () => {
+             const from = coins.p2pkh(await coins.hash160(test.pubkey)), signatures = [];
+             for (let i = 0; i < tx.inputs.length; i++) {
+               signatures.push(coins.hex(await coins.signInput(test.key, await coins.sighashAll(tx, i, from))));
+             }
+             const done = await post("/account/doge-stray/move/sign", {raw: move.raw, signatures, pubkey: coins.hex(test.pubkey)});
+             if (dg) dg.strayAsked = false;
+             return `Moved. They show here once the block lands (transaction ${done.txid}).`;
+           }});
+  } catch (x) { say(String(x.message || x), "bad"); }
+}
+
+/* --- arcade NFTs: collections first, then one's pieces, each sent, sold or taken off sale ------------------------ */
+let nft = {open: null}, nftsRead = null;
+const isImage = (t) => /^image\//i.test(String(t || ""));
+function nftPic(p) {
+  if (!isImage(p.content_type)) return el("span", "a-kind", String(p.content_type || "file").split("/").pop().split(";")[0].slice(0, 8));
+  const img = el("img", "a-pic"); img.loading = "lazy"; img.alt = ""; img.src = "/content/" + p.txid;
+  return img;
+}
+const pieceName = (p) => p.name || (p.collection ? `${p.collection} #${p.edition ?? "?"}` : `#${Number(p.number).toLocaleString()}`);
+/** Each piece's listing and older price, by txid (/account/nfts, every chain, read again after a minute or a sale). */
+async function sales(n, fresh) {
+  if (NODE) return {};
+  if (fresh || !nftsRead || Date.now() - nftsRead.at > 60000) {
+    try { nftsRead = {at: Date.now(), chains: (await getJson("/account/nfts")).chains || []}; }
+    catch (e) { nftsRead = {at: Date.now(), chains: []}; }
+  }
+  const out = {};
+  for (const p of (nftsRead.chains.find((x) => x.network === n) || {}).pieces || []) out[p.txid] = p;
+  return out;
+}
+async function drawNfts(n, fresh) {
+  if (nft.net !== n) nft = {net: n, open: null, cq: "", iq: "", isort: "number", pieces: [], total: 0};
+  if (nft.open != null) return drawCollection(fresh);
+  let got;
+  try { got = await getJson(`${API}/nfts/collections?chain=${encodeURIComponent(n)}`); } catch (e) { got = {collections: []}; }
+  if (n !== aNet || nft.open != null) return;
+  nft.colls = got.collections || [];
+  const box = $("a-nfts"); box.textContent = "";
+  const total = nft.colls.reduce((s, x) => s + Number(x.count || 0), 0);
+  $("a-nfts-box").hidden = !total;
+  if (!total) return;
+  const named = nft.colls.filter((x) => x.collection).length;
+  box.append(el("p", "muted", `${named} collection${named === 1 ? "" : "s"} · ${total.toLocaleString()} piece${total === 1 ? "" : "s"}`));
+  const grid = el("div", "a-colls");
+  for (const x of nft.colls.slice().sort((a, b) => (a.collection === "") - (b.collection === "") || b.count - a.count)) {
+    const b = el("button"); b.type = "button"; b.dataset.coll = x.collection;
+    const mosaic = el("span", "a-mosaic");
+    for (let i = 0; i < 4; i++) {
+      const cell = el("span"), p = (x.cover || [])[i];
+      if (p && isImage(p.content_type)) { const img = el("img"); img.alt = ""; img.loading = "lazy"; img.src = "/content/" + p.txid; cell.append(img); }
+      mosaic.append(cell);
+    }
+    b.append(mosaic, el("b", "", x.collection || "Not in a collection"),
+             el("span", "muted", `${Number(x.count).toLocaleString()} piece${x.count === 1 ? "" : "s"}`));
+    b.onclick = () => { nft.open = x.collection; nft.iq = ""; drawCollection(); };
+    grid.append(b);
+  }
+  box.append(grid);
+}
+let typing = null;
+async function drawCollection(fresh = false, append = false) {
+  const n = nft.net, x = (nft.colls || []).find((one) => one.collection === nft.open) || {collection: nft.open, count: 0};
+  const box = $("a-nfts");
+  if (!append) {
+    box.textContent = "";
+    const tools = el("div", "a-tools");
+    const q = el("input"); q.type = "search"; q.id = "a-piece-q"; q.placeholder = "Search by name or #number"; q.value = nft.iq;
+    q.setAttribute("aria-label", "Search this collection");
+    q.oninput = () => { nft.iq = q.value; clearTimeout(typing); typing = setTimeout(() => drawCollection(), 250); };
+    const sort = el("select"); sort.setAttribute("aria-label", "Sort pieces");
+    for (const [v, t] of [["number", "Number"], ["recent", "Newest"], ["name", "Name"]]) sort.add(new Option(t, v));
+    sort.value = nft.isort; sort.onchange = () => { nft.isort = sort.value; drawCollection(); };
+    tools.append(button("← Collections", () => { nft.open = null; $("a-sell") && ($("a-sell").hidden = true); drawNfts(n); }),
+                 el("b", "", x.collection || "Not in a collection"), q, sort);
+    box.append(tools, el("p", "muted"), el("div", "a-grid"), button("Show more", () => drawCollection(false, true)));
+    box.lastChild.hidden = true; box.lastChild.id = "a-more";
+  }
+  const offset = append ? nft.pieces.length : 0;
+  let got;
+  try {
+    got = await getJson(`${API}/nfts/pieces?chain=${encodeURIComponent(n)}&collection=${encodeURIComponent(nft.open)}`
+      + `&q=${encodeURIComponent(nft.iq)}&sort=${nft.isort}&offset=${offset}&limit=60`);
+  } catch (e) { got = {pieces: [], total: 0}; }
+  const sale = await sales(n, fresh);
+  if (n !== aNet || nft.net !== n) return;
+  nft.pieces = append ? nft.pieces.concat(got.pieces || []) : (got.pieces || []);
+  nft.total = Number(got.total || 0);
+  const grid = box.querySelector(".a-grid");
+  if (!append) grid.textContent = "";
+  for (const p of got.pieces || []) grid.append(pieceCard(p, sale[p.txid] || {}, n));
+  $("a-nfts-box").hidden = false;
+  box.querySelector("p.muted").textContent = nft.iq ? `${nft.total.toLocaleString()} of ${Number(x.count).toLocaleString()} match`
+    : `Showing ${nft.pieces.length.toLocaleString()} of ${nft.total.toLocaleString()}`;
+  if (!nft.pieces.length) grid.append(el("p", "muted", nft.iq ? "Nothing here matches. Try a number like 42." : "Nothing here."));
+  $("a-more").hidden = nft.pieces.length >= nft.total;
+}
+function pieceCard(p, s, n) {
+  const name = pieceName(p), a = {kind: "nft", net: n, txid: p.txid, number: p.number, name};
+  const f = el("figure"); f.dataset.piece = p.txid;
+  const open = el("button", "a-open"); open.type = "button"; open.title = p.txid;
+  open.append(nftPic(p), el("figcaption", "", name));
+  open.onclick = () => openPage(`/inscriptions/${p.txid}/view`);
+  if (s.listing) open.append(el("span", "a-sub", `${s.listing.claim ? "claim" : "for sale"}: ${s.listing.price} · open ${s.listing.left}`));
+  else if (s.ask) open.append(el("span", "a-sub", `asking ${s.ask} (an older price)`));
+  const acts = el("span", "a-acts");
+  acts.append(button("Send", () => window.liteWallet.send(a), `Send ${name}`));
+  if (!NODE) {
+    acts.append(button(s.listing ? "Change the price" : "Sell", () => sellForm(p, s, n), `Sell ${name}`));
+    if (s.listing) acts.append(button("Cancel listing", () => cancelListing(p, n), `Cancel the listing of ${name}`));
+    else if (s.ask) acts.append(button("Take the old price off", () => oldPriceOff(p, n), `Take the old price off ${name}`));
+  }
+  f.append(acts, open);
+  return f;
+}
+/* Selling an arcade NFT: a listing this browser signs at your price, which anybody can complete while you are away. A
+ * listing is a signature, not a transaction; changing the price cancels the old one first (one small transaction). */
+let selling = null;
+function sellForm(p, s, n) {
+  selling = {p, s, n};
+  $("a-sell-what").textContent = pieceName(p) + (s.listing ? ` (listed for ${s.listing.price})` : "");
+  $("a-sell-price").value = ""; $("a-sell-token").value = ""; $("a-sell-claim").checked = false;
+  document.querySelectorAll("[data-claimrow]").forEach((x) => { x.hidden = true; });
+  $("a-sell").hidden = false; $("a-sell-price").focus();
+}
+if (!NODE) {
+  $("a-sell-cancel").onclick = () => { $("a-sell").hidden = true; selling = null; };
+  $("a-sell-claim").onchange = () => {
+    document.querySelectorAll("[data-claimrow]").forEach((x) => { x.hidden = !$("a-sell-claim").checked; });
+  };
+  $("a-sell").onsubmit = (e) => { e.preventDefault(); if (selling) sellReview(selling); };
+}
+async function sellReview({p, s, n}) {
+  const amount = $("a-sell-price").value.trim(), token = Number(($("a-sell-token").value || "").replace(/^#/, "")) || 0;
+  const phrase = $("a-sell-claim").checked ? $("a-sell-phrase").value.trim() : "", c = chainOf(n), u = unit(c);
+  say("");
+  if (!(Number(amount) > 0)) { say("A price above zero, please.", "bad"); return; }
+  if ($("a-sell-claim").checked && phrase.length < 8) { say("A claim phrase of at least 8 characters, please.", "bad"); return; }
+  await withKeys(async (keys) => {
+    const price = token ? `${amount} of token #${token}` : `${amount} ${u}`;
+    const list = [["Selling", pieceName(p)], ["Price", price],
+                  ["Who can buy it", phrase ? "whoever has the phrase, for 30 days" : "anybody, for 30 days"],
+                  ["Listing costs", "nothing: a signature, not a transaction"]];
+    let cancel = null;
+    if (s.listing) {
+      // The old signature stays good until its coins are spent: spent first, its costs listed here.
+      const o = await post("/account/list/cancel", {piece: p.txid, chain: n});
+      const read = await wallet.checked(o, keys);
+      cancel = o;
+      list.push(["First", `the listing at ${s.listing.price} is cancelled: one small transaction`],
+                ...costs(o, read, u).map(([k, v]) => [`Cancelling: ${k.toLowerCase()}`, v]));
+    }
+    let leg = null;
+    if (!cancel) {
+      leg = await wallet.offerListing(p.txid, amount, n, token);
+      const shown = await wallet.checkedListing(leg, keys);
+      if (shown.says) list.push(["The signature says", shown.says]);
+    }
+    review(s.listing ? "Change the price?" : "Sell it?", list, {mainnet: !!c.mainnet, label: s.listing ? "Change the price" : "Sell it",
+      run: async () => {
+        if (cancel) await wallet.confirm(keys, cancel, {reviewed: true});
+        if (!leg) {
+          leg = await wallet.offerListing(p.txid, amount, n, token);
+          await wallet.checkedListing(leg, keys);
+        }
+        const filed = await wallet.list(keys, leg, {days: 30, claim: phrase});
+        $("a-sell").hidden = true; selling = null; nftsRead = null;
+        return phrase ? `${pieceName(p)} is hidden behind your phrase. Claim id: ${filed.listed}. In an interactive NFT, `
+                        + `this line hands it to whoever is looking: parent.postMessage({arcade: "claim", seq: 1, listing: `
+                        + `${JSON.stringify(filed.listed)}, secret: ${JSON.stringify(phrase)}}, "*")`
+          : `${pieceName(p)} is for sale at ${price}. Anybody can buy it from its page or its collection, even while you're away.`;
+      }});
+  }).catch((x) => {
+    const why = String(x.message || x);
+    say(/coin to spend|Split it first|needs two/i.test(why)
+      ? "Selling needs two small coins to sign over, and this account has fewer free right now. If you just cancelled or "
+        + "sold something, try again once its block lands; otherwise send yourself 1 coin to split one, then sell."
+      : why, "bad");
+  });
+}
+function cancelListing(p, n) {
+  return offerReview("Cancel the listing?", "/account/list/cancel", {piece: p.txid, chain: n}, n,
+    [["Cancelling", `the listing of ${pieceName(p)}: its coins are spent back to you, which takes the signature back`]],
+    (out) => { nftsRead = null; return `The listing of ${pieceName(p)} is cancelled; it drops off the exchange when its block lands (transaction ${out.txid}).`; });
+}
+function oldPriceOff(p, n) {
+  return offerReview("Take the old price off?", "/account/nft/sell", {piece: p.txid, unlist: true, chain: n}, n,
+    [["Taking off", `the older price on ${pieceName(p)}, from the chain`]],
+    (out) => { nftsRead = null; return `Taken off: transaction ${out.txid}.`; });
+}
+
+/* --- escrows a game holds for this account --------------------------------------------------------------------- */
+async function drawEscrows() {
+  let said;
+  try { said = await getJson("/account/escrows"); } catch (e) { return; }
+  const list = said.escrows || [], tb = $("a-escrows");
+  $("a-escrows-box").hidden = !list.length;
+  tb.textContent = "";
+  for (const e of list) {
+    const tokens = Object.keys(e.tokens || {}).length;
+    const what = `${e.inscriptions.length} NFT${e.inscriptions.length === 1 ? "" : "s"}`
+      + (tokens ? ` and ${tokens} token${tokens === 1 ? "" : "s"}` : "");
+    const when = e.open ? "yours to take back" : `the game's until ${new Date(e.unlock * 1000).toLocaleString()}`;
+    cells(tb.insertRow(), what, {text: when, cls: "muted"},
+          e.open ? button("Take back", () => takeBack(e, said.chain, what), `Take back ${what}`) : "");
+  }
+}
+function takeBack(e, chain, what) {
+  const c = chainOf(chain);
+  say("");
+  withKeys(async (keys) => {
+    review("Take it back?", [["Taking back", what], ["To", `your own address on ${c.label || chain}`],
+                             ["Costs", "the network fee, from the escrow's own coin"]],
+      {note: "Each move home is checked here before it is signed: it spends the escrow's coin and pays only you.",
+       mainnet: !!c.mainnet, label: "Take back", run: async () => {
+         const done = await wallet.reclaimEscrow(keys, e.escrow, chain);
+         return `On its way home (${done.txids.length} transaction${done.txids.length === 1 ? "" : "s"}): it shows when its block lands.`;
+       }});
+  }).catch((x) => say(String(x.message || x), "bad"));
+}
+document.dispatchEvent(new CustomEvent("lite:assets"));
+if (!panel().hidden && chains().length) drawAssets();
+</script>
+{% endif %}

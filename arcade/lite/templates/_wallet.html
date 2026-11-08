@@ -16,6 +16,7 @@
         <label for="w-chain-send">Wallet</label><select id="w-chain-send" data-chain></select>
         <label for="w-kind-send" data-kindrow hidden>Address type</label><select id="w-kind-send" data-kind data-kindrow
           hidden></select>
+        <label for="w-what" data-whatrow hidden>Send</label><select id="w-what" data-whatrow hidden></select>
         <label for="w-to">Pay to</label><input id="w-to" placeholder="@name or address" autocomplete="off"
           spellcheck="false" required>
         <span data-assetrow hidden>Sending</span><span data-assetrow hidden><b id="w-asset"></b>
@@ -71,32 +72,6 @@
     <p class="muted" id="w-since"></p>
   </fieldset>
 </section>
-{% if ords_on and wallet == 'account' %}
-<section data-panel="assets" hidden>
-  <fieldset><legend>Your assets</legend>
-    <div class="grid"><label for="a-chain">Wallet</label><select id="a-chain"></select></div>
-    <p class="muted" id="a-status"></p>
-    <div id="a-grid" class="a-grid"></div>
-    <p id="a-pager" hidden><button type="button" id="a-prev">‹ Newer</button> <span id="a-page"></span>
-      <button type="button" id="a-next">Older ›</button></p>
-  </fieldset>
-  <fieldset id="a-nfts-box" hidden><legend>Arcade NFTs</legend>
-    <div id="a-nfts" class="a-grid"></div>
-  </fieldset>
-  <p class="muted">Send picks one for the Send tab. The inscribed coin goes whole to whoever you pick; the fee comes from
-    your other coins.</p>
-</section>
-<style>
-.a-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
-.a-grid figure{margin:0;border:1px solid var(--line);border-radius:4px;background:var(--win);padding:6px;display:flex;
-  flex-direction:column;gap:4px;min-width:0}
-.a-grid .a-pic{width:100%;aspect-ratio:1;border:0;display:block;background:transparent;pointer-events:none;
-  image-rendering:pixelated;object-fit:contain}
-.a-grid .a-kind{width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:.8rem;
-  color:var(--muted,#777);border:1px dashed var(--line)}
-.a-grid figcaption{font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-</style>
-{% endif %}
 <script src="/vendor/qrcode.js"></script>
 <script type="module">
 import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
@@ -111,12 +86,11 @@ const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
 // same digi dollar and digidollar test").
 const DIGIDOLLAR = {{ 'true' if digidollar and wallet != 'node' else 'false' }};
 const DD_ON = ["dgbtest", "dgb"], DD = "dd:";
-// Assets, while the Ord indexes module is on (2026-11-08, SadFrog: "where are our ordinals and nft and other assets
-// shown on the arcade core with ordinals enabled? ... I do not currently see away to see our held assets at all on
-// arcade core"): the ords on the account's coins as the full Wallet lists them (/account/doginals/page), the arcade's
-// own NFTs (/account/nfts), and Send for either, built and checked as the full Wallet builds and checks them.
-const ORDS = {{ 'true' if ords_on and wallet == 'account' else 'false' }};
+// What Send sends besides coins (2026-11-08): an ord or an arcade NFT picked under Assets (_assets.html), or an arcade
+// token or a DRC-20 / PRC-20 picked there or in Send's own list. Each is built where the full Wallet builds it and
+// checked here as it checks it; Assets reads what is held (window.liteAssets).
 let asset = null;                                                       // what Send sends instead of coins, if picked
+const AMOUNTY = (a) => !!a && (a.kind === "token" || a.kind === "t20"); // sent by the amount, not whole
 const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
 const $ = (id) => document.getElementById(id);
 const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
@@ -153,7 +127,7 @@ async function load() {
   });
   balances(false);
   draw();
-  if (ORDS && !document.querySelector('main [data-panel="assets"]').hidden) drawAssets();   // opened at /#assets
+  document.dispatchEvent(new CustomEvent("lite:wallet"));               // Assets draws itself if it is open
 }
 /* The Balances list, kept in this browser so a reload shows the last one at once (2026-11-06, SadFrog: "can it be
  * stored in cache or something similar so if its loaded and then refreshed it remains and then updates everyonce in
@@ -334,8 +308,8 @@ document.querySelectorAll("[data-kind]").forEach((box) => {
 async function draw() {
   const c = chain();
   const k = drawKinds(c);
-  document.querySelectorAll("[data-unit]").forEach((s) => { s.textContent = c.dd ? "dollars, " + unit(c) : unit(c); });
-  $("w-amount").placeholder = c.dd ? "100.00" : "";
+  drawUnit(c);
+  drawWhat(c);
   if (c.dd && !c.address) {
     $("w-address").textContent = "…";
     try { c.address = (await ddAddressOf("me", c)).address; } catch (x) { c.address = ""; $("w-only").textContent = String(x.message || x); }
@@ -438,7 +412,7 @@ $("w-form").onsubmit = async (e) => {
   e.preventDefault();
   tell(""); $("w-review").hidden = true; offer = null;
   const c = chain(), to = $("w-to").value.trim(), amount = $("w-amount").value.trim();
-  if (asset) return assetReview(asset, to);
+  if (asset) return assetReview(asset, to, amount);
   if (c.dd) return ddReview(c, to, amount);
   if (!satsOf(amount)) { tell("Type the amount in coins, like 1.5.", "bad"); return; }
   keys = await wallet.opened(TAGCHAIN);
@@ -509,180 +483,187 @@ $("w-unlock-form").onsubmit = async (e) => {
 $("w-cancel").onclick = () => { offer = null; $("w-review").hidden = true; tell("Not sent.", "muted"); };
 $("w-go").onclick = async () => {
   if (!offer) return;
-  const o = offer; offer = null; $("w-go").disabled = true;               // one press, one send
+  const o = offer, a = asset; offer = null; $("w-go").disabled = true;    // one press, one send
   try {
-    // The review above listed every cost from `checked`, so a mainnet send is not asked about twice.
-    const out = await wallet.confirm(keys, o, {reviewed: true});
+    // The review above listed every cost from `checked`, so a mainnet send is not asked about twice. A DRC-20 / PRC-20
+    // send is three transactions (the commit, the note, the send), each checked by wallet.js before it is signed.
+    const steps = {commit: "Signing 1 of 3: the commit", reveal: "Signing 2 of 3: the note", send: "Signing 3 of 3: the send"};
+    const out = a && a.kind === "t20" && !NODE
+      ? await wallet.sendToken20(keys, o, (step) => { $("w-go").textContent = steps[step] || step; })
+          .then((txids) => ({txid: txids.send}))
+      : await wallet.confirm(keys, o, {reviewed: true});
     ddHeld = {};
     try { localStorage.removeItem(KEPT); } catch (e) {}                 // a send changes balances: read them afresh
     $("w-review").hidden = true; $("w-to").value = ""; $("w-amount").value = "";
-    if (asset) { pickAsset(null); assetsFresh = true; }                  // gone from this wallet once in a block
+    if (a) { pickAsset(null); if (window.liteAssets) window.liteAssets.sent(); }   // gone from here once in a block
     tell(`Sent. Transaction ${out.txid}`, "ok");
     load();
   } catch (x) { $("w-review").hidden = true; tell(String(x.message || x), "bad"); }
 };
-/** The asset Send sends instead of coins, or null for coins again: its name shown in the form, the amount row hidden. */
+/** What the amount box is counted in: the token picked, or the wallet's coin. */
+function drawUnit(c) {
+  document.querySelectorAll("[data-unit]").forEach((s) => {
+    s.textContent = AMOUNTY(asset) ? asset.name : c.dd ? "dollars, " + unit(c) : unit(c);
+  });
+  $("w-amount").placeholder = AMOUNTY(asset) ? `you have ${asset.shown}` : c.dd ? "100.00" : "";
+}
+/* Send's own list of what it can send on the wallet picked: its coins, the tokens and DRC-20 / PRC-20 held there (as
+ * Assets lists them), and the ord or NFT picked under Assets. */
+let whatList = [], whatDrawn = 0;
+const sameAsset = (a, b) => !!a && !!b && a.kind === b.kind && a.net === b.net
+  && (a.kind === "token" ? a.property_id === b.property_id : a.kind === "t20" ? a.tick === b.tick : a.txid === b.txid);
+async function drawWhat(c) {
+  const mine = ++whatDrawn;
+  let list = [];
+  if (!c.dd && c.network && window.liteAssets) {
+    try { list = (await window.liteAssets.held(c.network)).filter((x) => x.sendable); } catch (e) { list = []; }
+  }
+  if (mine !== whatDrawn) return;
+  whatList = list;
+  if (asset && !list.some((x) => sameAsset(x, asset))) whatList = list.concat([asset]);
+  const box = $("w-what"); box.textContent = "";
+  box.add(new Option(`Coins (${unit(c)})`, ""));
+  whatList.forEach((x, n) => box.add(new Option(AMOUNTY(x) ? `${x.name} (${x.kind === "t20" ? x.word : "token"}, ${x.shown})`
+                                                            : x.name, String(n))));
+  syncWhat();
+  document.querySelectorAll("[data-whatrow]").forEach((el) => { el.hidden = box.options.length < 2; });
+}
+function syncWhat() {
+  const n = asset ? whatList.findIndex((x) => sameAsset(x, asset)) : -1;
+  $("w-what").value = n < 0 ? "" : String(n);
+}
+$("w-what").onchange = () => {
+  const v = $("w-what").value;
+  pickAsset(v === "" ? null : whatList[Number(v)] || null);
+};
+/** The asset Send sends instead of coins, or null for coins again. A piece (an ord, an NFT) goes whole: its name is
+ * shown and the amount row gives way to it. A token is sent by the amount, counted in that token. */
 function pickAsset(a) {
   asset = a;
-  document.querySelectorAll("[data-assetrow]").forEach((x) => { x.hidden = !a; });
-  document.querySelectorAll("[data-amountrow]").forEach((x) => { x.hidden = !!a; });
-  $("w-amount").required = !a;
-  $("w-asset").textContent = a ? a.name : "";
+  const whole = !!a && !AMOUNTY(a);
+  document.querySelectorAll("[data-assetrow]").forEach((x) => { x.hidden = !whole; });
+  document.querySelectorAll("[data-amountrow]").forEach((x) => { x.hidden = whole; });
+  $("w-amount").required = !whole;
+  $("w-asset").textContent = whole ? a.name : "";
   $("w-review").hidden = true; offer = null; tell("");
+  drawUnit(chain());
+  if (a && !whatList.some((x) => sameAsset(x, a))) drawWhat(chain()); else syncWhat();
 }
 $("w-asset-clear").onclick = () => pickAsset(null);
-/** An ord or an arcade NFT to `to`: the arcade builds it (/account/doginal/send: the inscribed coin is input 0 and goes
- * whole to the payee as output 0; /account/nft/send: the arcade's transfer and the payee's dust), and this browser checks
- * it is the piece picked, to the payee typed, from the transaction's own bytes, and lists every cost before Send. */
-async function assetReview(a, to) {
+/** Token units from what was typed, by the digits: an arcade token's (8 places if divisible, whole otherwise) as a
+ * Number, a DRC-20 / PRC-20's (its own places, past 2^53) as a BigInt; null when it can't be that. */
+function unitsOf(text, a) {
+  const s = String(text || "").trim();
+  if (a.kind === "token") return a.divisible ? satsOf(s) : /^\d+$/.test(s) ? Number(s) : null;
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(s);
+  if (!m || (!m[1] && !m[2]) || (m[2] || "").length > a.decimals) return null;
+  return BigInt((m[1] || "0") + (m[2] || "").padEnd(a.decimals, "0"));
+}
+const tokenSaid = (raw, a) => a.divisible ? coinsOf(raw) : Number(raw).toLocaleString();
+/** An asset to `to`: the arcade builds it where the full Wallet has it built -- an ord (/account/doginal/send: the
+ * inscribed coin is input 0 and goes whole to the payee as output 0), an arcade NFT (/account/nft/send) or token
+ * (/account/token/send), a DRC-20 / PRC-20 (wallet.startToken20: /account/token20/send), and for the operator the node's
+ * own (/node/wallet/token|nft/send, built and signed by the node). This browser checks it is what was picked, that much,
+ * to the payee typed, from the transaction's own bytes, and lists every cost before Send. */
+async function assetReview(a, to, amount) {
   if (!to) { tell("Say who gets it: an @name or an address.", "bad"); return; }
+  let raw = null;
+  if (AMOUNTY(a)) {
+    raw = unitsOf(amount, a);
+    if (raw == null || !(raw > 0)) {
+      tell(a.kind === "token" && !a.divisible ? `${a.name} comes in whole units only.`
+           : a.kind === "t20" ? `Type an amount of ${a.name}: ${a.decimals} decimal places at most.`
+           : `Type an amount of ${a.name}, like 1.5.`, "bad");
+      return;
+    }
+    if (raw > (a.kind === "t20" ? BigInt(a.balance) : Number(a.balance))) {
+      tell(`That's more than you have: ${a.shown} ${a.name}.`, "bad"); return;
+    }
+  }
   keys = await wallet.opened(TAGCHAIN);
   if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
   try {
-    const [route, body] = a.kind === "ord"
-      ? ["/account/doginal/send", {txid: a.txid, vout: a.vout, inscription: a.id, to, chain: a.net}]
-      : ["/account/nft/send", {piece: a.txid, to, chain: a.net}];
-    const r = await fetch(route, {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
-                                  body: JSON.stringify(body)});
-    const o = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(o.detail || "that cannot be sent");
+    let o;
+    if (a.kind === "t20") o = await wallet.startToken20(keys, {chain: a.net, tick: a.tick, amount, to});
+    else {
+      const [route, body] = a.kind === "ord"
+        ? ["/account/doginal/send", {txid: a.txid, vout: a.vout, inscription: a.id, to, chain: a.net}]
+        : a.kind === "token" ? [`${API}/token/send`, {property_id: a.property_id, to, amount, chain: a.net}]
+        : [`${API}/nft/send`, {piece: a.txid, to, chain: a.net}];
+      const r = await fetch(route, {method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json", ...(NODE ? {"X-Arcade-Admin": "1"} : {})}, body: JSON.stringify(body)});
+      o = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(o.detail || "that cannot be sent");
+    }
     let wrong = "";
     if (a.kind === "ord" && (o.inscription !== a.id || !o.inputs || !o.inputs.length || o.inputs[0].txid !== a.txid
                              || Number(o.inputs[0].vout) !== Number(a.vout))) {
       wrong = `The node built a send of another coin, not ${a.name}.`;
     } else if (a.kind === "nft" && String(o.number) !== String(a.number)) {
       wrong = `The node built a send of #${o.number}, not ${a.name}.`;
+    } else if (a.kind === "token" && String(o.property_id) !== String(a.property_id)) {
+      wrong = `The node built a send of another token (#${o.property_id}), not ${a.name}.`;
+    } else if (a.kind === "token" && Number(o.amount) !== raw) {
+      wrong = `The node built a send of ${tokenSaid(o.amount, a)} ${a.name}, and you typed ${amount}.`;
+    } else if (a.kind === "t20" && String(o.tick || "").toLowerCase() !== String(a.tick).toLowerCase()) {
+      wrong = `The node built a send of ${o.tick}, not ${a.tick}.`;
+    } else if (a.kind === "t20" && (unitsOf(o.amount, a) !== raw || !String(o.note || "").includes(`"amt":"${o.amount}"`))) {
+      wrong = `The node built a send of ${o.amount} ${o.tick}, and you typed ${amount}.`;
     } else if (ADDRESSY.test(to) ? o.to !== to : String(o.to_tag || "").toLowerCase() !== to.replace(/^@/, "").toLowerCase()) {
       wrong = `The node built a send to ${o.to_tag ? "@" + o.to_tag : o.to}, not ${to}.`;
     }
     const read = wrong ? null : await wallet.checked(o, keys);
-    if (!wrong && !(read.pays || []).some((p) => !p.mine && p.to === o.to
+    // An account's is read from the bytes: they pay the payee (the ord's whole coin; an NFT's or a token's small coin
+    // that carries it). A DRC-20's first transaction is its commit, to this key's own note: each of its three is
+    // checked by wallet.sendToken20 as it is signed. The node's own is built and signed by the node.
+    if (!wrong && !NODE && a.kind !== "t20" && !(read.pays || []).some((p) => !p.mine && p.to === o.to
                                              && (a.kind !== "ord" || Number(p.value) === Number(o.amount)))) {
       wrong = "The transaction's own bytes do not send it to that address.";
     }
     if (wrong) { tell(wrong + " Nothing was signed.", "bad"); return; }
-    const c = said.chains.find((x) => x.network === a.net) || {}, u = unit(c), costs = wallet.mainnetCosts(o, read);
+    const c = said.chains.find((x) => x.network === a.net) || {}, u = unit(c);
+    const what = a.kind === "token" ? `${tokenSaid(o.amount, a)} ${a.name}` : a.kind === "t20" ? `${o.amount} ${a.tick}`
+      : a.name;
     const list = [["To", (o.to_tag ? "@" + o.to_tag + "  " : "") + o.to],
-                  ["Sending", a.kind === "ord" ? `${a.name}, on its coin of ${coinsOf(o.amount)} ${u}` : a.name],
-                  ["Network fee", `${coinsOf(read.fee)} ${u}`]];
-    if (costs.operator) list.push(["Arcade's fee", `${coinsOf(costs.operator)} ${u}`]);
-    if (costs.data) list.push(["Data", `${coinsOf(costs.data)} ${u}`]);
-    if (read.change) list.push(["Comes back to you", `${coinsOf(read.change)} ${u}`]);
-    list.push(["Leaves your wallet", `${a.name} and ${coinsOf(costs.total)} ${u} in all`]);
+                  ["Sending", a.kind === "ord" ? `${a.name}, on its coin of ${coinsOf(o.amount)} ${u}` : what]];
+    if (a.kind === "t20") {
+      const f = o.fees || {}, fees = Number(f.commit || 0) + Number(f.reveal || 0) + Number(f.send || 0) + Number(f.postage || 0);
+      list.push(["The note", o.note || ""], ["Network fees", `about ${coinsOf(fees)} ${u}, in three transactions`],
+                ["How", `the note is inscribed on your own address, then sent to them on a ${coinsOf(f.postage || 0)} ${u} `
+                        + `coin (counted in the fees); the ${a.tick} moves when it arrives`],
+                ["Leaves your wallet", `${what} and about ${coinsOf(fees)} ${u}`]);
+    } else if (NODE) {
+      list.push(["Network fee", `${coinsOf(read.fee)} ${u}`], ["Leaves the wallet", `${what} and ${coinsOf(read.fee)} ${u}`]);
+    } else {
+      const costs = wallet.mainnetCosts(o, read);
+      list.push(["Network fee", `${coinsOf(read.fee)} ${u}`]);
+      if (costs.operator) list.push(["Arcade's fee", `${coinsOf(costs.operator)} ${u}`]);
+      if (costs.data) list.push(["Data", `${coinsOf(costs.data)} ${u}`]);
+      if (read.change) list.push(["Comes back to you", `${coinsOf(read.change)} ${u}`]);
+      list.push(["Leaves your wallet", `${what} and ${coinsOf(costs.total)} ${u} in all`]);
+    }
     terms(list);
     $("w-warn").hidden = !c.mainnet;
-    $("w-go").disabled = false; $("w-go").textContent = `Send ${a.name}`;
+    $("w-go").disabled = false; $("w-go").textContent = `Send ${what}`;
     $("w-review").hidden = false; offer = o; $("w-go").focus();
   } catch (x) { tell(String(x.message || x), "bad"); }
 }
-let assetsFresh = false, aPage = 0, aPoll = null, aDrawn = 0, nftsRead = null;
-const A_NET = `lite_assets_${ME || "visitor"}`;
-const isImage = (t) => /^image\//i.test(String(t || ""));
-function assetCard(a, pic) {
-  const f = document.createElement("figure");
-  const cap = document.createElement("figcaption"); cap.textContent = a.name; cap.title = a.id || a.txid;
-  const b = document.createElement("button"); b.type = "button"; b.textContent = "Send";
-  b.onclick = () => {
-    pickAsset(a);
+// For Assets (_assets.html): the chains this wallet has, Send for a piece or a token picked there, and a coin send
+// filled in (the fee a stray Doginal's address needs), each reviewed on the Send tab like any other.
+window.liteWallet = {
+  chains: () => said.chains || [],
+  send(a, to = "", amount = "") {
     if (net !== a.net) {
       net = a.net;
       document.querySelectorAll("[data-chain]").forEach((x) => { x.value = net; });   // at once; load() reads it afresh
-      load();
+      if (NODE) draw(); else load();
     }
+    pickAsset(a.kind === "coin" ? null : a);
+    $("w-to").value = to; $("w-amount").value = amount;
     document.querySelector('.toolbar [data-tab="send"]').click();
-    $("w-to").focus();
-  };
-  f.append(pic, cap, b);
-  return f;
-}
-/** An inscription's content from this arcade's /content/<id>, in a sandboxed frame, as the full Wallet shows it. */
-function ordPic(g) {
-  if (g.text) { const s = document.createElement("span"); s.className = "a-kind"; s.textContent = "text"; return s; }
-  const frame = document.createElement("iframe");
-  frame.className = "a-pic"; frame.loading = "lazy"; frame.title = g.id; frame.src = `/content/${encodeURIComponent(g.id)}/fit`;
-  frame.setAttribute("sandbox", "allow-scripts"); frame.setAttribute("scrolling", "no");
-  return frame;
-}
-function nftPic(p) {
-  if (!isImage(p.content_type)) {
-    const s = document.createElement("span"); s.className = "a-kind";
-    s.textContent = String(p.content_type || "file").split("/").pop().split(";")[0].slice(0, 8);
-    return s;
-  }
-  const img = document.createElement("img"); img.className = "a-pic"; img.loading = "lazy"; img.alt = "";
-  img.src = "/content/" + p.txid;
-  return img;
-}
-const ordName = (g) => (g.collection && g.collection.item) || (g.number != null ? `#${Number(g.number).toLocaleString()}`
-                                                                                : g.id.slice(0, 10) + "…");
-async function drawAssets() {
-  if (!ORDS) return;
-  clearTimeout(aPoll); aPoll = null;
-  const box = $("a-chain");
-  if (box.options.length !== said.chains.length) {
-    box.textContent = "";
-    for (const c of said.chains) box.add(new Option(c.label + (c.mainnet ? "" : " (test)"), c.network));
-    let was = ""; try { was = localStorage.getItem(A_NET) || ""; } catch (e) {}
-    box.value = said.chains.some((c) => c.network === was) ? was : (said.chains[0] || {}).network || "";
-  }
-  const an = box.value, c = said.chains.find((x) => x.network === an) || {}, mine = ++aDrawn;
-  if (!an) { $("a-status").textContent = "No wallet is ready yet: the chains are still syncing."; return; }
-  const fresh = assetsFresh; assetsFresh = false;
-  const q = new URLSearchParams({chain: an, page: String(aPage), size: "24", order: "new"});
-  if (fresh) q.set("fresh", "1");
-  let got = null, why = "";
-  try {
-    const r = await fetch(`/account/doginals/page?${q}`, {credentials: "same-origin", cache: "no-store"});
-    got = await r.json().catch(() => ({}));
-    if (!r.ok) { why = got.detail || `the arcade could not say (${r.status})`; got = null; }
-  } catch (e) { why = "The arcade did not answer."; }
-  if (mine !== aDrawn) return;
-  const grid = $("a-grid"); grid.textContent = "";
-  if (!got) {
-    $("a-status").textContent = /does not check inscriptions/.test(why) ? `This arcade does not read ${c.label}'s inscriptions.` : why;
-    $("a-pager").hidden = true;
-  } else {
-    for (const g of got.items || []) {
-      grid.append(assetCard({kind: "ord", net: an, id: g.id, txid: g.txid, vout: g.vout, name: ordName(g)}, ordPic(g)));
-    }
-    const n = (got.counts || {}).all || 0, tokens = (got.counts || {}).tokens || 0;
-    $("a-status").textContent = !got.done || got.building
-      ? `Reading your ${c.label} coins for inscriptions: ${got.checked || 0} of ${got.of || "…"}.`
-      : n ? `${n.toLocaleString()} on ${c.label}${tokens ? `, and ${tokens} token notes` : ""}.`
-      : `No inscriptions on your ${c.label} coins yet.`;
-    $("a-pager").hidden = (got.pages || 1) < 2;
-    $("a-page").textContent = `Page ${got.page + 1} of ${got.pages}`;
-    $("a-prev").disabled = got.page <= 0; $("a-next").disabled = got.page >= got.pages - 1;
-    aPage = got.page;
-    if ((!got.done || got.building) && !document.querySelector('main [data-panel="assets"]').hidden) {
-      aPoll = setTimeout(drawAssets, 3000);
-    }
-  }
-  drawNfts(an, mine, fresh);
-}
-/** The arcade's own NFTs on that chain (/account/nfts, every chain at once, read again after a minute or a send). */
-async function drawNfts(an, mine, fresh) {
-  if (fresh || !nftsRead || Date.now() - nftsRead.at > 60000) {
-    try {
-      const r = await fetch("/account/nfts", {credentials: "same-origin", cache: "no-store"});
-      nftsRead = {at: Date.now(), chains: r.ok ? ((await r.json()).chains || []) : []};
-    } catch (e) { nftsRead = {at: Date.now(), chains: []}; }
-  }
-  if (mine !== aDrawn) return;
-  const pieces = ((nftsRead.chains.find((x) => x.network === an) || {}).pieces) || [];
-  $("a-nfts").textContent = "";
-  for (const p of pieces) {
-    const name = p.collection ? `${p.collection} #${p.edition || "?"}` : `#${Number(p.number).toLocaleString()}`;
-    $("a-nfts").append(assetCard({kind: "nft", net: an, txid: p.txid, number: p.number, name}, nftPic(p)));
-  }
-  $("a-nfts-box").hidden = !pieces.length;
-}
-if (ORDS) {
-  $("a-chain").onchange = () => { try { localStorage.setItem(A_NET, $("a-chain").value); } catch (e) {} aPage = 0; drawAssets(); };
-  $("a-prev").onclick = () => { aPage = Math.max(0, aPage - 1); drawAssets(); };
-  $("a-next").onclick = () => { aPage += 1; drawAssets(); };
-  document.querySelector('[data-tab="assets"]').addEventListener("click", () => drawAssets());
-}
+    (to ? $("w-form").querySelector("button[type=submit]") : $("w-to")).focus();
+  },
+};
 if (!NODE) {
   // For the console and a module's forms (lite.html, modforms.js): the public keys this account's wallet holds, by
   // chain, and an offer a node module prepared, reviewed here and signed only on a yes.
