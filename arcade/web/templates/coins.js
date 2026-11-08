@@ -201,6 +201,11 @@ export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0
 //: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
 export const LTC_KINDS = {ltc: {scripthash: 50, hrp: "ltc"}, ltctest: {scripthash: 58, hrp: "tltc"}};
 
+//: The script-hash (P2SH) version of each chain whose wallets pay P2SH addresses (config.py `scripthash_version`):
+//: Litecoin's M.../Q... and DigiByte's S... (2026-11-08, security review: a payment to a DigiByte S... address, the
+//: wallet's own nested SegWit one too, read as "20 bytes written to the chain", its payee not said).
+export const P2SH_VERSION = {ltc: 50, ltctest: 58, dgb: 63, dgbtest: 140};
+
 //: Every SegWit chain's bech32 prefix (config.py `bech32_hrp`), for saying which address a SegWit output pays
 //: (2026-11-07: a send on real DigiByte or Litecoin may pay dgb1q.../ltc1q..., and a D... signer's own address
 //: cannot say the prefix).
@@ -992,7 +997,7 @@ export async function verifyOffer(offer, keys) {
   // A nested-segwit own address is base58 too, but in the script-hash version,
   // so it says the same (keys.nested, from wallet_js kindKey).
   const version = keys.nested || /^[a-z]+1[02-9ac-hj-np-z]+$/.test(own) ? keys.version : unbase58(own)[0];
-  const ltc = LTC_KINDS[keys.network || offer.chain] || null;
+  const p2sh = P2SH_VERSION[keys.network || offer.chain];
   let paid = 0n, change = 0n;
   const pays = [];
   // DigiDollars (2026-11-05): on DigiByte, a zero-value Taproot output holds the dollars the "DD" record gives it, in
@@ -1031,11 +1036,11 @@ export async function verifyOffer(offer, keys) {
       pays.push({to: hrp ? segwitEncode(hrp, 1, script.slice(2, 34))
                          : `a Taproot output (a vault or someone's Taproot address, key ${hex(script.slice(2, 10))}…)`,
                  value: Number(out.value), mine: false});
-    } else if (ltc && script.length === 23 && script[0] === 0xa9 && script[1] === 0x14
+    } else if (p2sh !== undefined && script.length === 23 && script[0] === 0xa9 && script[1] === 0x14
                && script[22] === 0x87) {
-      // Somebody's P2SH address (Q... on L test, M... on Litecoin): a payment, said as one. Litecoin
-      // only: on the other chains a P2SH output is a pool's or a swap's, and those keep their words.
-      pays.push({to: await base58check(ltc.scripthash, script.slice(2, 22)),
+      // Somebody's P2SH address (Q... on L test, M... on Litecoin, S... on DigiByte): a payment, said as one. Only
+      // there: on the other chains a P2SH output is a pool's or a swap's, and those keep their words.
+      pays.push({to: await base58check(p2sh, script.slice(2, 22)),
                  value: Number(out.value), mine: false});
     } else {
       pays.push({bytes: payloadBytes(script), value: Number(out.value),
