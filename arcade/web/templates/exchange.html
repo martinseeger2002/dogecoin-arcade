@@ -461,6 +461,24 @@ document.addEventListener('click', function (ev) {
     <a class="btn small" style="margin-left:auto" href="/mintpad/new">Start a launch</a>
   </div>
   <p class="msg" id="pad-news" hidden></p>
+  {# This arcade's own DigiDollar-test launchpad (arcade/ddpad.py, /bytelings), on top while it has pieces. #}
+  <div class="panel" id="ddpad-card" hidden style="gap:12px;align-items:center;margin:0 0 12px">
+    <img id="ddpad-img" alt="" style="width:64px;height:64px;image-rendering:pixelated;border-radius:8px">
+    <div><b id="ddpad-name"></b><div class="muted" id="ddpad-says" style="font-size:.88rem"></div></div>
+    <a class="ex-cta" href="/bytelings" style="margin:0 0 0 auto">Open</a>
+  </div>
+  <script>
+  fetch("/ddpad/state", {cache: "no-store"}).then((r) => r.ok ? r.json() : null).then((s) => {
+    if (!s || !s.counts || !s.counts.total) return;
+    const card = document.getElementById("ddpad-card");
+    document.getElementById("ddpad-img").src = `/ddpad/picture/${1 + Math.floor(Math.random() * s.counts.total)}`;
+    document.getElementById("ddpad-name").textContent = s.name;
+    document.getElementById("ddpad-says").textContent = s.open
+      ? `${s.counts.left} of ${s.counts.total} left · $${(s.price_cents / 100).toFixed(2)} in DigiDollar test, one each`
+      : `Coming soon: ${s.counts.inscribed} of ${s.counts.total} on the chain`;
+    card.hidden = false; card.style.display = "flex";
+  }).catch(() => {});
+  </script>
   {% if not pads %}
   <div class="panel empty"><p>No mintpads are on {{ show if show != 'mix' else 'any chain' }} yet.</p>
     <p class="muted" style="font-size:.86rem"><a href="/mintpad/new">Open one</a> for a

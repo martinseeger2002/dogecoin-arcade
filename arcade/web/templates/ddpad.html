@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}{{ pad_name }} · {{ brand.name }}{% endblock %}
+{% block body %}
+{# The DigiDollar-test launchpad (arcade/ddpad.py, web/ddpadweb.py; 2026-11-07, SadFrog: "a launch pad that only takes
+   digidollar test ... thanking people for testing out digidollar test on the arcade"). A mint holds a random piece,
+   the Wallet's own DigiDollar send pays the pad, and the pad sends the piece to the account's DigiByte address once
+   the payment is in a block. #}
+<style>
+.bp-hero{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:6px 0 14px}
+.bp-hero h1{margin:0}
+.bp-big{font-size:2rem;font-weight:700;line-height:1}
+.bp-card{border:1px solid var(--line,#333);border-radius:12px;padding:14px;margin:12px 0}
+.bp-wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px}
+.bp-wall figure{margin:0;position:relative}
+.bp-wall img{width:100%;aspect-ratio:1;image-rendering:pixelated;border-radius:6px;display:block}
+.bp-wall figure.taken img{opacity:.28}
+.bp-wall figcaption{position:absolute;left:4px;bottom:3px;font-size:.66rem;color:#fff;text-shadow:0 1px 2px #000}
+.bp-mine li{margin:6px 0}
+.bp-mine img{width:48px;height:48px;image-rendering:pixelated;vertical-align:middle;border-radius:6px;margin-right:8px}
+.bp-steps{margin:6px 0 0 18px;padding:0}
+</style>
+
+<div class="bp-hero">
+  <div>
+    <h1>{{ pad_name }}</h1>
+    <p class="muted" style="margin:4px 0 0">Baby pixel monsters on DigiByte, the arcade's own collection. A thank-you
+      to everyone trying DigiDollar test: ${{ '%.2f' % (price / 100) }} in DigiDollar test each, one per wallet.</p>
+  </div>
+  <div style="margin-left:auto;text-align:right">
+    <div class="bp-big" id="left">…</div>
+    <div class="muted" id="left-words">left</div>
+  </div>
+</div>
+
+<div class="msg err" id="trouble" hidden></div>
+<div class="msg ok" id="news" hidden></div>
+
+<section class="bp-card">
+  <div class="row" style="gap:12px;align-items:center;flex-wrap:wrap">
+    <button class="btn" id="mint" disabled>Mint a {{ pad_name[:-1] if pad_name.endswith('s') else pad_name }}</button>
+    <span class="muted" id="mint-says">Loading…</span>
+  </div>
+  <ol class="bp-steps muted" style="font-size:.88rem">
+    <li>Mint holds a random one for you. Which one is a surprise until you've paid.</li>
+    <li>Your wallet signs a ${{ '%.2f' % (price / 100) }} DigiDollar test payment to the pad. The fee is a little DGB test.</li>
+    <li>Once the payment is in a block, the pad sends your {{ pad_name[:-1] if pad_name.endswith('s') else pad_name }}
+      to your DigiByte address. It shows in your Wallet's NFTs, and you can list it on the Exchange.</li>
+  </ol>
+  <p class="muted" style="font-size:.86rem;margin:8px 0 0">No DigiDollar test yet? Mint some from DigiByte test in
+    your <a href="/me/wallet">Wallet</a> first.</p>
+</section>
+
+<section class="bp-card" id="mine-box" hidden>
+  <h3 style="margin:0 0 6px">Yours</h3>
+  <ul class="bp-mine" id="mine" style="list-style:none;margin:0;padding:0"></ul>
+</section>
+
+<section class="bp-card" id="evolve-box" hidden>
+  <h3 style="margin:0 0 6px">Growing up</h3>
+  <p class="muted" id="evolve" style="margin:0"></p>
+</section>
+
+<section class="bp-card">
+  <h3 style="margin:0 0 10px">All of them</h3>
+  <div class="bp-wall" id="wall"></div>
+</section>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls;
+  if (text != null) e.textContent = text; return e; };
+const say = (t) => { $("trouble").textContent = t || ""; $("trouble").hidden = !t; };
+const news = (t) => { $("news").textContent = t || ""; $("news").hidden = !t; };
+const PAY = {{ pay_chain|tojson }};
+const ONE = {{ (pad_name[:-1] if pad_name.endswith('s') else pad_name)|tojson }};
+const TAGCHAIN = {network: {{ chain.network|tojson }}, version: {{ chain.params.pubkeyhash_version }}};
+const SIGNED_IN = typeof ARCADE_ME === "string" && !!ARCADE_ME;
+const WORDS = {held: "Waiting for your payment", paying: "Paid, waiting for a block", paid: "Paid, sending it to you",
+               sending: "On its way to your DigiByte address", sent: "Yours", "let go": "Let go"};
+let state = null, busy = false;
+
+async function ask(url, body) {
+  const r = await fetch(url, body ? {method: "POST", headers: {"Content-Type": "application/json"},
+                                     body: JSON.stringify(body)} : {cache: "no-store"});
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* said below */ }
+  if (!r.ok) throw new Error(j.detail || "The arcade did not answer.");
+  return j;
+}
+
+function draw() {
+  const s = state, c = s.counts || {};
+  $("left").textContent = c.total ? `${c.left} / ${c.total}` : "—";
+  $("left-words").textContent = "left to mint";
+  const wall = $("wall");
+  wall.replaceChildren(...(s.pieces || []).map((p) => {
+    const f = el("figure", p.taken ? "taken" : "");
+    const img = el("img"); img.src = `/ddpad/picture/${p.number}`; img.alt = `${s.name} #${p.number}`;
+    img.loading = "lazy";
+    f.append(img, el("figcaption", "", `#${p.number}${p.taken ? " · minted" : ""}`));
+    return f;
+  }));
+  const mine = s.mine || [];
+  $("mine-box").hidden = !mine.length;
+  $("mine").replaceChildren(...mine.map((m) => {
+    const li = el("li");
+    if (m.number) { const img = el("img"); img.src = `/ddpad/picture/${m.number}`; img.alt = m.name; li.append(img); }
+    li.append(el("b", "", m.name || `A ${ONE}`), " · ", WORDS[m.state] || m.state);
+    if (m.why) li.append(el("span", "muted", ` (${m.why})`));
+    if (m.iid && m.state === "sent") li.append(" · ", Object.assign(el("a", "", "see it"), {href: `/content/${m.iid}`}));
+    return li;
+  }));
+  const ev = s.evolve || {};
+  $("evolve-box").hidden = !(ev.stages && ev.stages.length);
+  if (ev.next) {
+    $("evolve").textContent = `Every ${ev.every_days} days a new stage opens. Babies can grow into ${ev.next.stage}s from `
+      + `${new Date(ev.next.from * 1000).toLocaleDateString()}: hold on to yours.`;
+  } else if (ev.stages && ev.stages.length) {
+    $("evolve").textContent = "Every stage is open.";
+  }
+  const btn = $("mint"), why = $("mint-says");
+  const live = mine.some((m) => m.state !== "let go");
+  btn.disabled = busy || !s.open || !c.left || live;
+  why.textContent = !s.open ? (c.total ? `Opens once all ${c.total} are on the chain (${c.inscribed} so far).`
+                                       : "Not open yet.")
+    : !c.left ? "All minted. Find them on the Exchange."
+    : live ? "You have yours: one each."
+    : !SIGNED_IN ? "Sign in to mint."
+    : `$${(s.price_cents / 100).toFixed(2)} in DigiDollar test`;
+}
+
+async function load() {
+  try { state = await ask("/ddpad/state"); draw(); }
+  catch (e) { say(String(e.message || e)); }
+}
+
+$("mint").onclick = async () => {
+  if (!SIGNED_IN) { location.href = "/join?next=/bytelings"; return; }
+  busy = true; draw(); say(""); news("");
+  try {
+    const keys = await wallet.opened(TAGCHAIN);
+    if (!keys) throw new Error("Unlock your wallet first: press Unlock at the top of the page.");
+    const pub = Array.from(wallet.keysOn(keys, PAY).pubkey, (b) => b.toString(16).padStart(2, "0")).join("");
+    const offer = await ask("/ddpad/mint", {pubkey: pub});
+    await wallet.confirm(keys, offer);
+    news(`Paid. Your ${ONE} is sent to your DigiByte address once the payment is in a block, usually a minute or two.`);
+  } catch (e) {
+    say(String(e.message || e));
+  } finally {
+    busy = false; await load();
+  }
+};
+
+load();
+setInterval(load, 20000);
+</script>
+{% endblock %}
