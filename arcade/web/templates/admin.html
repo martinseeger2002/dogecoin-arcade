@@ -480,6 +480,10 @@
     <span id="swapbiglines" class="row" style="gap:8px;flex-wrap:wrap;align-items:center"></span>
     <button type="button" class="small" id="saveswapbig">Save</button>
   </div>
+  <label style="display:block;margin:8px 0 0"><input type="checkbox" id="swapconfirmall"> Every swap waits for
+    1 confirmation, whatever its value (none acts on a lock still in the mempool)</label>
+  <p class="muted" style="margin:4px 0 0">On a chain this arcade borrows from another arcade, every swap waits for a
+    confirmation anyway: a lock in the mempool would be the lender's word alone.</p>
   <p class="muted" style="margin:12px 0 6px">A <strong>delegated</strong> order (one this node fills with its seller's
     page closed) is not trustless: its key is held here, so you could spend its deposit. One order gives at most
     (0: none delegated on that chain):</p>
@@ -2381,6 +2385,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     $('update_channel').value = d.selling.update_channel || 'live';
     drawTerms(d.terms, d.node.public_hosts);
     // One line per real-coin chain the swaps know (2026-10-18: LTC too), drawn from the setting itself.
+    $('swapconfirmall').checked = !!d.swap_confirm_all;
     if (d.swap_big) {
       var lines = $('swapbiglines'); lines.textContent = '';
       Object.keys(d.swap_big).forEach(function (net, i) {
@@ -3100,7 +3105,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
   $('saveswapbig').onclick = function () {
     var big = {};
     document.querySelectorAll('.swapbig').forEach(function (i) { big[i.dataset.net] = i.value; });
-    call('/admin/api/settings', {swap_big: big})
+    call('/admin/api/settings', {swap_big: big, swap_confirm_all: $('swapconfirmall').checked})
       .then(function () { say('Big-swap lines saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('saveinscribefee').onclick = function () {

@@ -13880,6 +13880,12 @@ def create_app(state: AppState) -> FastAPI:
         from ..node_trader import swap_big
         return swap_big(state)
 
+    def _swap_lines() -> dict:
+        """The lines a swap here waits by (node_trader.swap_lines): the operator's, but a confirmation for every swap on
+        a chain this arcade borrows, and on every chain with swap_confirm_all on (2026-11-08)."""
+        from ..node_trader import swap_lines
+        return swap_lines(state)
+
     def _delegate_caps() -> dict:
         from ..node_trader import delegate_caps
         return delegate_caps(state)
@@ -13973,8 +13979,8 @@ def create_app(state: AppState) -> FastAPI:
             # This node on the mesh: a swap a tab lists names it, and shows on other
             # arcades while it is online (trade_orders.py, 2026-10-13).
             "mesh_node": getattr(mesh, "node_id", "") if mesh is not None else "",
-            # Where a swap waits 1 confirmation instead of none (node_trader.swap_big; 2026-10-17).
-            "swap_big": _swap_big_lines(),
+            # Where a swap waits 1 confirmation instead of none (node_trader.swap_lines; 2026-10-17, 2026-11-08).
+            "swap_big": _swap_lines(),
             # The most one delegated order may give per real-coin chain (node_trader.delegate_caps; 2026-10-25).
             "delegate_cap": _delegate_caps(),
             "pubkey": account.pubkey, "network": chain.network,
@@ -30100,6 +30106,7 @@ def create_app(state: AppState) -> FastAPI:
                       "own": bool(state.setting(termslib.TEXT_SETTING, ""))},
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
+            "swap_confirm_all": bool(state.setting("swap_confirm_all", False)),
             "delegate_cap": {k: v / COIN for k, v in _delegate_caps().items()},
             "inscribe_fee": _admin_inscribe_fee(),
             "flags": _admin_flags(),
@@ -31371,6 +31378,9 @@ def create_app(state: AppState) -> FastAPI:
                 state.set_setting("boost:days", max(1, int(b.get("days") or 30)))
             if "trade_cut" in said:
                 state.set_setting("trade_cut", _percent(said["trade_cut"], "The cut on trades"))
+            if "swap_confirm_all" in said:
+                # Every swap waits for a confirmation, whatever its value and chain (node_trader.swap_lines, 2026-11-08).
+                state.set_setting("swap_confirm_all", bool(said["swap_confirm_all"]))
             if isinstance(said.get("swap_big"), dict):
                 # Where a swap waits 1 confirmation instead of none (2026-10-17; was 3 instead of 1, 2026-10-13: "1,
                 # more for big trades"): a mainnet coin leg at or above this, in whole coins.

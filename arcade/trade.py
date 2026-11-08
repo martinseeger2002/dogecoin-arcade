@@ -107,6 +107,12 @@ def confirmations_for(give: "Leg", get: "Leg", big: dict | None = None) -> int:
         need = max(need, ASSET_CONFIRMATIONS)
     return need
 
+def _unsettled(seen: "LockSeen") -> bool:
+    """The other side's lock is in the mempool and can still be replaced (BIP 125, 2026-11-08, security review): one
+    paying its locker back would leave this side's lock claimed for nothing. Waited out until it confirms."""
+    return bool(getattr(seen, "replaceable", False)) and not seen.confirmations
+
+
 # The steps next_step can answer.
 LOCK, WAIT, CLAIM, REFUND, DONE, ABORT = "lock", "wait", "claim", "refund", "done", "abort"
 
@@ -428,6 +434,7 @@ class LockSeen:
     spent_by_script_sig: str = ""   # hex input script of the spend, if it was spent
     spent_by_me: bool = False       # the spend pays one of my addresses: shown only, next_step never decides on it
     reserve: int = 0             # a Doginal lock: the coin at output 1 that pays its spend
+    replaceable: bool = False    # in the mempool and replaceable (BIP 125): never acted on until it confirms
 
 
 @dataclasses.dataclass
@@ -533,7 +540,7 @@ def next_step(trade: Trade, facts: Facts, now: int) -> tuple[str, str]:
     if trade.role == INITIATOR:
         if mine is None:
             return LOCK, "I lock first"
-        if theirs is None or theirs.confirmations < need:
+        if theirs is None or theirs.confirmations < need or _unsettled(theirs):
             if now >= trade.my_locktime:
                 return REFUND, "the other side never locked; my lock time has passed"
             return WAIT, "waiting for the other lock to confirm"
@@ -546,7 +553,7 @@ def next_step(trade: Trade, facts: Facts, now: int) -> tuple[str, str]:
         return WAIT, "too close to their lock time to claim safely; waiting to refund"
 
     # RESPONDER
-    if theirs is None or theirs.confirmations < need:
+    if theirs is None or theirs.confirmations < need or _unsettled(theirs):
         if mine is not None and now >= trade.my_locktime:
             return REFUND, "my lock time has passed"
         return WAIT, "waiting for the initiator's lock to confirm"

@@ -7,6 +7,7 @@ after the time, and nothing at all for a lock that names somebody else. Then the
 state machine (wallet.js nextTradeStep) against arcade/trade.py's, scenario for scenario.
 """
 
+import dataclasses
 import pathlib
 import secrets
 import sys
@@ -121,7 +122,14 @@ def _scenarios():
                           T.Facts(mine=seen(False, spent=claim, by_me=True), theirs=seen(True)),
                           T.Facts(mine=seen(False), theirs=seen(True, spent=gone, by_me=True)),
                           T.Facts(mine=seen(False), theirs=seen(True, spent=stray, by_me=True)),
-                          T.Facts(mine=seen(False, spent="00", by_me=True), theirs=seen(True))):
+                          T.Facts(mine=seen(False, spent="00", by_me=True), theirs=seen(True)),
+                          # 2026-11-08 (trade._unsettled): a replaceable lock in the mempool is waited out; once
+                          # confirmed it counts; this trader's own replaceable lock changes nothing.
+                          T.Facts(theirs=dataclasses.replace(seen(True, conf=0), replaceable=True)),
+                          T.Facts(mine=seen(False), theirs=dataclasses.replace(seen(True, conf=0), replaceable=True)),
+                          T.Facts(mine=seen(False), theirs=dataclasses.replace(seen(True), replaceable=True)),
+                          T.Facts(mine=dataclasses.replace(seen(False, conf=0), replaceable=True),
+                                  theirs=seen(True))):
                 out.append((tr, facts))
     # A token leg each way: the reserve, and the ledger's word on the asset.
     for role in (T.INITIATOR, T.RESPONDER):
