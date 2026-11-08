@@ -178,9 +178,28 @@ def test_the_wallet_reads_a_mints_record_whose_last_item_is_its_owners_key(loade
         return (await c.verifyOffer(offer, {...k, key: c.unhex(k.key), pubkey: c.unhex(k.pubkey)})).pays;""",
                 offer, keys)
     vault, dd, record = pays[0], pays[1], pays[2]
-    assert vault["value"] == 10 ** 8 and vault["to"].startswith("dgbt1p") and not vault["mine"]   # its address (#100)
+    # The vault, rebuilt from the record and found to be this key's own (2026-11-08, security review): said as that.
+    lock = 598_633 + 240 + pilot.BUFFER
+    assert vault == {"to": f"your DigiDollar vault, locked until block {lock:,}", "value": 10 ** 8, "mine": False,
+                     "vault": True}, vault
     assert dd == {"to": pilot.dd_address("dgbtest", pub[1:]), "dd": 10000, "value": 0, "mine": True}
     assert record["bytes"] > 32 and record["value"] == 0
+
+    def refused(outputs):
+        _, made = host.prepare({"packages": {pid: row}}, "hello", {**prepared, "outputs": outputs}, chain.address, pub)
+        return _run(driver, """
+            const offer = arguments[0], k = arguments[1];
+            try { await c.verifyOffer(offer, {...k, key: c.unhex(k.key), pubkey: c.unhex(k.pubkey)}); return "signed"; }
+            catch (e) { return String(e.message || e); }""", {**made.as_json(), "chain": "dgbtest"}, keys)
+
+    # The collateral to any other Taproot key -- a module's or an arcade's own -- is refused before anything is signed.
+    other, _ = keypair()
+    elsewhere = [(10 ** 8, "5120" + other[1:].hex())] + [tuple(o) for o in prepared["outputs"][1:]]
+    assert "not your own vault" in refused(elsewhere)
+    # So is a record naming another owner, whose vault only that owner could redeem.
+    theirs = pilot.mint(other[1:], 10000, 0, 598_633, 0, 10 ** 8, [{"txid": "aa" * 32, "vout": 0, "value": 150_000_000}],
+                        p2pkh_script(chain.address))
+    assert "another key" in refused([tuple(o) for o in theirs["outputs"]])
 
 
 def test_the_wallets_digidollar_key_proof_is_the_one_the_arcade_checks(loaded):
