@@ -16,6 +16,7 @@ from nacl.signing import SigningKey
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_auth_web import _sign_in                               # noqa: E402
+import signup_proof as SP                                         # noqa: E402
 
 from arcade import adminwindow                                   # noqa: E402
 
@@ -311,10 +312,9 @@ def test_the_first_operator_signs_up_with_the_offered_fruit_at_the_machine(publi
         assert "fruit" not in app.get("/signup/mango", headers=EDGE).json()
         key = SigningKey.generate()
         pubkey = key.verify_key.encode().hex()
-        chain = state.messaging
-        address = b58check_encode(chain.params.pubkeyhash_version, hash160(b"\x02" + key.verify_key.encode()))
-        said = app.post("/signup", headers=LOCAL, json={"tag": "mango", "pubkey": pubkey, "address": address,
-                                                        "blob": {"sealed": "x"}})
+        coin = SP.coin_key()
+        address = SP.address_of(state, coin)
+        said = SP.signup(app, state, "mango", key=key, coin=coin, headers=LOCAL)
         assert said.status_code == 200, said.text
         assert said.json()["fruit"] is True
         assert state.operator == pubkey
@@ -437,10 +437,7 @@ def test_the_offered_fruit_passes_the_claimed_name_check_and_nothing_else_does(p
     state.mesh = Mesh()
 
     def signup(tag):
-        key = SigningKey.generate()
-        address = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(b"\x02" + key.verify_key.encode()))
-        return app.post("/signup", headers=LOCAL, json={"tag": tag, "pubkey": key.verify_key.encode().hex(),
-                                                        "address": address, "blob": {"sealed": "x"}})
+        return SP.signup(app, state, tag, headers=LOCAL)
     try:
         refused = signup("someone")
         assert refused.status_code == 400 and "claimed on the chain" in refused.json()["detail"]

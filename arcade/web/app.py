@@ -12184,7 +12184,11 @@ def create_app(state: AppState) -> FastAPI:
         POST carries it."""
         account = _signed_in_account(request)
         ended = state.accounts().end_sessions(account.pubkey)
-        answer = JSONResponse({"pubkey": None, "ended": ended})
+        # Its API keys too (2026-11-08, security review): a key is a way in that outlived every session.
+        keys_off = 0
+        if callable(getattr(state, "api_keys", None)):
+            keys_off = state.api_keys().off_for(account.pubkey.lower())
+        answer = JSONResponse({"pubkey": None, "ended": ended, "keys_off": keys_off})
         answer.delete_cookie(SESSION_COOKIE)
         if not _public_request(request):                   # signed out on purpose: not the operator again at once
             answer.set_cookie(OUT_COOKIE, "1", max_age=365 * 86400, httponly=True, samesite="strict")
@@ -13022,12 +13026,25 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError(f"@{wanted} already has an account on {there}: sign in instead, with the "
                                      f"same name and password, and this arcade brings it here")
             register = state.accounts()
-            # A key that already has an account here signs in (/auth/login) instead (SadFrog's side, 2026-10-25):
-            # nothing here proves the caller holds the key, so a second sign-up under a new name was a session as
-            # that account's owner, and the address and wallet behind it could then be changed.
+            # A key that already has an account here signs in (/auth/login) instead (SadFrog's side, 2026-10-25).
             if state.vault().by_pubkey(pubkey) is not None or register.account(pubkey) is not None:
                 raise ValueError("this key already has an account on this arcade: sign in instead")
-            register.join(pubkey)         # a seat, and it may say there is none
+            # The address is the caller's own (2026-11-08, security review): its coin key signs the same proof an
+            # imported wallet's key does (wallet_imports.check_proof). Without it anybody could post a claimed name's
+            # owner address, which is public, and file that name here under their own key and sealed wallet.
+            from .. import wallet_imports
+            try:
+                wallet_imports.check_proof(chain.params, pubkey, chain.network, address, str(said.get("coin_pubkey", "")),
+                                           "p2pkh", str(said.get("address_signature", "")))
+            except wallet_imports.ImportRefused:
+                raise ValueError("this sign-up did not prove the address is yours: reload the page and try again") \
+                    from None
+            # And the key is the caller's own: the signed challenge /auth/login checks, which also seats it. Before,
+            # a sign-up was a session for any public key posted here.
+            token = register.login(
+                pubkey, str(said.get("nonce", "")), str(said.get("signature", "")),
+                origin=_origin(request), ip=(request.client.host if request.client else ""), join=True,
+                signed=str(said.get("origin") or "")[:300], accept=lambda signed: _signs_in_here(request, signed))
             state.vault().put(wanted, pubkey, address, json.dumps(blob))
         except accountslib.SeatsFull as full:
             return JSONResponse({"detail": str(full)}, status_code=409)
@@ -13110,7 +13127,6 @@ def create_app(state: AppState) -> FastAPI:
             except Exception:                                  # noqa: BLE001 -- asked again every minute
                 log.debug("asking for the fruit name failed", exc_info=True)
 
-        token = _open_session(pubkey)
         answer = JSONResponse({"tag": wanted, "pubkey": pubkey,
                                "address": address, "fruit": bool(fruit),
                                "given": given, "no_coins": why_not})
@@ -13816,18 +13832,6 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"tag": str(said.get("tag") or name), "pubkey": str(said.get("pubkey") or ""),
                              "address": str(said.get("address") or ""), "blob": blob,
                              "from": node})
-
-    def _open_session(pubkey: str) -> str:
-        """A session for an account that has just proved itself another way."""
-        register = state.accounts()
-        now = int(time.time())
-        token = secrets.token_urlsafe(32)
-        register.conn.execute(
-            "INSERT INTO session (token_hash, pubkey, made, expires) "
-            "VALUES (?,?,?,?)",
-            (accountslib._hash(token), pubkey.lower(), now,
-             now + accountslib.SESSION_DAYS * 86400))
-        return token
 
     def _others(request: Request) -> list[str]:
         """The other accounts signed in on this browser: live session tokens."""

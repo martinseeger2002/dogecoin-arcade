@@ -1031,7 +1031,8 @@ document.body.dataset.meReady = "yes";
   document.getElementById("sign-out-everywhere").onclick = async (e) => {
     const button = e.currentTarget;
     if (!(await arcadeAsk("Sign out everywhere?", "This account is signed out on every device it is "
-        + "signed in on, this one too. Each one asks for your name and password again. Your wallet, "
+        + "signed in on, this one too. Each one asks for your name and password again, and this "
+        + "account's API keys are switched off (switch on again the ones that are yours). Your wallet, "
         + "messages and address book are kept safely, sealed.", "Sign out everywhere"))) return;
     button.disabled = true; button.textContent = "Signing out\u2026";
     const wallet = await import("/wallet.js");

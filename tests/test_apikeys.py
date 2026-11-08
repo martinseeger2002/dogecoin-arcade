@@ -224,3 +224,23 @@ def test_every_console_command_says_whether_a_read_only_key_may_run_it():
     assert reads == READS_ONLY, (
         f"read-only now but not listed: {sorted(reads - READS_ONLY)}; listed but now a change: {sorted(READS_ONLY - reads)}"
         " -- a new command that changes anything takes writes=True; one that only reads is added to READS_ONLY")
+
+
+def test_sign_out_everywhere_switches_the_accounts_keys_off(app, app_state):
+    """2026-11-08, security review: a key outlived "sign out everywhere", so a key made by whoever held a session went
+    on acting as the account. Now they go off with the sessions; another account's keys stay on."""
+    signer, other = SigningKey.generate(), SigningKey.generate()
+    assert _sign_in(app, other, headers=OUTSIDE).status_code == 200
+    theirs = app.post("/account/keys", headers=OUTSIDE, json={"name": "other bot"}).json()["key"]
+    app.cookies.clear()
+    assert _sign_in(app, signer, headers=OUTSIDE).status_code == 200
+    key = app.post("/account/keys", headers=OUTSIDE, json={"name": "my bot"}).json()["key"]
+    assert app.get("/api/v1/whoami", headers=_with(key)).status_code == 200
+    ended = app.post("/auth/logout-everywhere", headers=OUTSIDE)
+    assert ended.status_code == 200 and ended.json()["keys_off"] == 1, ended.text
+    app.cookies.clear()
+    assert app.get("/api/v1/whoami", headers=_with(key)).status_code in (401, 403), "off with the sessions"
+    assert app.get("/api/v1/whoami", headers=_with(theirs)).status_code == 200, "another account's key is untouched"
+    assert _sign_in(app, signer, headers=OUTSIDE).status_code == 200
+    listed = app.get("/account/keys", headers=OUTSIDE).json()["keys"]
+    assert len(listed) == 1 and listed[0]["off"], "still there, switched off, for the owner to switch back on"

@@ -348,6 +348,7 @@ async function _signUp(tag, password, {network, version}) {
     alsoOn[`address_${chain.network}`] = keys.address;
     alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
   }
+  const proved = await signupProof(wallet, network);
   const answer = await fetch("/signup", {
     method: "POST", headers: {"Content-Type": "application/json"},
     // The coin public key travels too: a Class B payload puts it in every
@@ -356,7 +357,7 @@ async function _signUp(tag, password, {network, version}) {
     body: JSON.stringify({tag, pubkey: wallet.pubkey,
                           address: wallet.address,
                           coin_pubkey: coinsHex(wallet.coinPubkey),
-                          ...alsoOn, blob}),
+                          ...alsoOn, ...proved, blob}),
   });
   const said = await answer.json();
   if (!answer.ok) throw new Error(said.detail || "that did not work");
@@ -427,11 +428,24 @@ async function fileHere(wallet, tag, blob, running, network) {
     alsoOn[`address_${chain.network}`] = keys.address;
     alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
   }
+  const proved = await signupProof(wallet, network);
   return fetch("/signup", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({tag, pubkey: wallet.pubkey, address: wallet.address,
-                          coin_pubkey: coinsHex(wallet.coinPubkey), ...alsoOn, blob}),
+                          coin_pubkey: coinsHex(wallet.coinPubkey), ...alsoOn, ...proved, blob}),
   });
+}
+
+/** What /signup checks before it files anything (2026-11-08, security review): the account key signs a fresh
+ *  challenge for this page's own address, as a sign-in does (seatWith), and the coin key signs that the address is
+ *  its own, with the proof an imported wallet gives (coins.importProof). */
+async function signupProof(wallet, network) {
+  const challenge = await (await fetch("/auth/challenge")).json();
+  const origin = signer.loginOrigin();
+  const signature = await wallet.sign(signer.loginMessage(origin, challenge.nonce));
+  const proof = await coins.importProof(wallet.pubkey, network, wallet.address, wallet.coinPubkey);
+  return {nonce: challenge.nonce, origin, signature: hex(signature),
+          address_signature: hex(await coins.signHash(wallet.coinKey, proof))};
 }
 
 /** Before a wallet made on another arcade is opened and filed here (2026-10-23, SadFrog: a game that switches node
