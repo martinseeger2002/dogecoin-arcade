@@ -75,8 +75,10 @@ def test_themes_on_your_arcade_turn_the_desktop_on_and_pick_its_look():
     redirect = base[base.index("THE DESKTOP VIEW (desktop.html"):]
     redirect = redirect[:redirect.index("if (!installed || window.top !== window")]
     for need in ("!installed", "window.top === window", "window.innerWidth > 640", "admin|join|restore|signin",
-                 "/^(1|w98|ubuntu|dogefeedx)$/.test(localStorage.getItem('arcade.deskview') || '{{ desk_default }}')"):
+                 "if (/^(w98|ubuntu|dogefeedx)$/.test(wear))"):
         assert need in redirect
+    # what is worn: this browser's pick, else the arcade's own look (arcade/modules.py), ArcadeCore among them
+    assert "wear = localStorage.getItem('arcade.deskview') || wear;" in base and "if (wear === 'core') {" in base
     assert "look.href = skin === 'ubuntu' ? '/deskubuntu.css' : skin === 'dogefeedx' ? '/deskdogefeedx.css' : '/desk98.css';" in base
 
 

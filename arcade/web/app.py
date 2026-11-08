@@ -995,9 +995,9 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError:
             pass
     TEMPLATES.env.globals["brand"] = brandlib.CURRENT   # this node's name, colours, icons, or its web address's (brand.py)
-    # ARCADE Lite wears no coin's face until its operator picks one (brand.CORE).
+    # ArcadeCore (once ARCADE Lite) wears no coin's face until its operator picks one (brand.CORE).
     brandlib.fallback = lambda: (brandlib.CORE if not state.setting("brand")
-                                 and modulelib.edition(state.settings()) == "lite" else brandlib.DEFAULT)
+                                 and modulelib.look(state.settings()) == "core" else brandlib.DEFAULT)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
     # Read from each chain by its own node (2026-10-15, the outside Doginals API removed): Doginals on Dogecoin, and the same ord
     # envelopes on small Pepecoin MAINNET coins ("do the same for small .01 pep txs. Not made by the Arcade").
@@ -1369,12 +1369,17 @@ def create_app(state: AppState) -> FastAPI:
             # The operator's own badge: on a public page nobody sees it, and
             # working it out asks the node's wallet which addresses are its own.
             "offers_waiting": 0 if _account_view(request) else _offers_waiting(),
-            # The look a computer's browser opens in until its reader picks one under Themes (base.html, desktop.html)
-            "desk_default": DESK_DEFAULT,
+            # The look a computer's browser opens in until its reader picks one (base.html, desktop.html, lite.html):
+            # the arcade's look (arcade/modules.py), and the desktop's skin when that is not a desktop look
+            "look": modulelib.look(state.settings()),
+            "desk_default": modulelib.look(state.settings()) if modulelib.look(state.settings()) in modulelib.DESKTOP_LOOKS
+                            else DESK_DEFAULT,
             "phone_default": PHONE_DEFAULT,
             # What runs here (arcade/modules.py): base.html leaves out the desktop and the home screen when they are off
             "modules_on": modulelib.enabled(state.settings()),
-            "edition_lite": modulelib.edition(state.settings()) == "lite",
+            # Pages drawn as the ArcadeCore window's (base.html): on an arcade that opens in it
+            "edition_lite": modulelib.look(state.settings()) == "core",
+            "look_titles": modulelib.LOOK_TITLES,
             # a fresh install that has not chosen Full or Lite yet (_edition_ask.html)
             "edition_ask": modulelib.asking(state.settings()),
         }
@@ -1607,10 +1612,18 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001 -- shown by mesh id
             return {}
 
+    def _core_window(request: Request) -> bool:
+        """Whether a page the ArcadeCore window draws in a panel of its own (Join, an account's Backup) is asked for
+        by that window: on an arcade whose look is ArcadeCore, and not from inside a frame, which is a desktop
+        window or a page in a tab, where the page itself belongs."""
+        return (modulelib.look(state.settings()) == "core"
+                and request.headers.get("sec-fetch-dest", "document") != "iframe")
+
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
-        # ARCADE Lite opens on its own window, for visitors, users and the operator alike (arcade/lite/web.py).
-        if modulelib.edition(state.settings()) == "lite":
+        # An arcade whose look is ArcadeCore opens on its window, for visitors, users and the operator alike
+        # (arcade/lite/web.py); a person who wears a desktop look is sent on from there (lite.html).
+        if modulelib.look(state.settings()) == "core":
             return _lite_home(request)
         # On a public instance the front page is the SPLASH, not the
         # operator's wallet. `/` is in the door's allowlist because a public
@@ -11905,7 +11918,7 @@ def create_app(state: AppState) -> FastAPI:
         their own words -- it is the older page and it is still the whole
         of what this one does underneath. ARCADE Lite draws it in its own window.
         """
-        if modulelib.edition(state.settings()) == "lite":
+        if _core_window(request):
             return _lite_home(request)
         register = state.accounts()
         return render(request, "signup.html", chain=_account_chain(), fruit=_fruit_here(request),
@@ -11915,7 +11928,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/join/keys", response_class=HTMLResponse)
     def join_with_keys(request: Request):
-        if modulelib.edition(state.settings()) == "lite":
+        if _core_window(request):
             return _lite_home(request)
         register = state.accounts()
         return render(request, "join.html",
@@ -25376,8 +25389,8 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         if account is None:
             return _to_join(request)
-        if modulelib.edition(state.settings()) == "lite":
-            return _lite_home(request)                     # ARCADE Lite draws it in its own window
+        if _core_window(request):
+            return _lite_home(request)                     # the ArcadeCore window draws it in its own panel
         mine = state.vault().by_pubkey(account.pubkey) or {}
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),

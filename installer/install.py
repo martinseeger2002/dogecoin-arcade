@@ -1152,15 +1152,23 @@ EDITION_SETTING = "edition"
 EDITIONS = ("full", "lite")
 
 EDITION_QUESTION = """
-Which arcade do you want to install?
+How should this arcade start? It is the same arcade either way.
 
-  Full         Everything the arcade does: the feed, messages, the exchange,
-               ords and Explore, apps and games.
-  ARCADE Lite  The crypto cores only: the chains and their wallets, send and
-               receive, the address book, accounts, settings, help and the
-               mesh link. Anything else can be switched on later in
-               Admin -> Edition & modules, and nothing is ever deleted.
+  Full         Every module on: the feed, messages, the exchange, ords and
+               Explore, apps and games. You pick the look it opens in next.
+  Lite         The crypto cores only, in the ArcadeCore window: the chains and
+               their wallets, send and receive, the address book, accounts,
+               settings, help and the mesh link.
+
+Modules and looks can be changed later in Admin -> Edition & modules, and
+nothing is ever deleted.
 """
+#: The looks a Full arcade can open in (arcade/modules.py LOOKS); each person can wear another one in their browser.
+LOOK_SETTING = "look"
+LOOKS = (("core", "ArcadeCore", "the ArcadeCore window"), ("ubuntu", "Ubuntu", "the Ubuntu desktop"),
+         ("w98", "Windows 98", "the Windows 98 desktop"), ("web", "Website", "the website's pages"))
+LOOK_QUESTION = "\nWhich look should it open in?\n\n" + "".join(
+    f"  {i}  {title:<11} {what}\n" for i, (_k, title, what) in enumerate(LOOKS, 1))
 
 
 def existing_arcade(home: Path) -> bool:
@@ -1183,10 +1191,7 @@ def choose_edition(home: Path, given: str | None, ask=input, interactive: bool |
     if existing_arcade(home):
         return None
     if interactive is None:
-        try:                                               # a person at a terminal: both ends of it are one
-            interactive = sys.stdin.isatty() and sys.stdout.isatty()
-        except (AttributeError, ValueError, OSError):
-            interactive = False
+        interactive = at_a_terminal()
     if not interactive:
         return "ask"
     print(EDITION_QUESTION)
@@ -1199,8 +1204,43 @@ def choose_edition(home: Path, given: str | None, ask=input, interactive: bool |
             return "full"
         if said in ("l", "lite", "arcade lite", "2"):
             return "lite"
-        print("  Type f for the full arcade or l for ARCADE Lite.")
+        print("  Type f for Full or l for Lite.")
     return "full"
+
+
+def at_a_terminal() -> bool:
+    try:                                                   # a person at a terminal: both ends of it are one
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def choose_look(edition: str | None, ask=input, interactive: bool | None = None) -> str | None:
+    """The look a new arcade opens in, or None to leave it to the arcade (2026-11-07, SadFrog: Lite is "ArcadeCore
+    default theme with minimum enabled - and Full is the same thing but with everything enabled and an ask for which
+    ui is wanted"). Lite opens in ArcadeCore; Full asks at the terminal, ArcadeCore by default. Nobody at the
+    terminal, or an edition left to Admin: the arcade's own default, and Admin asks with the edition."""
+    if edition == "lite":
+        return "core"
+    if edition != "full":
+        return None
+    if interactive is None:
+        interactive = at_a_terminal()
+    if not interactive:
+        return None
+    print(LOOK_QUESTION)
+    for _ in range(3):
+        try:
+            said = ask(f"Look? [1-{len(LOOKS)}, Enter for ArcadeCore] ").strip().lower()
+        except (EOFError, OSError):
+            return None
+        if said == "":
+            return "core"
+        for i, (key, title, _what) in enumerate(LOOKS, 1):
+            if said in (str(i), key, title.lower()):
+                return key
+        print(f"  Type a number from 1 to {len(LOOKS)}.")
+    return "core"
 
 
 def read_settings(home: Path) -> dict:
@@ -1216,13 +1256,16 @@ def read_settings(home: Path) -> dict:
 FIRST_FACE = "core"
 
 
-def write_edition(home: Path, edition: str | None, dry_run: bool, fresh: bool = False) -> None:
+def write_edition(home: Path, edition: str | None, dry_run: bool, fresh: bool = False, look: str | None = None) -> None:
     """Record the edition in the arcade's settings, keeping every other setting; written whole, then renamed. A fresh
     install also starts with the neutral face, unless a face was chosen; an arcade already running keeps its own."""
     import json as _json
     if edition is None:
         return
-    shown = {"full": "the full arcade", "lite": "ARCADE Lite", "ask": "asked in Admin on the first run"}[edition]
+    shown = {"full": "Full (every module)", "lite": "Lite (core modules, ArcadeCore)",
+             "ask": "asked in Admin on the first run"}[edition]
+    if look and edition == "full":
+        shown += ", opening in " + dict((k, t) for k, t, _w in LOOKS)[look]
     if dry_run:
         info(f"would record the edition: {shown}")
         return
@@ -1233,6 +1276,8 @@ def write_edition(home: Path, edition: str | None, dry_run: bool, fresh: bool = 
     home.mkdir(parents=True, exist_ok=True)
     data = read_settings(home)
     data[EDITION_SETTING] = edition
+    if look:
+        data[LOOK_SETTING] = look
     if fresh and not data.get("brand") and not os.environ.get("ARCADE_BRAND"):
         data["brand"] = FIRST_FACE
     partial = path.with_suffix(".json.partial")
@@ -1958,7 +2003,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--edition", choices=list(EDITIONS), default=None,
-        help="full, or lite (ARCADE Lite: the crypto cores only; more can be switched on later in Admin). "
+        help="full (every module), or lite (the crypto cores only, in ArcadeCore; more can be switched on later in Admin). "
              "Omitted, a fresh install asks; an arcade already installed keeps what it has.")
     parser.add_argument(
         "--first-peer", default=None, metavar="URL",
@@ -1984,6 +2029,7 @@ def main(argv: list[str] | None = None) -> int:
     home = Path.home() / ".dogecoinarcade"
     fresh = not existing_arcade(home)
     edition = choose_edition(home, args.edition)
+    look = choose_look(edition)
 
     # No question about the chains, ever (2026-10-13). A fresh install is Pepecoin testnet only (the operator
     # 2026-11-02); the rest is borrowed over the mesh. --coin is for scripted installs that want a Core of their own.
@@ -2015,7 +2061,7 @@ def main(argv: list[str] | None = None) -> int:
         info(f"Python {'.'.join(str(n) for n in sys.version_info[:3])}")
         info(f"binaries  -> {target}")
         info(f"chains    -> {', '.join(c.name for c in coins)}")
-        info(f"edition   -> {'ARCADE Lite' if edition == 'lite' else 'chosen in Admin' if edition == 'ask' else 'full'}")
+        info(f"edition   -> {'lite (ArcadeCore)' if edition == 'lite' else 'chosen in Admin' if edition == 'ask' else 'full'}")
         # 3.10 is the real floor: the code uses `X | None` annotations and
         # nothing newer. The previous 3.12 requirement was an arbitrary choice
         # that blocked a working machine for no reason.
@@ -2115,7 +2161,7 @@ def main(argv: list[str] | None = None) -> int:
         n += 1
         step(n, total, "Finishing up")
         write_first_peer(first_peer, args.dry_run)
-        write_edition(home, edition, args.dry_run, fresh=fresh)
+        write_edition(home, edition, args.dry_run, fresh=fresh, look=look)
         if not args.dry_run and not args.no_services:
             install_web_service(venv, system)
         if not args.dry_run:
@@ -2148,7 +2194,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  own Pepecoin testnet node syncs. The application shows progress.")
         print()
         if edition == "lite":
-            print("  ARCADE Lite: switch more on in Admin -> Edition & modules.")
+            print("  ArcadeCore: switch more on in Admin -> Edition & modules.")
             print()
 
         if not args.dry_run and not args.no_browser:

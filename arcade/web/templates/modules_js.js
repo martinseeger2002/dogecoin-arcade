@@ -40,14 +40,24 @@
     root.classList.add('mui');
     root.innerHTML = '';
     var edition = el('p', 'Loading…'), acts = el('p'), restart = el('p', '', 'warn');
+    // The look it opens in (arcade/modules.py LOOKS): ArcadeCore, a desktop, or the website. Each person can wear
+    // another one in their own browser; this is what a newcomer gets.
+    var lookRow = el('p'), lookPick = el('select');
+    lookPick.setAttribute('aria-label', 'The look this arcade opens in');
+    lookPick.onchange = function () {
+      call({look: lookPick.value}).then(draw).catch(function (e) { alert(e.message); if (data) lookPick.value = data.look; });
+    };
+    lookRow.append('Opens in ', lookPick, el('span', ' (each person can switch looks for themselves)', 'why'));
     restart.hidden = true;
     ['full', 'lite'].forEach(function (name) {
-      var b = el('button', name === 'lite' ? 'Use ARCADE Lite' : 'Use Full');
+      var b = el('button', name === 'lite' ? 'Core modules only' : 'Every module');
       b.type = 'button'; b.dataset.edition = name;
       b.onclick = function () {
         var lite = name === 'lite';
-        if (!confirm(lite ? 'Switch to ARCADE Lite? Every module but the core is switched off. Nothing is deleted.'
-                          : 'Switch to the full edition? Every module is switched on.')) return;
+        if (!confirm(lite ? 'Switch to the core modules only, opening in ArcadeCore? Every module but the core is switched off. Nothing is deleted.'
+                          : 'Switch every module on? The arcade keeps the look it opens in.')) return;
+        if (!lite) return call({edition: name, look: data && data.look}).then(function () { location.reload(); })
+          .catch(function (e) { alert(e.message); });
         call({edition: name}).then(function () { location.reload(); }).catch(function (e) { alert(e.message); });
       };
       acts.append(b, ' ');
@@ -57,16 +67,20 @@
     filter.type = 'search'; filter.placeholder = 'Filter modules'; filter.setAttribute('aria-label', 'Filter modules');
     tools.append(filter);
     var blurb = el('p', '', 'why'), table = el('table'), body = el('tbody');
-    table.innerHTML = '<thead><tr><th class="c">On</th><th>Module</th><th>What it does</th><th>Who may use it</th><th class="c">In Lite</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th class="c">On</th><th>Module</th><th>What it does</th><th>Who may use it</th><th class="c">Core only</th></tr></thead>';
     table.append(body);
-    root.append(el('h2', 'Edition'), edition, acts, restart, el('h2', 'Modules'), tabs, tools, blurb, table);
+    root.append(el('h2', 'Edition'), edition, acts, lookRow, restart, el('h2', 'Modules'), tabs, tools, blurb, table);
     filter.oninput = rows;
 
     function draw(d) {
       data = d;
-      edition.textContent = 'This arcade runs ' + (d.edition === 'lite' ? 'ARCADE Lite.' : 'the full edition.')
-        + (d.asking ? ' (Not chosen yet: it runs as Full until you choose.)' : '')
-        + ' Changing it sets every module to that edition\'s default; nothing is deleted.';
+      edition.textContent = 'This arcade runs ' + (d.edition === 'lite' ? 'the core modules only (ArcadeCore).' : 'every module.')
+        + (d.asking ? ' (Not chosen yet: it runs every module until you choose.)' : '')
+        + ' The two are the same arcade: changing it sets every module to that choice\'s default; nothing is deleted.';
+      lookPick.textContent = '';
+      (d.looks || []).forEach(function (l) {
+        var o = el('option', l.title); o.value = l.id; o.selected = l.id === d.look; lookPick.append(o);
+      });
       acts.querySelectorAll('button').forEach(function (b) { b.disabled = !d.asking && b.dataset.edition === d.edition; });
       restart.hidden = !d.restart_for.length;
       restart.textContent = 'Pages follow at once. The background work of ' + d.restart_for.join(', ')

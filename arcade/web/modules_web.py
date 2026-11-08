@@ -96,17 +96,23 @@ def register(app, state, admin_check, signed_in=None) -> None:
 
     @app.post("/admin/api/modules")
     def admin_modules_set(request: Request, payload: Any = Body(None)):
-        """{edition: "full" | "lite"}, {module: id, on: true | false}, or {module: id, access: "operator" | "user" |
-        "anyone"}. A change of edition sets every module to that edition's default: Lite to Full turns everything on,
-        Full to Lite switches off all but the core. Nothing is deleted either way, and who may use each module stays
-        as the operator said."""
+        """{edition: "full" | "lite", look?}, {look: one of LOOKS}, {module: id, on: true | false}, or {module: id,
+        access: "operator" | "user" | "anyone"}. A change of edition sets every module to that edition's default: Lite
+        to Full turns everything on, Full to Lite switches off all but the core. Nothing is deleted either way, and who
+        may use each module stays as the operator said. Lite opens in ArcadeCore unless a look is said with it; Full
+        opens in the look said with it (the first-start question asks), else as it did."""
         admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
+        if "look" in said and said["look"] not in modulelib.LOOKS:
+            raise HTTPException(400, "the look is one of " + ", ".join(modulelib.LOOKS))
         if "edition" in said:
             if said["edition"] not in modulelib.EDITIONS:
                 raise HTTPException(400, "the edition is full or lite")
             state.set_setting(modulelib.EDITION_SETTING, said["edition"])
             state.set_setting(modulelib.SWITCH_SETTING, None)
+            state.set_setting(modulelib.LOOK_SETTING, said.get("look") or ("core" if said["edition"] == "lite" else None))
+        elif "look" in said:
+            state.set_setting(modulelib.LOOK_SETTING, said["look"])
         elif "module" in said and "access" in said:
             try:
                 levels = modulelib.set_access(state.settings(), str(said["module"]), str(said["access"]))
@@ -120,7 +126,7 @@ def register(app, state, admin_check, signed_in=None) -> None:
                 raise HTTPException(400, str(exc)) from None
             state.set_setting(modulelib.SWITCH_SETTING, switches)
         else:
-            raise HTTPException(400, "say an edition, or a module and on")
+            raise HTTPException(400, "say an edition, a look, or a module and on")
         apply()
         return answer()
 

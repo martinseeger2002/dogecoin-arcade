@@ -33,7 +33,7 @@
   function titleOf(t, id) {
     var all = (t.installed || []).concat(t.pick || []);
     for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i].title;
-    return id ? 'a theme of its own' : "ARCADE Lite's own look";
+    return id ? 'a theme of its own' : "ArcadeCore's own look";
   }
 
   function pick() {
@@ -66,7 +66,7 @@
   function installed() {
     return run('listthemes').then(function (t) {
       var tb = $('o-themes'); tb.textContent = '';
-      var rows = [{id: 'none', title: "ARCADE Lite's own look", version: ''}].concat(t.installed);
+      var rows = [{id: 'none', title: "ArcadeCore's own look", version: ''}].concat(t.installed);
       rows.forEach(function (r) {
         var tr = tb.insertRow();
         tr.insertCell().textContent = r.title;

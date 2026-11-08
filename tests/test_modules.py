@@ -226,7 +226,7 @@ def test_the_installer_asks_a_fresh_install_and_never_an_existing_one(tmp_path, 
     home = tmp_path / "home"
     answers = iter(["maybe", "l"])
     assert install.choose_edition(home, None, ask=lambda _q: next(answers), interactive=True) == "lite"
-    assert "ARCADE Lite" in capsys.readouterr().out
+    assert "ArcadeCore window" in capsys.readouterr().out
     assert install.choose_edition(home, None, ask=lambda _q: "", interactive=True) == "full"
     assert install.choose_edition(home, None, interactive=False) == "ask"      # nobody at the terminal: Admin asks
     assert install.choose_edition(home, "lite", interactive=False) == "lite"
@@ -236,6 +236,23 @@ def test_the_installer_asks_a_fresh_install_and_never_an_existing_one(tmp_path, 
     assert install.choose_edition(home, "lite", interactive=False) == "lite"
     (home / "settings.json").write_text(json.dumps({"edition": "full", "auto_update": False}))
     assert install.choose_edition(home, "lite", interactive=True, ask=pytest.fail) is None
+
+
+def test_lite_opens_in_arcadecore_and_full_asks_its_look_at_the_terminal(tmp_path, capsys):
+    """2026-11-07, SadFrog: Lite is "ArcadeCore default theme with minimum enabled", Full "everything enabled and an
+    ask for which ui is wanted"."""
+    assert install.choose_look("lite", ask=pytest.fail, interactive=True) == "core"
+    answers = iter(["9", "2"])
+    assert install.choose_look("full", ask=lambda _q: next(answers), interactive=True) == "ubuntu"
+    assert "Windows 98" in capsys.readouterr().out
+    assert install.choose_look("full", ask=lambda _q: "", interactive=True) == "core", "Enter: ArcadeCore"
+    assert install.choose_look("full", ask=lambda _q: "website", interactive=True) == "web"
+    assert install.choose_look("full", ask=pytest.fail, interactive=False) is None, "nobody there: the arcade's own"
+    assert install.choose_look("ask", ask=pytest.fail, interactive=True) is None, "Admin asks with the edition"
+    assert install.choose_look(None, ask=pytest.fail, interactive=True) is None, "an arcade that runs keeps its look"
+    home = tmp_path / "home"
+    install.write_edition(home, "full", dry_run=False, look="w98")
+    assert json.loads((home / "settings.json").read_text())["look"] == "w98"
 
 
 def test_the_installer_records_the_edition_and_keeps_every_other_setting(tmp_path, monkeypatch):
@@ -285,7 +302,7 @@ def test_lite_wears_no_coins_face_until_its_operator_picks_one(app_state, monkey
     app_state.set_setting("edition", "lite")
     page = client.get("/wallet").text
     assert brandlib.own() is brandlib.CORE and "DogecoinArcade" not in page.split("<body", 1)[0]
-    assert "<title>ARCADE Lite</title>" in client.get("/").text
+    assert "<title>ArcadeCore</title>" in client.get("/").text
     assert brandlib.CORE.icon("icon-192.png") is not None, "its own icons, not the cabinet"
     app_state.set_setting("brand", "pepecoin")                  # the operator's pick (Admin -> Face) wins in Lite too
     monkeypatch.setenv("ARCADE_BRAND", "pepecoin")               # what brand.use() sets for it, restored after
