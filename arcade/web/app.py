@@ -25543,26 +25543,13 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         ch = _dd_chain(str(said.get("chain") or ""))
-        address, pub = _dd_owner(account, ch, str(said.get("pubkey") or ""))
-        dd = digidollib.address(ch.network, pub)
+        _, pub = _dd_owner(account, ch, str(said.get("pubkey") or ""))
         try:
             text = str(said.get("amount") or "").strip().lstrip("$")
             dollars = decimal.Decimal(text)
             if dollars <= 0 or dollars != dollars.quantize(decimal.Decimal("0.01")):
                 raise ValueError("an amount of dollars and cents, more than zero")
-            cents = int(dollars * 100)
-            index = state.token_index(ch)
-            with contextlib.closing(index.open()) as db:
-                held = digidollib.coins(db, dd)
-                listed = utxoslib.unspent(db, address)
-            guard = fundinglib.guard_for(address)           # coins carrying an inscription stay put
-            if guard is not None:
-                listed = guard.spendable(listed)
-            spend = fundinglib.spend_for(address, ch.params)
-            prepared = digidollib.prepare_send(ch.network, pub, held, listed, spend["change_script"],
-                                               str(said.get("to") or ""), cents)
-            rpc = ch.rpc()
-            unsigned = digidollib.offer(prepared, ch.params, lambda m, p: rpc.call(m, *p), address, pub)
+            unsigned = _dd_send(account, ch, pub, str(said.get("to") or ""), int(dollars * 100))
         except (ValueError, decimal.InvalidOperation, ArithmeticError) as exc:
             msg = str(exc) if not isinstance(exc, decimal.InvalidOperation) else "type an amount of dollars, like 12.50"
             return JSONResponse({"detail": msg}, status_code=400)
@@ -25570,6 +25557,23 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, ch.network, unsigned, unsigned.what)
         return {"offer": offer.id, "chain": ch.network, **unsigned.as_json()}
+
+    def _dd_send(account, ch, pub: bytes, to: str, cents: int):
+        """The unsigned send of `cents` DigiDollars from this account (its key `pub`, checked by _dd_owner) to the
+        DigiDollar address `to`: its DigiDollar coins from this arcade's index, DGB coins for the fee. The Wallet's
+        send, and the DigiDollar-test launchpad's payment (web/ddpadweb.py)."""
+        address = _account_address(account.pubkey, ch)
+        index = state.token_index(ch)
+        with contextlib.closing(index.open()) as db:
+            held = digidollib.coins(db, digidollib.address(ch.network, pub))
+            listed = utxoslib.unspent(db, address)
+        guard = fundinglib.guard_for(address)               # coins carrying an inscription stay put
+        if guard is not None:
+            listed = guard.spendable(listed)
+        spend = fundinglib.spend_for(address, ch.params)
+        prepared = digidollib.prepare_send(ch.network, pub, held, listed, spend["change_script"], to, cents)
+        rpc = ch.rpc()
+        return digidollib.offer(prepared, ch.params, lambda m, p: rpc.call(m, *p), address, pub)
 
     def _wallets_hidden(pubkey: str) -> list[str]:
         """The chains an account keeps out of its Wallet tab (2026-10-18: "enable or disable any of the chain
@@ -37174,6 +37178,12 @@ def create_app(state: AppState) -> FastAPI:
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
+    # The DigiDollar-test launchpad (ddpadweb.py, 2026-11-07: the Bytelings, "a launch pad that only takes digidollar
+    # test"): /bytelings, paid with the Wallet's own DigiDollar send.
+    from . import ddpadweb
+    ddpadweb.register(app, state, signed_in=signed_in, signed_in_account=_signed_in_account, account_chain=_account_chain,
+                      account_chains=_account_chains, account_address=_account_address, dd_chain=_dd_chain,
+                      dd_owner=_dd_owner, dd_send=_dd_send, offers=_offers, render=render)
     # And outermost: a keyed call is checked before the door sees it.
     apikeys_web.guard(app, state)
     return app
