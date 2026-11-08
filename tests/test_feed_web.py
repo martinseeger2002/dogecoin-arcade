@@ -643,3 +643,30 @@ def test_the_operator_tips_from_the_feed_like_an_account(client, monkeypatch):
     said = app.post(f"/feed/{'a' * 64}/tip", follow_redirects=False, data={
         "csrf_token": state.csrf_token, "net": state.messaging.network, "what": "coin", "amount": "2", "back": "/feed"})
     assert said.headers["location"] == "/feed" and paid == [(state.messaging.network, THEM, 200_000_000)]
+
+
+def test_the_feed_says_it_is_loading_until_its_reader_has_caught_up(client, monkeypatch):
+    """2026-11-07, SadFrog: a feed opened while the node caught up kept "spamming with new feeds"; "put a 'the feed is
+    loading' with a progress bar until its caught up"."""
+    app, state = client
+    a_post(state, "ab" * 32, text="an early post")
+    monkeypatch.setattr(state.messaging, "status",
+                        lambda: {"online": True, "blocks": 1000, "headers": 1200, "synced": False})
+    with state.store() as store:
+        store.set_scan_cursor(state.messaging.network, 600, "00" * 32)
+    body = app.get("/feed").text
+    assert "The feed is loading" in body and 'id="fl-bar"' in body and "an early post" not in body
+    assert ">600</span> of <span id=\"fl-tip\">1,200<" in body, "the tip is the headers: a Core still syncing counts"
+    said = app.get("/feed/progress").json()
+    assert said == {"loading": True, "read": 600, "tip": 1200, "from": 600}
+    with state.store() as store:
+        store.set_scan_cursor(state.messaging.network, 900, "00" * 32)
+    assert app.get("/feed/progress").json()["from"] == 600, "the bar keeps where it started"
+    assert "an early post" in app.get(f"/feed?post={'ab' * 32}").text, "a link to one post is never held back"
+    with state.store() as store:
+        store.set_scan_cursor(state.messaging.network, 1198, "00" * 32)
+    assert app.get("/feed/progress").json() == {"loading": False}
+    body = app.get("/feed").text
+    assert "The feed is loading" not in body and "an early post" in body
+    monkeypatch.setattr(state.messaging, "status", lambda: {"online": False, "error": "no node"})
+    assert "an early post" in app.get("/feed").text, "a Core that does not answer: the feed as it is"

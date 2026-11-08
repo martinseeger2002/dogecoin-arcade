@@ -956,6 +956,10 @@ _ORDER_POSTS: dict[str, float] = {}
 #: (2026-10-29: "The website should by default open to Ubuntu view"): "ubuntu", "w98", or "" for the website.
 #: A phone, the installed app, Admin and the sign-in pages keep the website whatever it says (base.html).
 DESK_DEFAULT = "ubuntu"
+#: The feed shows "The feed is loading" while its reader is more than this many blocks behind the chain's tip
+#: (2026-11-07, SadFrog: a feed opened while it caught up kept "spamming with new feeds"; "put a 'the feed is loading'
+#: with a progress bar until its caught up"). A block or two behind is the normal gap between two passes.
+FEED_BEHIND = 3
 #: What a phone's browser opens the website as until its reader picks under Themes (2026-10-29: "if they are viewing on a
 #: mobile the website make it look like the PWA by default"): "home" (the installed app's home screen) or "" (the website).
 PHONE_DEFAULT = "home"
@@ -3681,6 +3685,32 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return []
 
+    #: Where the feed's reader was when this arcade first saw it behind: the start of the loading bar.
+    _feed_from: dict[str, int] = {}
+
+    def _feed_loading(chain) -> dict | None:
+        """{read, tip, from} while the feed's reader is catching up with its chain (FEED_BEHIND), else None. The tip
+        is the Core's headers, so a Core still syncing counts too; a Core that does not answer shows the feed as it
+        is rather than a bar that cannot move."""
+        node = chain.status()
+        if not node.get("online"):
+            return None
+        tip = max(int(node.get("headers") or 0), int(node.get("blocks") or 0))
+        with state.store() as store:
+            cursor = store.scan_cursor(chain.network)
+        read = int(cursor[0]) if cursor else 0
+        if tip - read <= FEED_BEHIND:
+            _feed_from.pop(chain.network, None)
+            return None
+        start = min(_feed_from.setdefault(chain.network, read), read)
+        return {"read": read, "tip": tip, "from": start}
+
+    @app.get("/feed/progress")
+    def feed_progress():
+        """How far the feed has read its chain, for the loading bar (feed.html): {loading, read, tip, from}."""
+        said = _feed_loading(state.messaging)
+        return JSONResponse({"loading": bool(said), **(said or {})}, headers={"Cache-Control": "no-store"})
+
     @app.get("/feed", response_class=HTMLResponse)
     def feed_page(request: Request, before: str | None = None, sort: str = "popular",
                   post: str | None = None):
@@ -3769,7 +3799,8 @@ def create_app(state: AppState) -> FastAPI:
                       here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       friends=_operator_friends(request) if sort == "friends" else [],
-                      when=_when, node=chain.status())
+                      when=_when, node=chain.status(),
+                      loading=None if wanted or before else _feed_loading(chain))
 
     def _thread_root(store, network: str, txid: str) -> tuple[str, bool]:
         """The txid a reply's thread hangs from, and whether that is a feed post

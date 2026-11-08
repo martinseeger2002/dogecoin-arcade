@@ -57,6 +57,7 @@ PUBLIC_PAGES = frozenset({
     "/source.tar.gz.sha256",
     "/source.rev",
     "/feed",
+    "/feed/progress",         # how far the feed has read the chain, while it loads (2026-11-07)
     "/guide",
     "/docs",
     "/affiliates",            # who the arcade works with (2026-10-15)
