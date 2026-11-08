@@ -31,7 +31,8 @@ transaction your wallet shows, every payment listed, and signs.
   0.05 DGB, and the arcade lets the module leave at most 0.5 DGB to fees, so a mint spends at most about eight coins.
   A wallet of many small coins (a miner's) is gathered first.
 - **Gather** is an ordinary send to yourself of up to 50 coins, at twice DigiByte Core's relay fee (about 0.015 DGB
-  for 50).
+  for 50). It leaves coins of 0.0001 DGB or less alone: a DigiAsset rides on a coin that small, and this arcade does
+  not read DigiAssets yet.
 - **Redeem** spends the vault by its script path and the DigiDollars by their key path, both Taproot: the wallet signs
   those with Schnorr (BIP-340), after checking each coin is its own key's from the coin's own script. Any of your
   DigiDollars redeem a vault of yours, received ones too.
