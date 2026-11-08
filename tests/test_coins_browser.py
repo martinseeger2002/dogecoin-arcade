@@ -942,3 +942,49 @@ def test_a_notes_reveal_is_signed_only_for_this_keys_own_note_script(loaded):
     theirs = reveal_for("03" + "22" * 32)
     refused = browser.execute_async_script(check, json.dumps(theirs))
     assert "error" in refused and "Nothing was signed" in refused["error"], refused
+
+
+@pytest.mark.parametrize("network", ["dgb", "dgbtest", "ltc", "ltctest", "doge"])
+def test_a_p2sh_payment_says_its_address_where_wallets_pay_p2sh(loaded, network):
+    """2026-11-08, security review: a payment to a DigiByte S... address -- the wallet's own nested SegWit one too --
+    read as "20 bytes written to the chain", its payee not said. On Litecoin and DigiByte a P2SH output is somebody's
+    address and is said as one; on Dogecoin it is a pool's or a swap's lock and keeps its words."""
+    from arcade import funding, txbuild
+    from arcade.config import NETWORKS
+
+    browser, _, _ = loaded
+    params = NETWORKS[network]
+    here = browser.execute_async_script("""
+        const done = arguments[1];
+        (async () => {
+          const c = window.coins;
+          const coin = await c.coinKey(c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+          done({pubkey: c.hex(coin.pubkey), address: await c.address(coin.pubkey, arguments[0])});
+        })();""", params.pubkeyhash_version)
+    mine = here["address"]
+    held = bytes(range(70, 90))
+    payee = script.b58check_encode(params.scripthash_version, held)
+    inputs = [{"txid": "%064x" % 7, "vout": 1, "value": 3 * COIN, "address": mine}]
+    outputs = [(COIN, b"\xa9\x14" + held + b"\x87"), (2 * COIN - 226_000, txbuild.p2pkh_script(mine))]
+    raw = txbuild.build_raw_tx([(c["txid"], c["vout"]) for c in inputs], outputs)
+    offered = {"raw": raw, "inputs": inputs, "what": "a payment", "chain": network, "fee": 226_000,
+               "change": 2 * COIN - 226_000, "signed_from": 0,
+               "sighashes": [funding.sighash(inputs, outputs, 0, txbuild.p2pkh_script(mine)).hex()]}
+    shown = browser.execute_async_script("""
+        const done = arguments[2];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            const out = await c.verifyOffer(JSON.parse(arguments[0]), {
+              pubkey: coin.pubkey, address: arguments[1], network: JSON.parse(arguments[0]).chain});
+            done({pays: out.pays.map((p) => ({to: p.to || null, bytes: p.bytes ?? null, value: Number(p.value)})),
+                  says: out.shown ? out.shown.says : null});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""", json.dumps(offered), mine)
+    assert "error" not in shown, shown
+    first = shown["pays"][0]
+    if network == "doge":
+        assert first == {"to": None, "bytes": 20, "value": COIN}, "Dogecoin's P2SH keeps its words"
+    else:
+        assert first == {"to": payee, "bytes": None, "value": COIN}, f"{network}: the payee said"
