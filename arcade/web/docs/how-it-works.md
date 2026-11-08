@@ -60,7 +60,11 @@ A node can run two ways:
 When you join someone's public node, **your keys stay in your browser**:
 
 * Your account is twelve words, made in the browser and never sent to the
-  node. The node stores only your public key.
+  node. The node stores your public key and a copy of your wallet sealed with
+  your password (PBKDF2-SHA512, 600,000 rounds, then AES-GCM). That copy is
+  what lets you sign in by name on any arcade. It is handed to whoever asks
+  for your name, so the password is what protects it: the sign-up page asks
+  for at least 12 characters, and refuses passwords known from leaks.
 * To sign in, the browser signs a one-time challenge from the node.
 * Each action (a post, a send, an order, a message) is built by the node,
   signed by your browser, and then broadcast. The node never sees a key it
