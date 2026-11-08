@@ -183,9 +183,10 @@ async function post(path, body) {
   if (!r.ok) throw new Error(j.detail || "the arcade would not do that");
   return j;
 }
-/** A page of the full arcade's in the window: its tab when it has one (a module's), else the window's page frame. */
-function openPage(href) {
-  const w = window.liteWindow, tab = w && w.route(href.split(/[?#]/)[0]);
+/** A page of the full arcade's in the window: its tab when it has one (a module's), else the window's page frame;
+ * `own`: always in Assets' own frame (Inscribe: /me/nfts is under a tab that frames /me, which it would replace). */
+function openPage(href, own = false) {
+  const w = window.liteWindow, tab = w && !own && w.route(href.split(/[?#]/)[0]);
   if (tab) w.open(tab, href);
   else if (w && document.querySelector('main [data-panel="a-page"]')) w.open("a-page", href);
   else location.href = href;
@@ -339,7 +340,7 @@ document.addEventListener("lite:wallet", () => { if (!panel().hidden) drawAssets
 // For the Send tab (_wallet.html): what is held, and a send just gone (read afresh).
 window.liteAssets = {held, sent() { tokRead = null; for (const k in t20Read) delete t20Read[k]; nftsRead = null;
                                     if (dg) dg.fresh = true; if (!panel().hidden) drawAssets(true); }};
-if (!NODE) $("a-inscribe").onclick = () => openPage("/me/nfts#inscribing");
+if (!NODE) $("a-inscribe").onclick = () => openPage("/me/nfts#inscribing", true);
 
 /* --- tokens: the arcade's, starred as the Exchange stars their markets ------------------------------------------ */
 // A token's star is its market's (/exchange/pair/<id>@<chain>), kept with the account (/account/favorites) or, until it
