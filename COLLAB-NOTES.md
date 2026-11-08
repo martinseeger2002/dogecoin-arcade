@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-account-frame` (on `team/core-wallet-parity`) · The Account tab held a window holding a window
+
+SadFrog: "clicking the account tab made a recursive call it seemed".
+- **Why:** on an arcade whose look is ArcadeCore, `/me` (and `/me/wallet`, `/me/backup`, `/join`) serve the window
+  unless the request is a frame's, told by `Sec-Fetch-Dest: iframe` (`app.py` `_core_window`). The service worker
+  answers every navigation with `fetch(event.request)` (`sw.js`), and that fetch arrives as `empty`. A browser on
+  plain http sends no `Sec-Fetch-*` at all. So once the service worker was installed, the Account tab's frame got the
+  window, which opened its own Account tab, and so on.
+- **Fix:** `_core_window` also takes `?framed=1` as a frame. The window, finding itself in any frame at a page's own
+  path, loads that path again with it (`lite.html`, first script). A desktop window's `/me` is mended the same way.
+- **Tests:** `tests/test_core_account_frame_browser.py` (2, Firefox, the service worker installed and controlling):
+  `?framed=1` gets the page, and the Account tab holds the account's page, not a window. Both fail without the fix.
+  With `test_lite_wallet_parity_browser`, `test_lite`, the Lite pages and wallet browser tests, the desktop switch and
+  the DigiDollar wallet browser tests: all pass.
+- **For the operator:** merge with `team/core-wallet-parity`.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-wallet-parity` (on `team/core-cohesive` 02808d6d) · One wallet, part 2: imported wallets, your account, activity, Send's helpers and Backup in ArcadeCore
 
 SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing ... the availability and

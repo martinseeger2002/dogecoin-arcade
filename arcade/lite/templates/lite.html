@@ -4,6 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ 'ArcadeCore' if name == 'ARCADE' else name ~ ' · ArcadeCore' }}</title>
+<script>
+/* The window in a frame at a page's own path (/me, /me/wallet, /me/backup, /join): the frame wanted that page, and the
+   server, unable to tell (app.py _core_window), sent the window. Ask again as a frame, or the Account tab would hold a
+   window holding a window (2026-11-08). */
+(function () {
+  if (window.parent === window || /^\/(lite)?$/.test(location.pathname)) return;
+  var u = new URL(location.href);
+  if (u.searchParams.get('framed') === '1') return;
+  u.searchParams.set('framed', '1');
+  location.replace(u.pathname + u.search + u.hash);
+})();
+</script>
 {% if desktop_on %}<script>
 /* A person who wears one of the desktop's looks (View, or Switch Theme there) opens the arcade on that desktop, on a
    computer; a page in one of this window's tabs, or a phone, stays here. */

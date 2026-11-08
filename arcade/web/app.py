@@ -1627,9 +1627,15 @@ def create_app(state: AppState) -> FastAPI:
     def _core_window(request: Request) -> bool:
         """Whether a page the ArcadeCore window draws in a panel of its own (Join, an account's Backup) is asked for
         by that window: on an arcade whose look is ArcadeCore, and not from inside a frame, which is a desktop
-        window or a page in a tab, where the page itself belongs."""
+        window or a page in a tab, where the page itself belongs.
+
+        A frame is told by its Sec-Fetch-Dest, or by ?framed=1, which the window adds when it finds itself in a frame
+        (lite.html). The header alone is not enough: the service worker's fetch for a navigation (sw.js) arrives as
+        "empty", and a browser on plain http sends none, so an Account tab held the whole window, which opened its
+        own Account tab, and so on (2026-11-08)."""
         return (modulelib.look(state.settings()) == "core"
-                and request.headers.get("sec-fetch-dest", "document") != "iframe")
+                and request.headers.get("sec-fetch-dest", "document") != "iframe"
+                and request.query_params.get("framed") != "1")
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
