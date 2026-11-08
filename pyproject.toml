@@ -88,7 +88,7 @@ packages = ["arcade", "arcade.ddlib", "arcade.messaging", "arcade.mesh", "arcade
 # leaving it out does not degrade anything: the application does not start.
 "arcade" = ["bip39-english.txt"]
 "arcade.lora" = ["SOURCE.md"]
-"arcade.lite" = ["templates/*.html", "templates/*.css"]
+"arcade.lite" = ["templates/*.html", "templates/*.css", "templates/*.js"]   # modforms.js (2026-11-08)
 "arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.css", "templates/*.md",
                 "templates/*.png", "templates/brands/*/*.png",
                 "templates/dogefeedx/*.html", "templates/dogefeedx/*.css", "templates/dogefeedx/*.js",

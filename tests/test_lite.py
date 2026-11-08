@@ -419,3 +419,17 @@ def test_the_operator_from_outside_has_admin_as_a_tab_and_admin_opens_inside_the
         app_state.set_setting("edition", None)
         app_state.set_setting("operator", None)
     assert "location.replace('/#admin')" not in app.get("/admin", headers=LOCAL).text, "Full has no window to open"
+
+
+def test_every_file_of_lites_templates_ships_in_an_installed_arcade():
+    """2026-11-08: modforms.js worked from a checkout and was missing from an installed arcade, whose package-data took
+    only templates/*.html and *.css. Every file the window serves from its templates is in the wheel."""
+    import fnmatch
+    import pathlib
+    import tomllib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    with open(root / "pyproject.toml", "rb") as handle:
+        patterns = tomllib.load(handle)["tool"]["setuptools"]["package-data"]["arcade.lite"]
+    for f in (root / "arcade" / "lite" / "templates").iterdir():
+        if f.is_file():
+            assert any(fnmatch.fnmatch(f"templates/{f.name}", p) for p in patterns), f"{f.name} would not be installed"
