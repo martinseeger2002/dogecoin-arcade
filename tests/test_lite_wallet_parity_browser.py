@@ -327,7 +327,11 @@ def test_arcadecore_has_the_account_tab_and_hides_what_the_account_hides(browser
             "return document.documentElement.classList.contains('in-window') && document.body.hasAttribute('data-lite')"),
             "the page wears the window's look")
         sheets = browser.execute_script("return [...document.querySelectorAll('link[rel=stylesheet]')].map(l => l.href)")
-        assert any(s.endswith("/lite/pages.css") for s in sheets) and any(s.endswith("/lite/theme.css") for s in sheets)
+        # The caller's theme: a linked /lite/theme.css, or, once #118 is in, the page's own <style id="arcade-theme">
+        # (base.html carries it in every page). Either way the page wears it.
+        assert any(s.endswith("/lite/pages.css") for s in sheets) and (
+            any(s.endswith("/lite/theme.css") for s in sheets)
+            or browser.execute_script("return !!document.getElementById('arcade-theme')")), sheets
         # Hide the mainnet wallet from here, as Your wallets does.
         hid = browser.execute_async_script("""const done = arguments[0];
             fetch("/account/wallets", {method: "POST", headers: {"Content-Type": "application/json"},
