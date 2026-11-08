@@ -328,3 +328,15 @@ def test_gather_and_mint_pass_over_coins_a_waiting_gather_spent(tmp_path):
     big = [{"txid": "ee" * 32, "vout": 0, "value": 10 ** 13}, {"txid": "ff" * 32, "vout": 0, "value": 10 ** 13}]
     made = pilot.mint(pub[1:], 10000, 0, 1000, 0, 10 ** 12, big, b"\x76", fresh=lambda c: c["txid"] != "ee" * 32)
     assert [i["txid"] for i in made["inputs"]] == ["ff" * 32], "the coin a waiting transaction spent is passed over"
+
+
+def test_a_gather_leaves_dust_sized_coins_alone():
+    """2026-11-08, security review: a DigiAsset rides on a dust-sized output and this arcade does not read DigiAssets,
+    so Gather, which takes the smallest coins first, would have spent one with it."""
+    _, pilot = _pilot()
+    script = bytes.fromhex("76a914" + "11" * 20 + "88ac")
+    coins = [{"txid": f"{n:064x}", "vout": 0, "value": v} for n, v in enumerate((600, 1_000, 10_000, 5 * 10 ** 7, 6 * 10 ** 7))]
+    made = pilot.gather(coins, script, "dgbtest")
+    assert {i["txid"] for i in made["inputs"]} == {f"{3:064x}", f"{4:064x}"}, "only the coins over 0.0001 DGB"
+    with pytest.raises(ValueError, match="left alone"):
+        pilot.gather(coins[:4], script, "dgbtest")

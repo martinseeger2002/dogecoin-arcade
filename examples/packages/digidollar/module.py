@@ -296,25 +296,37 @@ def command_ddmint(ctx, amount, tier=None, chain="test"):
     return {"prepared": made, "actions": [{"label": "My vaults", "line": f"ddvaults {_word(net)}"}]}
 
 
+#: Coins this small are left where they are by Gather (2026-11-08, security review): a DigiAsset rides on a dust-sized
+#: output, and this arcade does not read DigiAssets yet, so gathering one would spend the asset with it. Each is worth
+#: less than its own share of a gather's fee anyway.
+KEEP_SMALL = 10_000
+
+
 def gather(coins: list[dict], script: bytes, chain: str = TEST, fresh=None) -> dict:
     """The prepared gather: up to GATHER_MOST of the caller's smallest coins into one, back to their own address. With
-    `fresh`, coins a gather still waiting for its block has spent are passed over, so it can be pressed again at once."""
+    `fresh`, coins a gather still waiting for its block has spent are passed over, so it can be pressed again at once.
+    Coins of KEEP_SMALL or less are never taken (a DigiAsset may sit on one)."""
     chosen, waiting = [], 0
     for coin in sorted(coins, key=lambda c: c["value"]):
         if len(chosen) == GATHER_MOST:
             break
+        if coin["value"] <= KEEP_SMALL:
+            continue
         if fresh is not None and not fresh(coin):
             waiting += 1
             continue
         chosen.append(coin)
     if len(chosen) < 2:
+        if not waiting and any(c["value"] <= KEEP_SMALL for c in coins):
+            raise ValueError("nothing to gather: your other coins are 0.0001 DGB or less, and those are left alone "
+                             "(a DigiAsset may sit on one)")
         raise ValueError("your DGB is in one coin already: nothing to gather" if not waiting else
                          "the rest of your coins are in gathers waiting for a block: once it comes, they are one each")
     total = sum(c["value"] for c in chosen)
     fee = (10 + 148 * len(chosen) + 9 + len(script)) * GATHER_FEE_PER_BYTE
     if total - fee < DUST:
         raise ValueError("those coins are worth less than gathering them costs")
-    left = len(coins) - len(chosen) - waiting
+    left = len([c for c in coins if c["value"] > KEEP_SMALL]) - len(chosen) - waiting
     return {"chain": chain, "version": 2, "inputs": [{"txid": c["txid"], "vout": c["vout"]} for c in chosen],
             "outputs": [(total - fee, script.hex())],
             "what": f"gather {len(chosen)} of your coins into one ({(total - fee) / COIN:,.8f} DGB) at your own "
