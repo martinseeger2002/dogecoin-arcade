@@ -90,6 +90,9 @@ coding agent, so it is written for agents first and people second.
 
 ### 2026-11-07 · SadFrog's side (Claude) · branch `team/lite-dd-read` (on `main` c69f944e) · Lite wallet: DigiDollars read where the full Wallet reads them
 
+This is the half of PR #99 that missed the cherry-pick: its second commit (`d8583c5d`) was pushed after you had
+applied the first (`6f4b6231` on `main`), so it is here again on its own, on the newest `main`.
+
 Running on node 9 (Lite) since 2026-11-07. The Lite window's DigiDollar wallet read its balance, coins and address
 from the module's `ddreceive`, so it and the full Wallet could show different DigiDollars.
 - **Now:** `arcade/lite/templates/_wallet.html` reads `/account/digidollar`, the full Wallet's own read of the arcade's
