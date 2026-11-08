@@ -405,3 +405,58 @@ def test_drc20_tokens_are_in_the_tokens_tab_and_send_like_any_token(browser, ser
         browser.save_screenshot(str(pathlib.Path.home() / "ordmock" / "real-drc20-send.png"))
     finally:
         state.ord_indexes = real
+
+
+def _until(browser, script, seconds=20):
+    for _ in range(seconds * 4):
+        got = browser.execute_script(script)
+        if got:
+            return got
+        time.sleep(0.25)
+    raise AssertionError(f"never: {script}\n{browser.find_element(By.TAG_NAME, 'main').text[:2000]}")
+
+
+def test_arcadecore_shows_the_doginal_under_assets_and_sends_it_from_send(browser, served, signed_in):
+    """2026-11-08, SadFrog: "where are our ordinals and nft and other assets shown on the arcade core with ordinals
+    enabled? ... I do not currently see away to see our held assets at all on arcade core". With Ords on, ArcadeCore has
+    an Assets tab: the Doginal on the account's coin, as the full Wallet lists it, and its Send picks it for the Send tab,
+    where the review names it and the payee from the transaction's own bytes."""
+    base, _ = served
+    browser.execute_script("localStorage.clear()")
+    browser.get(f"{base}/lite#assets")
+    _until(browser, "const b = document.getElementById('a-chain');"
+                    " return b && [...b.options].some((o) => o.value === 'doge')")
+    browser.execute_script("const b = document.getElementById('a-chain'); b.value = 'doge';"
+                           " b.dispatchEvent(new Event('change'));")
+    _until(browser, "return /on Dogecoin/.test(document.getElementById('a-status').textContent)")
+    # The module's other tests left this account many more, newest first, 24 a page: Older until it shows.
+    for _ in range(10):
+        frame = browser.execute_script(f"return document.querySelector('#a-grid iframe[title=\"{INS}\"]')")
+        if frame or browser.find_element(By.ID, "a-next").get_attribute("disabled") is not None:
+            break
+        page = browser.find_element(By.ID, "a-page").text
+        browser.find_element(By.ID, "a-next").click()
+        _until(browser, f"return document.getElementById('a-page').textContent !== {page!r}")
+    assert frame and frame.get_attribute("src") == f"{base}/content/{INS}/fit"
+    assert len(browser.find_elements(By.CSS_SELECTOR, "#a-grid figure")) <= 24
+
+    browser.execute_script(f"document.querySelector('#a-grid iframe[title=\"{INS}\"]').closest('figure')"
+                           ".querySelector('button').click()")
+    _until(browser, "return !document.querySelector('main [data-panel=\"send\"]').hidden"
+                    " && document.getElementById('w-asset').textContent")
+    assert not browser.find_element(By.ID, "w-amount").is_displayed(), "no amount: the piece goes whole"
+    assert browser.execute_script("return document.getElementById('w-chain-send').value") == "doge"
+    browser.find_element(By.ID, "w-to").send_keys(THEM)
+    browser.find_element(By.CSS_SELECTOR, "#w-form button[type=submit]").click()
+    _until(browser, "return !document.getElementById('w-review').hidden || !document.getElementById('w-unlock').hidden"
+                    " || !document.getElementById('w-said').hidden")
+    if browser.find_element(By.ID, "w-unlock").is_displayed():          # shut in this tab: Unlock goes on with the send
+        browser.find_element(By.ID, "w-password").send_keys("a password nobody needs to guess for this test")
+        browser.find_element(By.CSS_SELECTOR, "#w-unlock-form button").click()
+    terms = _until(browser, "return !document.getElementById('w-review').hidden"
+                            " && document.getElementById('w-terms').textContent")
+    assert THEM in terms and "Sending" in terms and "on its coin of 0.001" in terms and "Leaves your wallet" in terms, terms
+    assert browser.find_element(By.ID, "w-warn").is_displayed(), "real coins: said so"
+    browser.find_element(By.ID, "w-cancel").click()
+    browser.find_element(By.ID, "w-asset-clear").click()
+    assert browser.find_element(By.ID, "w-amount").is_displayed()

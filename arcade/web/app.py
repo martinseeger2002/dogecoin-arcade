@@ -15765,7 +15765,7 @@ def create_app(state: AppState) -> FastAPI:
         index's coins, and the change this node broadcast as it is (its inputs passed the guard) unless it is a token
         note this arcade just revealed. A coin the guard cannot judge now is left out, not let through."""
         coins = _own_coins(account, chain, address)
-        guard = fundinglib.guard_for(address or _account_address(account.pubkey, chain))
+        guard = fundinglib.guard_for(address or _account_address(account.pubkey, chain), chain.network)
         if guard is not None:
             change = {(c["txid"], int(c["vout"])) for c in _flights.change_for(account.pubkey, chain.network)}
             judged = {(c["txid"], int(c["vout"]))
@@ -15816,7 +15816,7 @@ def create_app(state: AppState) -> FastAPI:
         if one is None:
             return JSONResponse({"detail": "no such chain here"}, status_code=404)
         address = _own_address_asked(account, one, str(said.get("address") or ""))
-        guard = fundinglib.guard_for(address) if address else None
+        guard = fundinglib.guard_for(address, one.network) if address else None
         if guard is None:
             return JSONResponse({"detail": "this node does not check inscriptions on that chain"}, status_code=404)
         txids = said.get("txids")
@@ -16017,7 +16017,8 @@ def create_app(state: AppState) -> FastAPI:
         if one is None:
             return JSONResponse({"detail": "no such chain here"}, status_code=404)
         address = _own_address_asked(account, one, address)
-        guard = fundinglib.guard_for(address) if address else None
+        # named by its chain: a DigiByte "D" address is Dogecoin's byte (funding.guard_for)
+        guard = fundinglib.guard_for(address, one.network) if address else None
         if guard is None:
             return JSONResponse({"detail": "this node does not check inscriptions on that chain"}, status_code=404)
         net = one.network
@@ -17088,7 +17089,7 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "that is not a transaction id"}, status_code=400)
         one = next((c for c in state.token_chains if c.network == chain), None)
         address = _account_address(account.pubkey, one) if one is not None else ""
-        guard = fundinglib.guard_for(address) if address else None
+        guard = fundinglib.guard_for(address, one.network) if address else None
         if guard is None:
             return JSONResponse({"detail": "this node does not check inscriptions on that chain"}, status_code=404)
         try:
@@ -23109,7 +23110,7 @@ def create_app(state: AppState) -> FastAPI:
         address = _account_address(account.pubkey, chain)
         if not address:
             return JSONResponse({"detail": f"this account has no {chain.label} address yet"}, status_code=400)
-        guard = fundinglib.guard_for(address) or (fundinglib.GUARD if chain.is_doge else None)
+        guard = fundinglib.guard_for(address, chain.network) or (fundinglib.GUARD if chain.is_doge else None)
         if guard is None:
             return JSONResponse({"detail": f"{_ord_word(chain)}s are not checked on this node"}, status_code=400)
         listed = {(r["txid"], int(r["vout"])): r["id"] for r in state.doginal_book.open_listings(chain.network)
@@ -25649,7 +25650,7 @@ def create_app(state: AppState) -> FastAPI:
         with contextlib.closing(index.open()) as db:
             held = digidollib.coins(db, digidollib.address(ch.network, pub))
             listed = utxoslib.unspent(db, address)
-        guard = fundinglib.guard_for(address)               # coins carrying an inscription stay put
+        guard = fundinglib.guard_for(address, ch.network)   # coins carrying an inscription stay put
         if guard is not None:
             listed = guard.spendable(listed)
         spend = fundinglib.spend_for(address, ch.params)
@@ -28571,7 +28572,7 @@ def create_app(state: AppState) -> FastAPI:
             # What a send from it may use, and what is held (2026-10-22: "it shows that I have 77 Doge but it
             # doesn't show how many are protected as doginals"): the coins Doginals sit on, and the small coins not
             # checked yet (protected until the ord index reaches them) -- from what is known, reading nothing.
-            guard = fundinglib.guard_for(address)
+            guard = fundinglib.guard_for(address, chain.network)
             free, inscribed, unchecked = guard.sort_known(mine) if guard is not None else (mine, [], [])
             out.append({"address": address, "kind": entry["k"], "since": since,
                         "spendable": sum(int(c["value"]) for c in free),

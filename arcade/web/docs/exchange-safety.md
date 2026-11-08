@@ -219,7 +219,9 @@ that Kotia's own Core signed.
 * **The DigiByte branch** (team/digibyte): its "D" addresses are Dogecoin's byte. Coin choice must name
   its chain to the inscription guard (`funding.guard_for(address, network)`), never pick the guard by
   address alone. Held by `funding.guard_for` and `ord_guard` (by `params.name`) and `choose(..., network=)`,
-  which `build` and the ord send pass (2026-11-07, for the Bytelings pad). Test:
+  which `build` and the ord send pass (2026-11-07, for the Bytelings pad). The Wallet's reads of an account's
+  ords name the chain too (`web/app.py`: the spendable coins, the ords list and its pages, the coin check, the
+  listing check, the DigiDollar send and the coin summary; 2026-11-08, with ArcadeCore's Assets tab). Test:
   `tests/test_ord_chains_more.py::test_a_digibyte_d_address_is_checked_by_digibytes_guard_never_dogecoins`.
 
 ## Checking a change against this page
