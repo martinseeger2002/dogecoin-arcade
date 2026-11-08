@@ -6,6 +6,7 @@ units. BOXA found it. The lesson is that the fix belongs in the updater, where
 it can look at what is actually there, rather than in instructions that guess.
 """
 
+import json
 import pathlib
 from pathlib import Path
 import sys
@@ -25,6 +26,12 @@ ExecStart=/usr/local/bin/pepecoind -datadir=/home/someone/.pepecoin-testnet
 Restart=on-failure
 RestartSec=30
 """
+
+
+@pytest.fixture(autouse=True)
+def terms_agreed(monkeypatch):
+    """These tests are scripted installs, as with --accept-terms; the agreement itself is tested below."""
+    monkeypatch.setenv(install.TERMS_ENV, "yes")
 
 
 @pytest.fixture
@@ -911,3 +918,44 @@ def test_txindex_is_not_switched_on_under_a_synced_node(tmp_path, capsys):
     install.write_configs(main, tmp_path / "t", install.DOGECOIN)
     assert "txindex" not in (main / "dogecoin.conf").read_text()
     assert "-reindex" in capsys.readouterr().out
+
+
+# --- the terms, agreed before anything is installed (2026-11-07) ------------------------------------------------------
+
+
+def test_an_install_goes_on_only_after_an_explicit_yes_to_the_terms(tmp_path, monkeypatch, capsys):
+    """2026-11-07, SadFrog: "on install explicitly get agreement from the user this is experimental software"."""
+    monkeypatch.delenv(install.TERMS_ENV, raising=False)
+    home = tmp_path / "home"
+    asked = []
+    assert install.agree_to_terms(home, False, False, ask=lambda q: asked.append(q) or "y", interactive=True)
+    assert asked == ["Do you understand and agree? [y/N] "]
+    assert install.agree_to_terms(home, False, False, ask=lambda _q: "Yes", interactive=True)
+    out = capsys.readouterr().out
+    for words in ("experimental software", "as is", "No liability", "ready", "to lose", "Good faith"):
+        assert words in out, words
+    assert not install.agree_to_terms(home, False, False, ask=lambda _q: "", interactive=True), "Enter is not a yes"
+    assert not install.agree_to_terms(home, False, False, ask=lambda _q: "n", interactive=True)
+    assert not install.agree_to_terms(home, False, False, ask=pytest.fail, interactive=False), \
+        "nobody at the terminal and no flag: nothing is installed"
+    assert "--accept-terms" in capsys.readouterr().out
+    assert install.agree_to_terms(home, True, False, ask=pytest.fail, interactive=False), "a scripted install's flag"
+    monkeypatch.setenv(install.TERMS_ENV, "yes")
+    assert install.agree_to_terms(home, False, False, ask=pytest.fail, interactive=False)
+    monkeypatch.delenv(install.TERMS_ENV)
+    assert install.agree_to_terms(home, False, True, ask=pytest.fail, interactive=False), "a dry run only shows them"
+    install.record_terms(home, dry_run=True)
+    assert not (home / "settings.json").exists()
+    install.record_terms(home, dry_run=False)
+    kept = json.loads((home / "settings.json").read_text())[install.TERMS_SETTING]
+    assert kept["version"] == install.TERMS_VERSION and kept["accepted"]
+    assert install.agree_to_terms(home, False, False, ask=pytest.fail, interactive=False), "agreed once: not again"
+    (home / "settings.json").write_text(json.dumps({install.TERMS_SETTING: {"version": "older"}}))
+    assert not install.agree_to_terms(home, False, False, ask=lambda _q: "no", interactive=True), "new wording: asked again"
+
+
+def test_main_stops_before_anything_when_the_terms_are_not_accepted(tmp_path, monkeypatch, fake_home):
+    monkeypatch.delenv(install.TERMS_ENV, raising=False)
+    monkeypatch.setattr(install, "choose_edition", lambda *a, **k: pytest.fail("asked on after a no"))
+    monkeypatch.setattr(install.sys.stdin, "isatty", lambda: False, raising=False)
+    assert install.main(["--no-browser", "--no-bootstrap"]) == 1

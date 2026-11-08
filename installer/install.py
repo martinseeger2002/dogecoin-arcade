@@ -1151,6 +1151,86 @@ SETTINGS_FILE = "settings.json"
 EDITION_SETTING = "edition"
 EDITIONS = ("full", "lite")
 
+#: What every install agrees to first (2026-11-07, SadFrog: "on install explicitly get agreement from the user this is
+#: experimental software ... no guarantees ... anything brought into the arcade should therefore be treated as ready to
+#: lose"). A new wording gets a new version, and is asked again; the accepted version is kept in settings.json.
+TERMS_VERSION = "2026-11-07"
+TERMS_SETTING = "install_terms"
+TERMS_ENV = "ARCADE_ACCEPT_TERMS"
+TERMS = """
+Before you install: ARCADE is experimental software
+
+  1. As is. ARCADE is provided "as is", without warranty of any kind,
+     express or implied, including that it works as described, is
+     secure, or keeps running.
+  2. No liability. To the fullest extent the law allows, the developers
+     and contributors are not liable for any loss or damage that comes
+     from installing, running or relying on it, including lost coins,
+     keys or data. Making the software available creates no duty to you.
+  3. Your own risk. Treat anything you bring into an arcade (coins, keys,
+     inscriptions, data) as something you are ready to lose, and check
+     independently what it does before you rely on it.
+  4. Not a substitute for good practice. ARCADE adds many moving parts.
+     Keep your usual safeguards: offline backups of your keys, separate
+     wallets for savings, and checked downloads.
+  5. Good faith. The developers and contributors built ARCADE in good
+     faith and with the best intentions.
+"""
+
+
+def terms_accepted(home: Path) -> bool:
+    """Whether this home already agreed to the terms as they stand (TERMS_VERSION)."""
+    said = read_settings(home).get(TERMS_SETTING)
+    return isinstance(said, dict) and said.get("version") == TERMS_VERSION
+
+
+def agree_to_terms(home: Path, given: bool, dry_run: bool, ask=input, interactive: bool | None = None) -> bool:
+    """Whether the install may go on: agreed before (this version), --accept-terms or ARCADE_ACCEPT_TERMS=yes for a
+    scripted install, or y typed at the terminal after reading TERMS (2026-11-07, SadFrog: "make y/n"; Enter is a no). With nobody at the terminal and no flag the
+    install stops, so nothing is installed without an explicit yes. A dry run shows the terms and asks nothing."""
+    if terms_accepted(home):
+        return True
+    print(TERMS)
+    if given or os.environ.get(TERMS_ENV, "").strip().lower() in ("yes", "1", "true"):
+        print("  Agreed with --accept-terms.\n")
+        return True
+    if dry_run:
+        print("  (A real install asks you to agree before it goes on.)\n")
+        return True
+    if interactive is None:
+        interactive = at_a_terminal()
+    if not interactive:
+        print("  Nothing was installed. Run it again at a terminal to agree, or add --accept-terms\n"
+              "  to a scripted install once you have read and agree to the terms above.\n")
+        return False
+    try:
+        said = ask("Do you understand and agree? [y/N] ").strip().lower()
+    except (EOFError, OSError):
+        said = ""
+    if said in ("y", "yes"):
+        print()
+        return True
+    print("\n  Nothing was installed: the terms were not accepted.\n")
+    return False
+
+
+def record_terms(home: Path, dry_run: bool) -> None:
+    """Keep the agreement in the arcade's settings (version and time), so a later run does not ask again."""
+    import json as _json
+    import time as _time
+    if dry_run or terms_accepted(home):
+        return
+    path = home / SETTINGS_FILE
+    if path.exists() and not read_settings(home):
+        return                                             # a settings file it cannot read is left alone
+    home.mkdir(parents=True, exist_ok=True)
+    data = read_settings(home)
+    data[TERMS_SETTING] = {"version": TERMS_VERSION, "accepted": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())}
+    partial = path.with_suffix(".json.partial")
+    partial.write_text(_json.dumps(data, indent=2))
+    os.replace(partial, path)
+
+
 EDITION_QUESTION = """
 How should this arcade start? It is the same arcade either way.
 
@@ -1983,6 +2063,9 @@ def do_update(dry_run: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install DogecoinArcade.")
     parser.add_argument("--dry-run", action="store_true", help="show what would happen")
+    parser.add_argument("--accept-terms", action="store_true",
+                        help="agree to the terms shown at the start (experimental software, as is, at your own "
+                             "risk) for a scripted install; at a terminal the installer asks instead")
     parser.add_argument("--update", action="store_true",
                         help="update an existing installation to the latest code")
     parser.add_argument("--skip-core", action="store_true",
@@ -2028,6 +2111,9 @@ def main(argv: list[str] | None = None) -> int:
     # downloader wants to install full or lite arcade"), and only on a fresh install at a terminal.
     home = Path.home() / ".dogecoinarcade"
     fresh = not existing_arcade(home)
+    # Before anything else, the terms: an explicit yes, once per wording (agree_to_terms).
+    if not agree_to_terms(home, args.accept_terms, args.dry_run):
+        return 1
     edition = choose_edition(home, args.edition)
     look = choose_look(edition)
 
@@ -2162,6 +2248,7 @@ def main(argv: list[str] | None = None) -> int:
         step(n, total, "Finishing up")
         write_first_peer(first_peer, args.dry_run)
         write_edition(home, edition, args.dry_run, fresh=fresh, look=look)
+        record_terms(home, args.dry_run)
         if not args.dry_run and not args.no_services:
             install_web_service(venv, system)
         if not args.dry_run:
