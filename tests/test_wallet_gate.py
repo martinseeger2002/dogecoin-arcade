@@ -109,7 +109,7 @@ def gated(app_state, monkeypatch, tmp_path):
     pubkey = signer.verify_key.encode().hex()
     assert app.post("/admin/api/operator", headers=ADMIN, json={"pubkey": pubkey}).status_code == 200
     assert app.post("/admin/api/password", headers=ADMIN, json={"password": PASSWORD}).status_code == 200
-    made = app.post("/admin/api/keys", headers=ADMIN, json={"name": "remote"})
+    made = app.post("/admin/api/keys", headers=ADMIN, json={"name": "remote", "write": True})   # a full key
     assert made.status_code == 200, made.text
     key = made.json()["key"]
     rpc = WalletRpc()

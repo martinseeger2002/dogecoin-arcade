@@ -30,7 +30,7 @@ def app(app_state):
 
 
 def _key(app, **body):
-    said = app.post("/admin/api/keys", headers=ADMIN, json={"name": "site", **body})
+    said = app.post("/admin/api/keys", headers=ADMIN, json={"name": "site", "write": True, **body})   # full unless said
     assert said.status_code == 200, said.text
     return said.json()["key"]
 
@@ -92,8 +92,10 @@ def test_a_key_holds_to_what_it_was_made_for(app):
         .status_code == 403
     listed = _key(app, where="203.0.113.0/24")
     assert app.get("/api/v1/whoami", headers=_with(listed)).status_code == 403
-    assert app.get("/api/v1/whoami", headers={**OUTSIDE, "cf-connecting-ip": "203.0.113.7",
-                                              "authorization": f"Bearer {listed}"}).status_code == 200
+    named = {**OUTSIDE, "cf-connecting-ip": "203.0.113.7", "authorization": f"Bearer {listed}"}
+    assert _from(app, "127.0.0.1").get("/api/v1/whoami", headers=named).status_code == 200, "through the tunnel"
+    # Named by anybody else, the address is their own word (2026-11-08): a listed key is not used from anywhere by it.
+    assert _from(app, "198.51.100.20").get("/api/v1/whoami", headers=named).status_code == 403
     assert app.post("/admin/api/keys", headers=ADMIN, json={"name": "x", "where": "nowhere"}).status_code == 400
     assert app.post("/admin/api/keys", headers=ADMIN, json={"name": "x", "modules": ["nothing"]}).status_code == 400
 
@@ -102,7 +104,7 @@ def test_a_users_key_is_that_account_and_never_the_operator(app, app_state):
     signer = SigningKey.generate()
     assert app.get("/account/keys", headers=OUTSIDE).status_code == 401
     assert _sign_in(app, signer, headers=OUTSIDE).status_code == 200
-    made = app.post("/account/keys", headers=OUTSIDE, json={"name": "my bot"})
+    made = app.post("/account/keys", headers=OUTSIDE, json={"name": "my bot", "write": True})
     assert made.status_code == 200, made.text
     key = made.json()["key"]
     app.cookies.clear()                                   # the key alone says who calls
@@ -244,3 +246,22 @@ def test_sign_out_everywhere_switches_the_accounts_keys_off(app, app_state):
     assert _sign_in(app, signer, headers=OUTSIDE).status_code == 200
     listed = app.get("/account/keys", headers=OUTSIDE).json()["keys"]
     assert len(listed) == 1 and listed[0]["off"], "still there, switched off, for the owner to switch back on"
+
+
+def test_a_key_is_read_only_and_ends_in_90_days_unless_asked(app, app_state):
+    """2026-11-08, security review: every new key was full write, for ever."""
+    said = app.post("/admin/api/keys", headers=ADMIN, json={"name": "plain"}).json()
+    assert said["write"] is False
+    assert 89 * 86400 < said["expires"] - time.time() <= 90 * 86400
+    asked = app.post("/admin/api/keys", headers=ADMIN, json={"name": "full", "write": True, "days": None}).json()
+    assert asked["write"] is True and asked["expires"] is None, "asked for: write, and never ending"
+
+
+def test_an_edge_header_counts_only_from_this_machine():
+    """Cf-Connecting-Ip from anybody but the arcade's own tunnel (loopback) is the caller's own word: a per-address limit
+    or an address-limited key could be got round by naming another address each time."""
+    said = {"cf-connecting-ip": "203.0.113.7"}
+    assert keylib.caller_ip(said, "127.0.0.1") == ("203.0.113.7", True)
+    assert keylib.caller_ip(said, "198.51.100.20") == ("198.51.100.20", False)
+    assert keylib.caller_ip({"x-forwarded-for": "203.0.113.8, 10.0.0.1"}, "::1") == ("203.0.113.8", True)
+    assert keylib.caller_ip({}, "198.51.100.20") == ("198.51.100.20", False)

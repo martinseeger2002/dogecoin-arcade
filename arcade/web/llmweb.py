@@ -875,8 +875,8 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
         try:
             said = await body_of(request)
             account, address = who(request)
-            client = account.pubkey if account else "ip:" + (request.headers.get("cf-connecting-ip") or
-                                                            (request.client.host if request.client else "?"))
+            from ..apikeys import client_ip
+            client = account.pubkey if account else "ip:" + (client_ip(request) or "?")
             now = time.time()
             recent = [t for t in asked_at.get(client, []) if now - t < 3600]
             if len(recent) >= (HELPER_HOUR if account else HELPER_GUEST_HOUR):

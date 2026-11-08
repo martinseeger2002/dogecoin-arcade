@@ -36,7 +36,7 @@ def signup(app, state, tag: str, *, key: SigningKey | None = None, coin=None, ad
     address = address or own
     pubkey = key.verify_key.encode().hex()
     body = {"tag": tag, "pubkey": pubkey, "address": address, "coin_pubkey": pub.hex(),
-            "blob": blob if blob is not None else {"sealed": "x"}, **extra}
+            "blob": blob if blob is not None else {"sealed": "x", "iterations": 600000}, **extra}
     if sign_address:
         digest = wallet_imports.proof_digest(pubkey, chain.network, address, pub.hex())
         body["address_signature"] = coin_sign(priv, digest).hex()

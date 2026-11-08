@@ -98,15 +98,26 @@ def _hash(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
+#: Days a key made with no "days" lasts (2026-11-08, security review).
+DEFAULT_DAYS = 90
+
+
 def caller_ip(headers, peer: str | None) -> tuple[str, bool]:
     """(the caller's address, whether it came through an edge such as a tunnel). An edge's header names the caller;
     without one the TCP peer is the caller."""
-    # X-Forwarded-For only from this machine itself (the arcade's own tunnel or proxy): from anybody else it is the
-    # caller's own word, and a key limited to an address could be used from anywhere by naming it (2026-11-05 review).
-    edge = headers.get("cf-connecting-ip") or ""
-    if not edge and peer in ("127.0.0.1", "::1"):
-        edge = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    # An edge's header only from this machine itself (the arcade's own tunnel or proxy, which connects from loopback):
+    # from anybody else it is the caller's own word, and a key limited to an address could be used from anywhere by
+    # naming it (2026-11-05 review), or a per-address limit dodged with a new one each time (Cf-Connecting-Ip too,
+    # 2026-11-08 security review).
+    if peer not in ("127.0.0.1", "::1"):
+        return peer or "", False
+    edge = (headers.get("cf-connecting-ip") or (headers.get("x-forwarded-for") or "").split(",")[0]).strip()
     return (edge, True) if edge else (peer or "", False)
+
+
+def client_ip(request) -> str:
+    """The caller's address for a per-address limit: caller_ip's, from a request."""
+    return caller_ip(request.headers, request.client.host if request.client else None)[0]
 
 
 def where_ok(where: str, ip: str, edge: bool) -> bool:

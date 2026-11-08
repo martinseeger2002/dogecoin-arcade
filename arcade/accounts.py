@@ -1046,6 +1046,21 @@ CREATE INDEX IF NOT EXISTS vault_pubkey ON vault(pubkey);
 """
 
 
+#: The fewest PBKDF2 rounds a sealed wallet is filed with (wallet.js KDF_ITERATIONS, 600,000 since the first one).
+MIN_SEAL_ROUNDS = 600_000
+
+
+def check_sealed(blob) -> None:
+    """Refuse a sealed wallet made with fewer rounds than every page makes (2026-11-08, security review). It is served
+    to whoever asks for its name, so its password is guessed offline at the speed its rounds allow; a page that was
+    tampered with could have filed one far cheaper to try."""
+    said = blob if isinstance(blob, dict) else {}
+    rounds = said.get("iterations")
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or rounds < MIN_SEAL_ROUNDS:
+        raise AccountError("that wallet is not sealed the way this arcade's pages seal one: reload the page and try "
+                           "again")
+
+
 class Vault:
     """Encrypted wallets, by @tag. Bytes this node cannot read."""
 

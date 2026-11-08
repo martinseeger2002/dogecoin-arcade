@@ -35,6 +35,20 @@ def test_a_second_sign_up_with_a_key_that_has_an_account_is_refused(client, monk
     assert fresh.status_code == 200, "a new key still signs up"
 
 
+def test_a_wallet_sealed_with_too_few_rounds_is_not_filed(client, monkeypatch):
+    """It is served to whoever asks for its name (2026-11-08, security review): a page that was tampered with could
+    file one far cheaper to guess offline."""
+    page, state = client
+
+    class Index:
+        def address_of(self, wanted):
+            return None
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+    weak = SP.signup(page, state, "cheap", blob={**BLOB, "iterations": 1000})
+    assert weak.status_code == 400 and "sealed" in weak.json()["detail"]
+    assert state.vault().get("cheap") is None
+
+
 def test_a_sign_up_proves_the_key_and_the_address(client, monkeypatch):
     """2026-11-08, security review: /signup opened a session for any public key posted to it. Now the account key
     signs a challenge, as a sign-in does, and the coin key proves the address; either missing or wrong, nothing is

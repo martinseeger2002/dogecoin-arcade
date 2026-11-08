@@ -122,3 +122,20 @@ def test_the_mesh_pass_through_says_who_really_asked():
             await web_srv.wait_closed()
             await asyncio.sleep(0.1)
     asyncio.run(asyncio.wait_for(go(), 20))
+
+
+def test_behind_the_tunnel_each_visitor_has_their_own_sign_in_allowance(client):
+    """2026-11-08, security review: every visitor through the arcade's own tunnel came from 127.0.0.1, so one person
+    asking 20 times in five minutes stopped sign-in for everybody. Each is counted by the address the tunnel names."""
+    from fastapi.testclient import TestClient
+    page, state = client
+    inner = page.app
+
+    async def tunnel(scope, receive, send):
+        await inner({**scope, "client": ("127.0.0.1", 40000)} if scope["type"] == "http" else scope, receive, send)
+    via = TestClient(tunnel)
+    one = {"host": "127.0.0.1:8420", "cf-connecting-ip": "203.0.113.1"}
+    other = {"host": "127.0.0.1:8420", "cf-connecting-ip": "203.0.113.2"}
+    codes = [via.get("/signin/nobody?here=1", headers=one).status_code for _ in range(22)]
+    assert codes[-1] == 429, codes
+    assert via.get("/signin/nobody?here=1", headers=other).status_code == 404, "the next visitor is not held up"
