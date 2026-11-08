@@ -78,6 +78,7 @@ PUBLIC_PAGES = frozenset({
     "/lite",                  # ARCADE Lite's window: each caller sees what they may (arcade/lite/web.py)
     "/lite/pages.css",        # ...and the look it gives the full arcade's pages in the Lite edition
     "/lite/theme.css",        # ...and the theme the asker sees over it (arcade/packages.py)
+    "/lite/modforms.js",      # ...and a node module's forms, the window's and the website's (2026-11-08)
     "/desktop",               # the Desktop View: the tabs and apps as icons and windows (desktop.html, 2026-10-28)
     "/apps/store-icon.png",   # the App Store's icon on it
     "/games",                 # the old name: redirects to /apps
@@ -214,6 +215,8 @@ PUBLIC_TREES = (
     "/lite/api/",             # Lite's overview and command list, shaped by who asks (arcade/lite/web.py)
     "/lite/packages/",        # an installed theme's own fonts (arcade/lite/web.py)
     "/m/",                    # a node module's pages, read only and sandboxed; each checks its manifest's audience
+    "/module/",               # a node module in the website's look: its page and forms, which run through the console
+                              # (/lite/api/console, its own rules); the page itself reads only (2026-11-08)
     "/explore/api/",          # the Explore tab's lookups: GET only, read only, a few a minute per visitor
     "/account/llm/",          # the Exchange's LLM tab: offers, the account's own balance, grant words and keys
     "/exchange/llm/",         # one model's own page on the model exchange (2026-10-23)
