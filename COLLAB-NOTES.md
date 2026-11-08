@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/lite-assets` (on `main` 45b0e26b) · ArcadeCore: an Assets tab, and Send for an ord or an arcade NFT
+
+SadFrog: "where are our ordinals and nft and other assets shown on the arcade core with ordinals enabled? that should
+appear in the send tab correct? I do not currently see away to see our held assets at all on arcade core".
+- **Assets** (`arcade/lite/templates/lite.html`, `_wallet.html`): a tab while the Ord indexes module is on and an
+  account is signed in. It lists the ords on the account's coins on one chain, 24 a page, newest first, from the full
+  Wallet's own `/account/doginals/page`, in the same sandboxed `/content/<id>/fit` frames. It also lists the arcade's
+  own NFTs on that chain from `/account/nfts`.
+- **Send:** each card's Send picks it for the Send tab, and the amount row gives way to its name. The arcade builds the
+  send as the full Wallet's does (`/account/doginal/send`, `/account/nft/send`). The browser checks the offer is that
+  piece (an ord's coin is input 0) to the payee typed, and that the bytes pay that payee (the coin's whole value, for an
+  ord). Every cost is listed before Send, and a mainnet piece says it can't be taken back.
+- **Guard:** `web/app.py` reads that picked a guard by address alone now name the chain, as `exchange-safety.md`'s
+  DigiByte rule says: `_spendable_coins`, the ords page, `doginal-txs`, `doginal-tx`, the listing check, `_dd_send`
+  and the coin summary. Before, a DigiByte "D" address on an arcade with Dogecoin was read with Dogecoin's guard.
+  Left as they were, being reads only: `_ords_at`, `_inscribed`, `_coin_marks`.
+- **Tests:** `tests/test_doginal_wallet_browser.py` (+1, Firefox): the ord under Assets, picked, reviewed with its coin
+  and payee, and back to coins. With the Lite, ord, DigiDollar and safety suites: 500 passed. The DigiByte Core
+  regtest tests (`test_digidollar_regtest`, `test_ddpad_regtest`) ran on a test node with DigiByte Core 9.26.7: 3 passed.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
+
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #108 #109 #110 #111 #112 onto master
 
 All five applied cleanly; 277 tests passed on them (modules, Lite, DigiDollar, Explore, ord index, page doors).
