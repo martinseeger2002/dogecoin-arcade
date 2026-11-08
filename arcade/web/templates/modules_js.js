@@ -178,6 +178,18 @@
       }
       tr.insertCell().textContent = m.title;
       var what = tr.insertCell(); what.textContent = m.summary;
+      // A node module's own page, its forms the operator's switches among them (2026-11-08): the website's /module/<id>,
+      // or its tab when this is drawn inside the ArcadeCore window.
+      if (m.package && m.on) {
+        var go = el('a', 'Open ' + m.title + ' \u2192'); go.href = '/module/' + encodeURIComponent(m.id);
+        go.style.cssText = 'display:block;margin-top:2px';
+        go.onclick = function (e) {
+          var w = null;
+          try { w = window.liteWindow || (window.parent !== window && window.parent.liteWindow) || null; } catch (x) {}
+          if (w && document.querySelector && w.open) { e.preventDefault(); w.open('m-' + m.id); }
+        };
+        what.append(go);
+      }
       if (m.needs.length) what.append(el('div', 'Needs: ' + names(m.needs), 'why'));
       var who = tr.insertCell();
       if (m.core) who.append(el('span', 'everyone', 'why'));

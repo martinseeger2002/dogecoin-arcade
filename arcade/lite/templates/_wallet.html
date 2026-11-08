@@ -100,6 +100,7 @@
 <script src="/vendor/qrcode.js"></script>
 <script type="module">
 import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
+import * as modforms from "/lite/modforms.js";
 const NODE = {{ 'true' if wallet == 'node' else 'false' }};
 const API = NODE ? "/node/wallet" : "/account";
 const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
@@ -683,39 +684,13 @@ if (ORDS) {
   document.querySelector('[data-tab="assets"]').addEventListener("click", () => drawAssets());
 }
 if (!NODE) {
-  // For the console (lite.html): the public keys this account's wallet holds, by chain, and an offer a node module
-  // prepared, reviewed here and signed only on a yes.
-  const hexOf = (u) => Array.from(u, (b) => b.toString(16).padStart(2, "0")).join("");
-  window.litePubkeys = async () => {
-    const k = await wallet.opened(TAGCHAIN);
-    const out = {};
-    if (k) for (const c of said.chains) { try { out[c.network] = hexOf(wallet.keysOn(k, c.network).pubkey); } catch (e) {} }
-    return out;
-  };
+  // For the console and a module's forms (lite.html, modforms.js): the public keys this account's wallet holds, by
+  // chain, and an offer a node module prepared, reviewed here and signed only on a yes.
+  window.litePubkeys = () => modforms.pubkeys(wallet, TAGCHAIN, said.chains);
   window.liteSign = async (o) => {
-    const k = await wallet.opened(TAGCHAIN);
-    if (!k) throw new Error("Open your wallet first (Send asks for its password), then run the command again. Nothing was signed.");
-    const read = await wallet.checked(o, k);
-    const c = said.chains.find((x) => x.network === o.chain) || {};
-    // Every payment as this browser read it from the transaction itself (coins.verifyOffer), never the module's own
-    // words alone (2026-11-05 review: the box said only the module's "what", the fee and the change, so a module could
-    // pay itself the wallet's coins under any description).
-    const paid = (read.pays || []).filter((x) => !x.mine);
-    const lines = [`The module says: ${o.what || "a transaction"}`, "", "This transaction pays:"];
-    for (const x of paid) {
-      lines.push(x.dd !== undefined ? `  $${(x.dd / 100).toFixed(2)} in DigiDollars to ${x.to}`
-                 : x.bytes !== undefined ? `  ${x.bytes} bytes written to the chain${x.value ? ` (${coinsOf(x.value)} ${unit(c)})` : ""}`
-                                         : `  ${coinsOf(x.value)} ${unit(c)} to ${x.to}`);
-    }
-    if (!paid.length) lines.push("  nobody but you");
-    lines.push(`Network fee: ${coinsOf(read.fee)} ${unit(c)}`);
-    if (read.change) lines.push(`Comes back to you: ${coinsOf(read.change)} ${unit(c)}`);
-    // A module's spend on a chain of real coins says so, as Send's review does (w-warn).
-    if (c.mainnet) lines.push("", `Real ${unit(c)}. Once it is in a block it can't be taken back.`);
-    if (!window.confirm(lines.join("\n") + "\n\nSign it with your wallet and send it?")) return "Not sent. Nothing was signed.";
-    const out = await wallet.confirm(k, o, {reviewed: true});
-    load();
-    return `Sent. Transaction ${out.txid}`;
+    const done = await modforms.signOffer(wallet, TAGCHAIN, said.chains, o);
+    if (done.startsWith("Sent.")) load();
+    return done;
   };
 }
 load();

@@ -147,6 +147,13 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         return Response((Path(__file__).parent / "templates" / "pages.css").read_text(), media_type="text/css",
                         headers={"Cache-Control": "no-cache"})
 
+    @app.get("/lite/modforms.js")
+    def lite_modforms_js():
+        """A node module's command forms and how they run, for every look: the window's module tabs and the website's
+        module pages (modforms.js)."""
+        return Response((Path(__file__).parent / "templates" / "modforms.js").read_text(),
+                        media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
     @app.get("/lite/theme.css")
     def lite_theme_css(request: Request):
         """The theme this caller sees (arcade/packages.py), as CSS over the window's look; empty for Lite's own.

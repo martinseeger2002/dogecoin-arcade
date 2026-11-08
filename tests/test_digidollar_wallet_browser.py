@@ -45,9 +45,11 @@ def browser():
     driver.quit()
 
 class _Core:
-    """A DigiByte testnet Core that answers what a DigiDollar send asks of it."""
+    """A DigiByte testnet Core that answers what a DigiDollar send asks of it: the arcade's index reads, and the
+    DigiDollar module's own (its send reads the coins from the Core, as ArcadeCore's Send does: 2026-11-08, one wallet
+    whatever the look). `outs` are the coins; `txs` the transactions that made them, read for their "DD" record."""
     def __init__(self):
-        self.outs = {}
+        self.outs, self.txs = {}, {}
 
     def __enter__(self):
         return self
@@ -59,8 +61,23 @@ class _Core:
         if method == "gettxout" and (params[0], params[1]) in self.outs:
             value, script = self.outs[params[0], params[1]]
             return {"value": value / 100_000_000, "scriptPubKey": {"hex": script.hex()}}
+        if method == "getdigidollardeploymentinfo":
+            return {"enabled": True}
+        if method == "getblockchaininfo":
+            return {"chain": "test", "blocks": 100, "headers": 100}
+        if method == "getblockcount":
+            return 100
+        if method == "getrawtransaction" and params[0] in self.txs:
+            return self.txs[params[0]]
         if method == "scantxoutset":
-            return {"unspents": []}
+            wanted = [str(d) for d in (params[1] if len(params) > 1 else [])]
+            found = []
+            for (txid, vout), (value, script) in self.outs.items():
+                p2pkh = len(script) == 25 and script[:3] == bytes.fromhex("76a914")
+                if any(d == f"raw({script.hex()})" or (d.startswith("addr(") and p2pkh) for d in wanted):
+                    found.append({"txid": txid, "vout": vout, "amount": value / 100_000_000, "height": 5,
+                                  "coinbase": False, "scriptPubKey": script.hex()})
+            return {"height": 100, "unspents": found}
         raise ValueError(f"{method} is not served here")
 
 def _serve(home, with_dgb: bool):
@@ -150,6 +167,16 @@ def test_digidollar_is_a_coin_of_its_own_with_balance_receive_and_a_checked_send
         db.conn.commit()
     state.dd_core.outs = {("dd" * 32, 1): (0, tr.p2tr(tr.tweak(pub[1:]))),
                           ("aa" * 32, 0): (150_000_000, p2pkh_script(me["address"]))}
+    # The transaction that made the $60: a send's record, OP_RETURN "DD" 2 <6000>, its one zero-value Taproot output.
+    state.dd_core.txs = {"dd" * 32: {"txid": "dd" * 32, "vout": [
+        {"n": 0, "value": 0.5, "scriptPubKey": {"hex": p2pkh_script(me["address"]).hex()}},
+        {"n": 1, "value": 0, "scriptPubKey": {"hex": tr.p2tr(tr.tweak(pub[1:])).hex()}},
+        {"n": 2, "value": 0, "scriptPubKey": {"hex": (b"\x6a\x02DD\x01\x02" + tr.push(tr.num(6000))).hex()}}]}}
+    # DigiDollar is the DigiDollar module's, in every look: on here (2026-11-08).
+    from arcade.lite import commands as cmdlib
+    op = cmdlib.Caller(state, "operator", local=True)
+    cmdlib.run_line(op, f"installmodule {PILOT}")
+    cmdlib.run_line(op, "install digidollar")
 
     browser.execute_script("localStorage.clear()")
     browser.get(f"{base}/me/wallet?coin=dgbtest")
@@ -322,3 +349,53 @@ def test_the_lite_wallet_reads_the_same_digidollars_as_the_full_wallet(browser, 
     _wait(browser, """return [...document.querySelectorAll('#w-balances tr')]
         .some(r => r.cells[0] && r.cells[0].textContent === 'DigiDollar (test)' && r.cells[1].textContent.includes('$35.75'))""")
     assert not browser.find_element(By.ID, "w-unlock").is_displayed()
+
+
+def test_the_digidollar_module_has_a_page_in_the_website_look_with_the_same_forms(browser, served):
+    """2026-11-08, SadFrog: "make sure every feature that is available in full is available in core and vice versa", and
+    "make a ui for enabling mainnet sends as well". The module's forms, drawn by the same file as ArcadeCore's tab
+    (/lite/modforms.js), on the website's /module/digidollar; the Wallet's DigiDollar card links there."""
+    from arcade.lite import commands as cmdlib
+    base, state = served
+    op = cmdlib.Caller(state, "operator", local=True)
+    cmdlib.run_line(op, f"installmodule {PILOT}")
+    cmdlib.run_line(op, "install digidollar")
+    _sign_up(browser, base, "ddpagetester")
+    browser.get(f"{base}/module/digidollar")
+    _wait(browser, "return document.body.dataset.moduleReady === 'yes'"
+                   " && document.querySelectorAll('.modforms fieldset').length")
+    legends = [e.text for e in browser.find_elements(By.CSS_SELECTOR, ".modforms legend")]
+    assert "Mint" in legends and "My vaults" in legends, legends
+    # At the node's own machine the browser is the operator's: the mainnet switch is among the forms.
+    assert "Mainnet DigiDollar (operator)" in legends, legends
+    labels = browser.find_element(By.CSS_SELECTOR, ".modforms").text
+    assert "Mainnet mints and sends" in labels and "Type yes to turn on" in labels
+    src = browser.execute_script("return document.querySelector('.modpage-frame').getAttribute('src')")
+    assert src == "/m/digidollar/"
+    assert browser.execute_script("return fetch('/module/nosuch').then(r => r.status)") == 404
+
+
+def test_a_page_framed_in_arcadecore_wears_its_look_on_an_arcade_that_opens_in_another(browser, served):
+    """2026-11-08, SadFrog: "i had pepecoin arcade admin style inside core theme selected - like it was not updated with
+    the rest". A person may wear ArcadeCore on an arcade whose look is the website: a page in one of its tabs is drawn
+    as the window's, with this caller's theme, and without its own bar."""
+    from arcade import modules as modulelib
+    base, state = served
+    was = state.setting(modulelib.LOOK_SETTING)
+    state.set_setting(modulelib.LOOK_SETTING, "web")
+    try:
+        _sign_up(browser, base, "ddlooktester")
+        browser.get(f"{base}/lite#m-ords")
+        _wait(browser, "const f = document.querySelector('[data-panel=\"m-ords\"] iframe');"
+                       " return f && f.contentDocument && f.contentDocument.body"
+                       " && f.contentDocument.body.hasAttribute('data-lite')")
+        framed = browser.execute_script("""const d = document.querySelector('[data-panel="m-ords"] iframe').contentDocument;
+            return {inWindow: d.documentElement.classList.contains('in-window'),
+                    sheets: [...d.querySelectorAll('link[rel=stylesheet]')].map(l => l.getAttribute('href')),
+                    header: d.querySelector('body > header') ? getComputedStyle(d.querySelector('body > header')).display : 'none'}""")
+        assert framed["inWindow"] and "/lite/pages.css" in framed["sheets"] and "/lite/theme.css" in framed["sheets"], framed
+        assert framed["header"] == "none", framed
+        browser.get(f"{base}/explore")                                   # on its own: the website's page, as it was
+        assert not browser.execute_script("return document.body.hasAttribute('data-lite')")
+    finally:
+        state.set_setting(modulelib.LOOK_SETTING, was)

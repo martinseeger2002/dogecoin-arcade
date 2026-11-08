@@ -2,7 +2,7 @@
   "kind": "module",
   "api": 1,
   "name": "digidollar",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "title": "DigiDollar",
   "summary": "DigiByte's stablecoin from your own wallet: mint, hold, send, receive and redeem DigiDollars, a form for each step, with its price and health.",
   "pages": "anyone",
@@ -361,12 +361,12 @@
       ],
       "help": "Whether this arcade's people may mint and send DigiDollars on DigiByte mainnet, with real DGB.\n\nddmainnet [status|on|off] [yes]   off until turned on; on needs yes",
       "form": {
-        "title": "Mainnet (operator)",
+        "title": "Mainnet DigiDollar (operator)",
         "button": "Apply",
         "note": "Off until you turn it on. Read the module's README first.",
         "fields": {
           "state": {
-            "label": "Mainnet mints",
+            "label": "Mainnet mints and sends",
             "type": "choice",
             "choices": [
               [

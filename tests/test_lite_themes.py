@@ -109,7 +109,10 @@ def test_a_theme_changed_on_disk_is_not_worn(app, app_state, tmp_path):
 
 def test_the_window_and_the_full_pages_in_lite_link_the_theme(app, app_state):
     assert '<link rel="stylesheet" href="/lite/theme.css">' in app.get("/lite", headers=OUTSIDE).text
-    assert "/lite/theme.css" not in app.get("/docs", headers=LOCAL).text, "the full edition is unchanged"
+    # The full edition's pages link it only from inside the window (base.html writes it there), never as a page's own
+    # stylesheet: opened on their own they are unchanged (2026-11-08).
+    assert '<link rel="stylesheet" href="/lite/theme.css">{#' not in app.get("/docs", headers=LOCAL).text
+    assert '</style>\n<link rel="stylesheet" href="/lite/pages.css">' not in app.get("/docs", headers=LOCAL).text
     app_state.set_setting("edition", "lite")
     try:
         assert '<link rel="stylesheet" href="/lite/theme.css">' in app.get("/docs", headers=LOCAL).text
