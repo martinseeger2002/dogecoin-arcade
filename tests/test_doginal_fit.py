@@ -52,3 +52,40 @@ def test_a_page_that_draws_itself_is_sent_on_unchanged(client, monkeypatch):
 
 def test_cards_frame_the_fit_page():
     assert doginals.frame_url(ID) == f"/content/{ID}/fit"
+
+
+class _Slow:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def content(self, key, follow=True):
+        raise self.exc
+
+
+def test_a_piece_its_chain_is_still_reading_says_so_and_is_asked_for_again(client, monkeypatch):
+    """2026-11-08: half a Bells collection's tiles showed {"error":"no such inscription"} on a Lite node that borrows
+    Bells -- long pieces read over the mesh gave up after 25 s, and the frame showed the 404's JSON."""
+    client = client[0]
+    from arcade import funding
+    monkeypatch.setattr(funding, "GUARD", _Slow(doginals.Unknown("the chain is busy reading other inscriptions; try again")))
+    raw = client.get(f"/content/{ID}")
+    assert raw.status_code == 503 and raw.headers["retry-after"] and raw.headers["cache-control"] == "no-store"
+    note = client.get(f"/content/{ID}/fit")
+    assert note.status_code == 503 and note.headers["content-type"].startswith("text/html")
+    assert "Reading from the chain" in note.text and '"?tries=1"' in note.text and "error" not in note.text
+    assert note.headers["cache-control"] == "no-store" and "sandbox" in note.headers["content-security-policy"]
+    last = client.get(f"/content/{ID}/fit?tries=6")
+    assert "Not read yet" in last.text and "<script" not in last.text, "a few tries, then it stops asking"
+    monkeypatch.setattr(funding, "GUARD", _Slow(TimeoutError("timed out")))
+    assert client.get(f"/content/{ID}").status_code == 503
+
+
+def test_a_piece_no_chain_has_gets_a_note_not_json(client, monkeypatch):
+    client = client[0]
+    from arcade import funding
+    monkeypatch.setattr(funding, "GUARD", _Slow(ValueError("no ord envelope in that transaction")))
+    assert client.get(f"/content/{ID}").status_code == 404
+    note = client.get(f"/content/{ID}/fit", follow_redirects=False)
+    assert note.status_code == 404 and "Not on this arcade" in note.text and "<script" not in note.text
+    monkeypatch.setattr(funding, "GUARD", _Slow(doginals.Unknown("not on this chain: no such transaction")))
+    assert client.get(f"/content/{ID}").status_code == 404

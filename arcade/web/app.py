@@ -7412,13 +7412,20 @@ def create_app(state: AppState) -> FastAPI:
         return _with_viewer_shim(_inscription_content(key, download, reveal),
                                  "" if download else v)
 
+    #: How many times a card's frame asks again for a piece its chain is still reading (10 s apart).
+    FIT_TRIES = 6
+
     @app.get("/content/{key}/fit")
-    def inscription_fit(key: str):
+    def inscription_fit(key: str, tries: int = 0):
         """An inscription for a card's frame (2026-10-18): a picture is drawn scaled into the frame, whole -- a frame
         shows an image document at its own size, so a 1000 px Doginal showed one corner of its background -- and
-        anything else (a page that draws itself, which sizes itself to the frame) is sent on to /content/<id>."""
+        anything else (a page that draws itself, which sizes itself to the frame) is sent on to /content/<id>. A piece
+        that cannot be shown gets a short note in the frame instead of the error's JSON (2026-11-08), and one its chain
+        is still reading is asked for again a few times."""
         answer = _inscription_content(key)
         kind = str(answer.headers.get("content-type", ""))     # a screened notice is a picture too
+        if answer.status_code in (404, 503) and not kind.startswith("image/"):
+            return _fit_note(key, later=answer.status_code == 503, tries=max(0, tries))
         if not kind.startswith("image/"):
             return RedirectResponse(f"/content/{quote(key)}", status_code=307)
         page = ('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:transparent}'
@@ -7426,6 +7433,21 @@ def create_app(state: AppState) -> FastAPI:
                 f'<img src="/content/{html.escape(quote(key))}" alt="">')
         return Response(page, media_type="text/html",
                         headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "public, max-age=86400"})
+
+    def _fit_note(key: str, later: bool, tries: int):
+        """A card frame's note for a piece it cannot show: "Reading from the chain" while its chain is still reading
+        it (the frame asks again, FIT_TRIES times), else "Not on this arcade". Never kept by a cache."""
+        again = later and tries < FIT_TRIES
+        said = ("Reading from the chain\u2026" if again else
+                "Not read yet. Open it to try again." if later else "Not on this arcade")
+        page = ('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:transparent}'
+                'body{display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;'
+                'box-sizing:border-box;font:12px/1.4 system-ui,sans-serif;color:#8a8a8a}</style>'
+                f'<p>{html.escape(said)}</p>')
+        if again:
+            page += f'<script>setTimeout(function(){{location.replace("?tries={tries + 1}")}},10000)</script>'
+        return Response(page, media_type="text/html", status_code=503 if later else 404,
+                        headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"})
 
     def _chain_inscription(key: str):
         """An ord inscription (a Doginal, or one on Pepecoin mainnet) this arcade's own index does not hold, read from the
@@ -7435,6 +7457,7 @@ def create_app(state: AppState) -> FastAPI:
         if not D.INSCRIPTION_ID.match(str(key or "").lower()):
             return None
         nets = {id(g): n for n, g in (fundinglib.GUARD_BY_NET or {}).items()}
+        later = False                                       # a chain that may hold it could not finish reading it now
         for guard in [g for g in [fundinglib.GUARD] if g is not None] + [g for _, g in fundinglib.GUARDS]:
             net = nets.get(id(guard)) or ("doge" if guard is fundinglib.GUARD else "")
             read = str(key).lower()
@@ -7454,7 +7477,8 @@ def create_app(state: AppState) -> FastAPI:
             try:
                 # A delegate the index named is not followed on again (once, as ord does).
                 ctype, body = guard.content(read) if said is None else guard.content(read, follow=False)
-            except Exception:                               # noqa: BLE001 -- not on this chain, or not readable now
+            except Exception as exc:                        # noqa: BLE001 -- not on this chain, or not readable now
+                later = later or _read_later(exc)
                 continue
             # The same rules as the arcade's own pieces (content.content): a type it renders, else a download.
             ctype = contentlib.media.standard_type(ctype)
@@ -7463,7 +7487,28 @@ def create_app(state: AppState) -> FastAPI:
             if safe is None:
                 headers["Content-Disposition"] = "attachment"
             return Response(body, media_type=safe or "application/octet-stream", headers=headers)
+        if later:
+            # Not "no such inscription" (2026-11-08: half a Bells collection's tiles said so on a Lite node that
+            # borrows Bells -- long pieces of hundreds of parts, read over the mesh two at a time, gave up after
+            # 25 s). It is there, or may be: ask again in a moment, and nobody keeps this answer.
+            later_answer = contentlib._json({"error": "still reading this inscription from its chain; try again"},
+                                            status=503)
+            later_answer.headers["Cache-Control"] = "no-store"
+            later_answer.headers["Retry-After"] = "10"
+            return later_answer
         return None
+
+    def _read_later(exc: Exception) -> bool:
+        """A chain read that failed for now, not for good: the chain busy with other reads, or its node (here, or
+        borrowed over the mesh) too slow to answer. Not one whose transaction the chain does not have, or whose
+        envelope says no content (ValueError)."""
+        from .. import doginals as D
+        if isinstance(exc, ValueError):
+            return False
+        said = str(exc).lower()
+        if "timed out" in said or "timeout" in said or isinstance(exc, (TimeoutError, ConnectionError)):
+            return True
+        return isinstance(exc, D.Unknown) and "busy" in said
 
     def _ord_delegate(net: str, inscription: str) -> dict | None:
         """The delegate this arcade's own ord index of `net` says an inscription names (DoginalIndex.delegate, with the

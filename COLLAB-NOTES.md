@@ -89,6 +89,25 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/explore-tile-notes` (on `main` 8e4430f8) · Explore: a tile it cannot show says so, not `{"error":"no such inscription"}`
+
+Seen on node 9 (Lite, borrows Doge and Bells): 21 of 48 Bells Puppets tiles, 46 of 48 Bells Rex tiles and 45 of 48
+Dogecoin "bone" tiles showed the raw 404 JSON. The pieces exist: they are long (one Bells Rex piece has 643 parts) or
+are delegates, read over the mesh two at a time, and `Doginals.content` gave up after 25 s ("the chain is busy").
+`_chain_inscription` swallowed that and the caller answered "no such inscription"; `/fit` then sent the frame to
+`/content/<id>`, which showed the JSON.
+- **`/content/<id>`:** a chain read that failed for now (busy, timed out) answers **503** "still reading this
+  inscription from its chain; try again", with `Retry-After: 10` and `no-store` (`_read_later`). A transaction the
+  chain does not have, or an envelope with no content, is still 404.
+- **`/content/<id>/fit`:** a 404 or 503 gets a short note in the frame ("Not on this arcade", "Reading from the
+  chain…"). While reading, the frame asks again every 10 s, up to `FIT_TRIES` (6) times, then "Not read yet. Open it to
+  try again."
+- **Explore:** every tile and viewer frame goes through `/fit` (a page is sent on to `/content/<id>` as before), so a
+  missing page piece gets the note too.
+- **Tests:** `tests/test_doginal_fit.py` +2.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
+
+### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
 
 PR #97 (nodes globe) is held for the operator, because it lists members' cities. Its log entries came in with #106 and were taken out until it lands.
 Two merge fixes:
