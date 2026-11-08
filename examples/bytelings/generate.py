@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bytelings: 100 pixel monsters, the arcade's own DigiByte ordinals collection.
+"""Bytelings: pixel monsters, the arcade's own DigiByte ordinals collection.
 
     python3 examples/bytelings/generate.py            # writes examples/bytelings/build/
     python3 examples/bytelings/generate.py --sheet preview.png --scale 6
@@ -9,13 +9,18 @@ from a seed, never by hand, so anyone can run this and get the same 100 pictures
 chain. They are digital monsters in the virtual-pet tradition: a baby blob, then a rookie, up to armoured giants, seen
 side on with claws, tails, spikes, straps and armour. Our own monsters: no other franchise's names, characters or looks.
 
+The first hundred are all babies, the Bit stage (2026-11-07, SadFrog: "100 babys that can eventually become bigger"):
+blobs, drops, puffs, beans, tadpoles, wisps and mounds. Every 30 days after the pad opens, the next stage can be
+reached by evolving, which is to come: a Bytelings site on the arcade's backbone where an owner signs to burn their
+babies for a grown one. The grown bodies below are drawn already, for those later hundreds (`--stage`).
+
 What comes out is a HashLips build (`build/images/<n>.png`, `build/json/<n>.json` and `build/json/_metadata.json`),
 the layout the Creator tab already inscribes a whole collection from (arcade/collections.py). A picture is 32 by 32
 pixels in an indexed palette, a few hundred bytes, so the fee to inscribe it stays small; pages show it scaled up with
 `image-rendering: pixelated`.
 
 Every Byteling has a stage (how far it has grown: Bit, Byte, Kilo, Mega, Giga), an element (its colours), a body
-(Dino, Beast, Dragon, Avian, Imp; every Bit is a Baby), its head, eyes, mouth, marking, gear and background. No two
+(a Bit's is one of the baby forms; a grown one is a Dino, Beast, Dragon, Avian or Imp), its head, eyes, mouth, marking, gear and background. No two
 have the same traits. Pillow is the only thing it needs.
 """
 
@@ -33,15 +38,16 @@ NAME = "Bytelings"
 COUNT = 100
 SIZE = 32
 SEED = "bytelings/2026-11-07"
-DESCRIPTION = ("A Byteling: one of 100 pixel monsters, the Arcade's own collection on DigiByte, minted with "
-               "DigiDollar test to thank the people who tried it.")
+DESCRIPTION = ("A Byteling: a baby pixel monster, one of the first 100, the Arcade's own collection on DigiByte, "
+               "minted with DigiDollar test to thank the people who tried it. Every 30 days it can grow a stage.")
 HERE = Path(__file__).resolve().parent
 GROUND = 29
 
-#: How many of each stage there are: most are young.
-STAGES = [("Bit", 16), ("Byte", 30), ("Kilo", 28), ("Mega", 18), ("Giga", 8)]
+#: The stages, youngest first. The first hundred are all Bits (`--stage` draws a hundred of another, for later).
+STAGE_NAMES = ("Bit", "Byte", "Kilo", "Mega", "Giga")
+STAGES = [("Bit", 100)]
 #: How big each stage is drawn, and how much bigger its head is than a grown one's (the young are all head).
-SCALE = {"Byte": (.74, 1.25), "Kilo": (.86, 1.1), "Mega": (.95, 1.0), "Giga": (1.0, 1.0)}
+SCALE = {"Bit": (1.3, 1.0), "Byte": (.74, 1.25), "Kilo": (.86, 1.1), "Mega": (.95, 1.0), "Giga": (1.0, 1.0)}
 
 #: Each element's colours: background, body, body light, body dark, accent, horn and claw.
 ELEMENTS = {
@@ -74,6 +80,13 @@ MOUTHS = ["Fangs", "Fangs", "Grin", "Closed"]
 MARKINGS = ["None", "Stripes", "Stripes", "Tribal", "Belly", "Spots"]
 GEAR = ["None", "None", "Belts", "Belts", "Gauntlet", "Helmet", "Armor", "DigiDollar coin"]
 BACKGROUNDS = ["Element", "Element", "Element", "LCD", "Data"]
+#: What a baby (a Bit) can be instead.
+BABY_FORMS = ["Blob", "Drop", "Puff", "Bean", "Tadpole", "Wisp", "Mound"]
+BABY_HEADS = ["Horns", "Unihorn", "Ears", "Crest", "Sprout", "Antenna", "Plain", "Plain"]
+BABY_EYES = ["Round", "Round", "Round", "Sharp", "Glow", "Fierce", "Sleepy"]
+BABY_MOUTHS = ["Fangs", "Grin", "Grin", "Closed", "Open"]
+BABY_MARKINGS = ["None", "None", "Spots", "Stripes", "Tribal", "Blush", "Blush"]
+BABY_GEAR = ["None", "None", "None", "None", "Eggshell", "Bow", "DigiDollar coin"]
 
 
 def hexrgb(h: str) -> tuple[int, int, int]:
@@ -228,15 +241,81 @@ def imp(c: Canvas, t: dict) -> dict:
             "arm": (17.5, 19.5, 21, 22.5), "ear": (12.5, 8.5), "two_eyes": True}
 
 
-def baby(c: Canvas, t: dict) -> dict:
-    c.new(True); c.ellipse(16, 23.5, 7.5, 6, "body")
+# The babies, a Bit's forms: small, round and mostly face, looking at you. Each says where its eyes (the middle of
+# the pair), mouth and top are, its `ear` (the left one; the right is its mirror about the top) and `side`, where it
+# holds a coin.
+
+def _feet(c: Canvas, y: float = 28.6, x0: float = 10.5, x1: float = 21.5):
+    c.capsule(x0 - 1, y, 1.2, x0 + 1, y, 1.2, "far"); c.capsule(x1 - 1, y, 1.2, x1 + 1, y, 1.2, "far")
+
+
+def _baby(eye, mouth, top, ear, side, **more) -> dict:
+    return {"eye": eye, "mouth": mouth, "top": top, "back": [], "chest": None, "arm": None, "ear": ear,
+            "side": side, "two_eyes": True, "baby": True, **more}
+
+
+def blob(c: Canvas, t: dict) -> dict:
+    c.new(); _feet(c)
+    c.new(); c.ellipse(16, 23.5, 7.5, 6, "body")
     c.ellipse(16, 25.5, 4.5, 3, "belly", only=("body",))
-    c.capsule(10, 28.6, 1.2, 12, 28.6, 1.2, "dark"); c.capsule(20, 28.6, 1.2, 22, 28.6, 1.2, "dark")
-    return {"eye": (16, 22), "mouth": (15, 25.3, 17.5), "top": (16, 17.6), "back": [], "chest": None, "arm": None,
-            "ear": (11.5, 19), "two_eyes": True, "baby": True}
+    return _baby((16, 22), (15, 25.3, 17.5), (16, 17.6), (11.5, 19), (22, 25.5))
 
 
-BODY_DRAW = {"Dino": dino, "Beast": beast, "Dragon": dragon, "Avian": avian, "Imp": imp, "Baby": baby}
+def drop(c: Canvas, t: dict) -> dict:
+    c.new(); _feet(c, x0=11, x1=21)
+    c.new(); c.ellipse(16, 24.2, 6.6, 5.2, "body"); c.tri([(9.6, 23.2), (17.5, 12.5), (22.4, 23.2)], "body")
+    c.ellipse(16, 26, 4, 2.6, "belly", only=("body",))
+    return _baby((16, 22.5), (15, 25.6, 17.5), (17.3, 13.6), (12, 19.5), (21.5, 26))
+
+
+def puff(c: Canvas, t: dict) -> dict:
+    c.new(); _feet(c)
+    c.new(); c.ellipse(16, 24, 7.6, 5.4, "body")
+    for x, y in ((10.5, 20.5), (14, 19), (18, 19), (21.5, 20.5), (8.7, 23.5), (23.3, 23.5)):
+        c.ellipse(x, y, 2.6, 2.4, "body")
+    c.ellipse(16, 26, 4.5, 2.6, "belly", only=("body",))
+    return _baby((16, 22.6), (15, 25.6, 17.5), (16, 16.8), (11, 19), (22, 26))
+
+
+def bean(c: Canvas, t: dict) -> dict:
+    c.new(); _feet(c, x0=12.5, x1=19.5)
+    c.new(); c.ellipse(16, 21.8, 5.6, 6.8, "body")
+    c.ellipse(16, 24, 3.4, 3.6, "belly", only=("body",))
+    c.new(); c.capsule(10.6, 21.5, 1, 9.3, 24, .9, "body"); c.capsule(21.4, 21.5, 1, 22.7, 24, .9, "body")
+    return _baby((16, 19.5), (15, 23, 17.5), (16, 15.2), (12.4, 16.5), (22.5, 25))
+
+
+def tadpole(c: Canvas, t: dict) -> dict:
+    c.new(); c.capsule(12, 24, 3, 5.5, 20.5, .9, "body"); c.ellipse(5.6, 20.4, 1.5, 1.5, "accent")
+    c.new(); c.capsule(13.5, 28.4, 1.2, 15.5, 28.4, 1.2, "far"); c.capsule(19, 28.4, 1.2, 21, 28.4, 1.2, "far")
+    c.new(); c.ellipse(17.5, 23, 6.6, 5.6, "body")
+    c.ellipse(18.5, 25.3, 4, 2.6, "belly", only=("body",))
+    return _baby((18.5, 21.6), (17.5, 24.8, 20), (17.5, 17.4), (13.5, 19), (23.5, 25.5))
+
+
+def wisp(c: Canvas, t: dict) -> dict:
+    c.new(); c.ellipse(16, 20.5, 6.6, 6, "body")
+    lo, hi = c.at(9.4, 20.5), c.at(22.6, 26)
+    c.shape(lambda x, y: lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1], "body")
+    for x in (11, 16, 21):
+        c.ellipse(x, 26, 1.7, 1.5, "body")
+    c.ellipse(16, 23, 3.6, 2.6, "belly", only=("body",))
+    return _baby((16, 19), (15, 22.6, 17.5), (16, 14.6), (11.5, 16), (21.5, 23.5))
+
+
+def mound(c: Canvas, t: dict) -> dict:
+    c.new()
+    cx, cy = c.at(16, 29.2)
+    rx, ry = c.r(9.4), c.r(8.6)
+    c.shape(lambda x, y: ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1 and y < cy, "body")
+    for x, y in ((9, 26.5), (23.5, 25.5)):
+        c.capsule(x, y, .8, x, y + 2.2, .9, "body")
+    c.ellipse(16, 28, 5, 2.4, "belly", only=("body",))
+    return _baby((16, 24), (15, 26.8, 17.5), (16, 20.8), (10.8, 23), (22.5, 27))
+
+
+BABIES = {"Blob": blob, "Drop": drop, "Puff": puff, "Bean": bean, "Tadpole": tadpole, "Wisp": wisp, "Mound": mound}
+BODY_DRAW = {"Dino": dino, "Beast": beast, "Dragon": dragon, "Avian": avian, "Imp": imp, **BABIES}
 
 
 def draw(t: dict) -> Image.Image:
@@ -254,10 +333,10 @@ def compose(t: dict, k: float, hk: float) -> Canvas:
     stage = t["Stage"]
     c = Canvas(k, hk)
     # the head is scaled about its own middle, which each body says through its first draw
-    c.head = {"Dino": (20, 11), "Dragon": (20, 11), "Beast": (22, 14), "Avian": (18.5, 11.5), "Imp": (16.5, 12.5),
-              "Baby": (16, 23)}[t["Body"]]
+    c.head = {"Dino": (20, 11), "Dragon": (20, 11), "Beast": (22, 14), "Avian": (18.5, 11.5),
+              "Imp": (16.5, 12.5)}.get(t["Body"], (16, 23))
     f = BODY_DRAW[t["Body"]](c, t)
-    big = {"Bit": 0, "Byte": 1, "Kilo": 2, "Mega": 3, "Giga": 4}[stage]
+    big = STAGE_NAMES.index(stage)
 
     # back spikes along the spine, on the grown
     if f["back"] and (big >= 2 or t["Head"] == "Crest"):
@@ -270,13 +349,28 @@ def compose(t: dict, k: float, hk: float) -> Canvas:
     tx, ty = f["top"]
     h = t["Head"]
     if f.get("baby"):
-        if h in ("Horns", "Unihorn"):
-            c.tri([(15, ty + 1), (16, ty - 3), (17, ty + 1)], "horn")
+        ex, ey = f["ear"]
+        if h == "Horns":
+            for s in (-1, 1):
+                c.tri([(tx + s * 1.5, ty + 2.2), (tx + s * 3.6, ty - 1.8), (tx + s * 4.2, ty + 2.8)], "horn")
+        elif h == "Unihorn":
+            c.tri([(tx - 1.1, ty + 1), (tx, ty - 3.2), (tx + 1.1, ty + 1)], "horn")
         elif h == "Ears":
-            c.tri([(10, 21), (8.5, 15.5), (13.5, 19)], "body"); c.tri([(22, 21), (23.5, 15.5), (18.5, 19)], "body")
-        elif h in ("Crest", "Frill"):
-            c.tri([(13.5, ty + 1), (14.5, ty - 2.5), (16, ty + 1)], "accent")
-            c.tri([(16, ty + 1), (17.5, ty - 2.5), (18.5, ty + 1)], "accent")
+            for x0 in (ex, 2 * tx - ex):
+                s = 1 if x0 > tx else -1
+                c.tri([(x0 - s * 1.5, ey + 2.5), (x0 + s * .5, ey - 3), (x0 + s * 2.5, ey + 1.5)], "body")
+                c.tri([(x0 - s * .3, ey + 1.5), (x0 + s * .5, ey - 1.6), (x0 + s * 1.4, ey + 1.2)], "accent",
+                      only=("body",))
+        elif h == "Crest":
+            for d in (-2.2, 0, 2.2):
+                c.tri([(tx + d - 1.2, ty + 1.2), (tx + d - .4, ty - 2.2 + abs(d) * .4), (tx + d + 1.2, ty + 1.2)],
+                      "accent")
+        elif h == "Sprout":
+            c.capsule(tx, ty + .8, .45, tx + .4, ty - 2, .45, "dark")
+            c.ellipse(tx + 2, ty - 2.4, 1.9, 1.1, "accent"); c.ellipse(tx - 1.3, ty - 1.8, 1.3, .9, "accent")
+        elif h == "Antenna":
+            c.capsule(tx - .4, ty + .8, .4, tx + 1.6, ty - 3, .4, "dark")
+            c.ellipse(tx + 1.7, ty - 3.3, 1, 1, "glow")
     elif h == "Horns":
         c.tri([(tx - 2.5, ty + 1.5), (tx - 6, ty - 3.5), (tx - .5, ty + .5)], "horn")
         c.tri([(tx + .5, ty + 1), (tx - 1.5, ty - 4.5), (tx + 2.2, ty + .8)], "horn")
@@ -319,6 +413,9 @@ def compose(t: dict, k: float, hk: float) -> Canvas:
         if e == "Glow":
             c.put(x, y, "glow"); c.put(x + 1, y, "glow")
             continue
+        if e == "Sleepy":
+            c.put(x, y + 1, "ink"); c.put(x + 1, y + 1, "ink"); c.put(x - 1, y, "ink")
+            continue
         c.put(x, y, "eye"); c.put(x + 1, y, "eye"); c.put(x, y + 1, "eye"); c.put(x + 1, y + 1, "pupil")
         c.put(x + 1, y, "iris" if e == "Fierce" else "pupil")
         if e in ("Sharp", "Fierce"):
@@ -342,6 +439,12 @@ def compose(t: dict, k: float, hk: float) -> Canvas:
             for x in range(ax + 1, bx - 1):
                 c.put(x, ay + 1, "ink", only=("body", "belly"))
             c.put(ax + 2, ay + 1, "tongue", only=("ink",))
+        elif m == "Open":
+            mid = (ax + bx) // 2
+            for x in range(ax, bx):
+                c.put(x, ay, "body" if abs(x - mid) > 1 else "ink", only=("ink",))
+            c.put(mid - 1, ay + 1, "ink", only=("body", "belly")); c.put(mid, ay + 1, "tongue", only=("body", "belly"))
+            c.put(mid + 1, ay + 1, "ink", only=("body", "belly")); c.put(mid, ay + 2, "ink", only=("body", "belly"))
 
     # markings, on the body colour only
     mk = t["Marking"]
@@ -360,6 +463,11 @@ def compose(t: dict, k: float, hk: float) -> Canvas:
     if mk == "Belly" and f["chest"]:
         cx, cy = f["chest"]
         c.ellipse(cx, cy + 1, 2.6, 3.4, "light", only=("body", "belly"))
+    if mk == "Blush":
+        ex, ey = f["eye"]
+        for x in (ex - 5, ex + 4):
+            x, y = c.at(x, ey + 2)
+            c.put(int(x), int(y), "blush", only=("body", "belly")); c.put(int(x) + 1, int(y), "blush", only=("body", "belly"))
 
     # gear on the body
     c.new()
@@ -377,8 +485,23 @@ def compose(t: dict, k: float, hk: float) -> Canvas:
         c.ellipse(cx - 2, cy - 2.5, 3, 2.4, "metal")
         c.tri([(cx - 4, cy - 3.5), (cx - 3, cy - 7), (cx - 1.5, cy - 4)], "metal")
     elif g == "DigiDollar coin":
-        cx, cy = f["chest"] or (16, 24)
+        cx, cy = f["chest"] or f["side"]
         c.ellipse(cx, cy + 1, 1.8, 1.8, "coin")
+        x, y = c.at(cx, cy + 1)
+        c.put(int(x), int(y), "coinmark")
+    elif g == "Eggshell":
+        # the bottom of the egg it came out of, jagged along its top
+        _, y0 = c.at(0, 25.4)
+        lo, hi = c.at(9, 0)[0], c.at(23, 0)[0]
+        c.shape(lambda x, y: lo <= x <= hi and y >= y0 + abs(int(x) % 4 - 2) * 1.1 and y < GROUND + 1
+                and ((x - (lo + hi) / 2) / ((hi - lo) / 2)) ** 2 + ((y - GROUND - .6) / (GROUND + .6 - y0 + .8)) ** 2 <= 1,
+                "shell")
+    elif g == "Bow":
+        ex, ey = f["ear"]
+        bx, by = 2 * f["top"][0] - ex + .5, ey - .5
+        c.tri([(bx, by), (bx - 2.4, by - 1.5), (bx - 2.4, by + 1.5)], "bow")
+        c.tri([(bx, by), (bx + 2.4, by - 1.5), (bx + 2.4, by + 1.5)], "bow")
+        c.dot(bx, by, "bowknot")
 
     # the biggest carry a crown of light
     if stage == "Giga":
@@ -397,7 +520,8 @@ def paint(c: Canvas, t: dict) -> Image.Image:
     colours = {"body": base, "belly": light, "light": light, "dark": dark, "far": dark, "accent": accent,
                "horn": horn, "claw": horn, "eye": EYE_WHITE, "pupil": INK, "ink": INK, "iris": "#e0303a",
                "glow": accent, "shine": EYE_WHITE, "fang": "#ffffff", "tongue": "#e0506a", "metal": METAL[0],
-               "strap": LEATHER, "buckle": GOLD[0], "coin": GOLD[0]}
+               "strap": LEATHER, "buckle": GOLD[0], "coin": GOLD[0], "coinmark": GOLD[2], "blush": "#ff8fb0",
+               "shell": "#f4ecd8", "bow": "#ff5a8a", "bowknot": "#c2185b"}
 
     back = t["Background"]
     img = Image.new("RGB", (SIZE, SIZE), hexrgb(LCD[0] if back == "LCD" else bg))
@@ -437,7 +561,7 @@ def paint(c: Canvas, t: dict) -> Image.Image:
             if ((x + .5 - 15) / 10) ** 2 + ((y + .5 - 30) / 1.5) ** 2 <= 1:
                 pix[x, y] = shadow
 
-    shaded = ("body", "far", "metal")
+    shaded = ("body", "far", "metal", "shell")
     for y in range(SIZE):
         for x in range(SIZE):
             part = c.get(x, y)
@@ -447,7 +571,8 @@ def paint(c: Canvas, t: dict) -> Image.Image:
                 continue
             colour = colours[part]
             if part in shaded:
-                lit, shade = (light, dark) if part == "body" else (METAL[1], METAL[2]) if part == "metal" else (base, INK)
+                lit, shade = (light, dark) if part == "body" else (METAL[1], METAL[2]) if part == "metal" else \
+                    ("#fffaf0", "#c9bb98") if part == "shell" else (base, INK)
                 above = c.get(x, y - 1)
                 if above is None or (c.grp[y - 1][x] < c.grp[y][x] and above in shaded):
                     colour = lit
@@ -471,7 +596,11 @@ def traits(n: int, stage: str, element: str, shiny: bool) -> dict:
     """The traits of Byteling `n`, from its seed, at the stage and element `build` handed it. Rerolled with a counter
     until unique (see build)."""
     rnd = random.Random(hashlib.sha256(f"{SEED}/{n}".encode()).digest())
-    body = "Baby" if stage == "Bit" else rnd.choice(BODIES)
+    if stage == "Bit":
+        return {"Stage": stage, "Element": element, "Body": rnd.choice(BABY_FORMS), "Head": rnd.choice(BABY_HEADS),
+                "Eyes": rnd.choice(BABY_EYES), "Mouth": rnd.choice(BABY_MOUTHS), "Marking": rnd.choice(BABY_MARKINGS),
+                "Gear": rnd.choice(BABY_GEAR), "Background": rnd.choice(BACKGROUNDS), "Shiny": "Yes" if shiny else "No"}
+    body = rnd.choice(BODIES)
     t = {"Stage": stage,
          "Element": element,
          "Body": body,
@@ -479,7 +608,7 @@ def traits(n: int, stage: str, element: str, shiny: bool) -> dict:
          "Eyes": rnd.choice(EYES),
          "Mouth": rnd.choice(MOUTHS),
          "Marking": rnd.choice(MARKINGS),
-         "Gear": rnd.choice(GEAR if stage not in ("Bit", "Byte") else GEAR[:4] + GEAR[-1:]),
+         "Gear": rnd.choice(GEAR if stage != "Byte" else GEAR[:4] + GEAR[-1:]),
          "Background": rnd.choice(BACKGROUNDS),
          "Shiny": "Yes" if shiny else "No"}
     if body == "Avian":
@@ -488,16 +617,16 @@ def traits(n: int, stage: str, element: str, shiny: bool) -> dict:
             t["Gear"] = "Armor"
     if body == "Beast" and t["Gear"] == "Gauntlet":
         t["Gear"] = "Belts"
-    if body == "Baby" and t["Gear"] in ("Belts", "Helmet", "Armor", "Gauntlet"):
-        t["Gear"] = "None"
     return t
 
 
-def build() -> list[dict]:
+def build(stages=None) -> list[dict]:
     """All 100: stages, elements and the gold ones handed out in shuffled orders, so each comes up exactly as often as
     it says, and a number says nothing about how rare one is."""
-    rnd = random.Random(SEED)
-    order = [s for s, k in STAGES for _ in range(k)]
+    stages = stages or STAGES
+    seed = SEED if stages == STAGES else f"{SEED}/{stages}"
+    rnd = random.Random(seed)
+    order = [s for s, k in stages for _ in range(k)]
     rest = [e for e in ELEMENTS if e not in ELEMENT_COUNTS]
     left = COUNT - sum(ELEMENT_COUNTS.values())
     elements = [e for e, k in ELEMENT_COUNTS.items() for _ in range(k)] + [
@@ -536,11 +665,12 @@ def main():
     ap.add_argument("--out", type=Path, default=HERE / "build")
     ap.add_argument("--sheet", type=Path, help="also write a preview sheet of all 100 here")
     ap.add_argument("--scale", type=int, default=6)
+    ap.add_argument("--stage", choices=STAGE_NAMES, help="draw a hundred of this stage instead (the grown, for later)")
     args = ap.parse_args()
     (args.out / "images").mkdir(parents=True, exist_ok=True)
     (args.out / "json").mkdir(parents=True, exist_ok=True)
     every, pictures = [], []
-    for n, t in enumerate(build(), 1):
+    for n, t in enumerate(build([(args.stage, COUNT)] if args.stage else None), 1):
         img = draw(t)
         img.save(args.out / "images" / f"{n}.png", optimize=True)
         meta = metadata(n, t)
