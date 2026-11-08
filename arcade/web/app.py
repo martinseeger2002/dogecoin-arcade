@@ -20660,7 +20660,11 @@ def create_app(state: AppState) -> FastAPI:
         verdict = _referee.judge(source, address, said.get("replay"), params)
         if verdict.get("release") is not True:
             raise refereelib.RefereeError(str(verdict.get("why") or "the game's judge said no")[:200])
-        if verdict.get("to") not in (None, to):
+        # The judge names who receives (2026-11-08, security review): anybody may ask, and the asker chose `to`, so a
+        # judge that only said yes -- the guide's own example -- let whoever could make it say yes take the prize.
+        if verdict.get("to") is None:
+            raise refereelib.RefereeError("the game's judge must name who receives (`to`); nothing was moved")
+        if verdict.get("to") != to:
             raise refereelib.RefereeError("the game's judge names somebody else")
         # The coins: what this node watches, and any the asker names -- each of
         # those checked with this node's own Core, unspent and paying exactly this
