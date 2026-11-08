@@ -107,6 +107,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 #line{width:100%;margin-top:6px;padding:5px 6px;font:12px var(--mono);background:var(--panel);color:var(--ink);
   border:1px solid var(--line)}
 @media (max-width:700px){.cols{grid-template-columns:1fr} .toolbar span{display:none}}
+@media (max-width:640px){.wide-only{display:none}}
 </style>
 <link rel="stylesheet" href="/lite/theme.css">{# the theme this caller sees: arcade/packages.py #}
 </head>
@@ -134,6 +135,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <li><button type="button" data-win="info">Information</button></li>
     <li><button type="button" data-win="console">Console</button></li>
     {% if audience == 'operator' %}<li><button type="button" data-win="peers">Peers</button></li>{% endif %}
+    {% if desktop_on %}<li class="wide-only"><hr></li><li class="wide-only"><button type="button" data-go="/desktop">Desktop View</button></li>{% endif %}
     <li><hr></li><li><button type="button" data-build>Build…</button></li>
   </ul></div>
   <div class="menu"><button type="button">Help</button><ul>

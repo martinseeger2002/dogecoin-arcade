@@ -247,6 +247,31 @@ def test_each_module_on_is_a_tab_that_opens_its_page_inside_the_window(app, app_
         app_state.set_setting("edition", None)
 
 
+def test_lite_goes_to_desktop_view_and_back_only_when_asked(app, app_state):
+    """2026-11-07, SadFrog: from the Lite window to Desktop View "and then back without messing things up or turning
+    off modules". Window -> Desktop View while that module is on (and the caller may use it); the desktop's way out
+    goes back to the Lite window; and no page of a Lite arcade sends its tab to the desktop by itself."""
+    app_state.set_setting("edition", "lite")
+    try:
+        assert 'data-go="/desktop"' not in app.get("/lite", headers=LOCAL).text, "the module is off"
+        app_state.set_setting("modules", {"desktop": True})
+        page = app.get("/lite", headers=LOCAL).text
+        assert '<button type="button" data-go="/desktop">Desktop View</button>' in page
+        assert 'data-tab="m-desktop"' not in page, "a look is worn, not opened"
+        desk = app.get("/desktop", headers=LOCAL).text
+        assert "var LITE = true, OUT = LITE ? 'Lite window' : 'Website';" in desk
+        assert "if (LITE) { location.href = '/'; return; }" in desk
+        assert "Desktop View only when asked" in app.get("/wallet", headers=LOCAL).text
+        app_state.set_setting(modulelib.ACCESS_SETTING, {"desktop": "operator"})
+        assert 'data-go="/desktop"' not in app.get("/lite", headers=OUTSIDE).text, "for whom the operator allows"
+    finally:
+        app_state.set_setting("edition", None)
+        app_state.set_setting("modules", None)
+        app_state.set_setting(modulelib.ACCESS_SETTING, None)
+    assert "var LITE = false" in app.get("/desktop", headers=LOCAL).text
+    assert "Desktop View only when asked" not in app.get("/wallet", headers=LOCAL).text, "the full edition's pages"
+
+
 def test_the_operator_says_who_may_use_each_module(app, app_state):
     def access(mid, level):
         return app.post("/admin/api/modules", headers={**LOCAL, "x-arcade-admin": "1"},
