@@ -301,7 +301,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         from ..web import door as doorlib
         if request.headers.get(LITE_HEADER) != "1" or doorlib.cross_site(request.headers,
                                                                         request.headers.get("host", "")):
-            raise HTTPException(403, "your tabs are chosen in the Lite window")
+            raise HTTPException(403, "your tabs are chosen in the ArcadeCore window")
         caller = caller_for(request, write=True)
         owner = tab_owner(caller, request)
         if owner is None:
@@ -348,7 +348,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         from ..web import door as doorlib
         if request.headers.get(LITE_HEADER) != "1" or doorlib.cross_site(request.headers,
                                                                         request.headers.get("host", "")):
-            raise HTTPException(403, "console lines come from the Lite page")
+            raise HTTPException(403, "console lines come from the ArcadeCore page")
         caller = caller_for(request, write=True, pubkeys=payload.get("pubkeys"),
                             password=str(payload.get("password") or ""))
         if console_limited(caller, request):

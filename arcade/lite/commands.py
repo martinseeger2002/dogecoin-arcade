@@ -340,7 +340,7 @@ def _store(caller):
 
 #: An account's messages are sealed to its own key and opened in its own browser: the node cannot read or write
 #: them, so for an account these three run in the Lite window's console (templates/_messages.html), never here.
-IN_THE_BROWSER = ("your messages open only in your own browser: run this in the Lite window's console, with your "
+IN_THE_BROWSER = ("your messages open only in your own browser: run this in ArcadeCore's console, with your "
                   "wallet unlocked")
 
 

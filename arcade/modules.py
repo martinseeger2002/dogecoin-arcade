@@ -111,7 +111,7 @@ class Module:
 _MODULES = (
     # --- the crypto cores: always on, in every edition --------------------------------------------------------------
     Module("node", "core", "Your arcade", "Overview, Admin and settings, the chains' Cores, sync and borrowing, "
-           "updates, help, and the Lite window.",
+           "updates, help, and the ArcadeCore window.",
            routes=("/", "/overview", "/admin", "/settings", "/settings/updates", "/docs", "/guide", "/lite", "/events",
                    "/offline", "/terms", "/rpc", "/scan", "/view", "/bootstrap", "/clone", "/source.rev",
                    "/source.tar.gz", "/source.tar.gz.sha256", "/openapi.json", "/.well-known", "/base.css",
