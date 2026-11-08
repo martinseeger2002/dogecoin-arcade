@@ -158,7 +158,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <li><button type="button" data-run="help">Command list</button></li>
     <li><button type="button" data-go="/docs">Guides</button></li>
     <li><hr></li>
-    <li><button type="button" data-about>About {{ name }} Lite</button></li>
+    <li><button type="button" data-about>About ArcadeCore</button></li>
   </ul></div>
 </nav>
 
@@ -224,7 +224,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 
 <div class="dialog" id="debug" role="dialog" aria-label="Node window">
   <div class="window">
-    <header><span>{{ name }} Lite: node window</span><button type="button" data-close aria-label="Close">×</button></header>
+    <header><span>ArcadeCore: node window</span><button type="button" data-close aria-label="Close">×</button></header>
     <div class="wtabs" role="tablist">
       <button type="button" data-wtab="info" aria-selected="true">Information</button>
       <button type="button" data-wtab="console">Console</button>
@@ -246,9 +246,9 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 
 <div class="dialog" id="about" role="dialog" aria-label="About">
   <div class="window" style="width:min(460px,96vw)">
-    <header><span>About {{ name }} Lite</span><button type="button" data-close aria-label="Close">×</button></header>
-    <div class="wbody"><p><b>{{ name }} Lite</b>, the small edition of the arcade.</p><dl id="aboutinfo"></dl>
-      <p class="muted">The same network as every arcade: Lite and the full edition speak one protocol, held to the
+    <header><span>About ArcadeCore</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wbody"><p><b>ArcadeCore</b>, the window of {{ name }}: the crypto cores, and any module switched on.</p><dl id="aboutinfo"></dl>
+      <p class="muted">The same network as every arcade: every edition and every look speak one protocol, held to the
         recorded vectors in tests/conformance.</p></div>
   </div>
 </div>
@@ -515,7 +515,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     var div = document.createElement('div'); if (cls) div.className = cls;
     div.textContent = text; out.appendChild(div); out.scrollTop = out.scrollHeight;
   }
-  say('Welcome to the {{ name }} Lite console.\nType help for the list of commands, or help <command> for one.');
+  say('Welcome to the ArcadeCore console.\nType help for the list of commands, or help <command> for one.');
   function send(text) {
     say('> ' + text, 'in');
     // A command this window runs itself (an account's messages: _messages.html), unless only its help is asked.
