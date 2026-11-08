@@ -135,7 +135,9 @@ def test_send_receive_and_transactions_are_lites_own_tabs(app, app_state):
     page = app.get("/lite", headers=OUTSIDE).text
     user = _wallet_tabs(page)
     assert 'from "/wallet.js"' in user and "/node-wallet.js" not in user and 'id="w-unlock"' in user
-    assert "/me/wallet" not in page
+    # Never a link to the full Wallet page; the window names /me/wallet only to open its own Send for one (2026-11-08)
+    assert 'href="/me/wallet' not in page and "data-go=\"/me/wallet" not in page
+    assert "'/me/wallet': 'send'" in page
     assert f'"network": "{app_state.messaging.network}"' in user, "the chain an account's words open on"
 
 

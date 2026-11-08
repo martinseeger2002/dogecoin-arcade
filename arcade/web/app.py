@@ -14054,6 +14054,10 @@ def create_app(state: AppState) -> FastAPI:
                                                   db, here)
                         row["held"] = _held(account.pubkey, one.network, db, here)
                         row["inscribed"] = _inscribed(db, here)
+                        # The account's other address kinds on this chain (m/49', m/84'), each its own coins: listed
+                        # with their balance, so a wallet's total counts every kind it holds, in either look
+                        # (2026-11-08, SadFrog: "make them one behaviour (Lite's), and make Balances count every kind").
+                        row["kinds"] = _kind_balances(account, one, db)
                     if _ord_chain(one):
                         row.update(_doginal_needs(one.params))
                 except Exception:
@@ -14065,6 +14069,8 @@ def create_app(state: AppState) -> FastAPI:
         # The other half of §6: a number that only appears when somebody runs
         # into it is a number enforced silently, and the page they were
         # reading looks broken rather than limited.
+        # The wallets this account keeps out of sight (Your account -> Your wallets): every look leaves them out.
+        said["hidden"] = _wallets_hidden(account.pubkey)
         said["quota"] = state.accounts().room(
             account.pubkey, caps=accountslib.limits(state.settings()))
         said["boost"] = _boost_on_sale()
@@ -14088,6 +14094,8 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         if account is None:
             return _to_join(request)
+        if _core_window(request):
+            return _lite_home(request)                     # the ArcadeCore window holds it in its Account tab
         chain = _account_chain()
         register = state.accounts()
         return render(request, "me.html", chain=chain, hidden=_wallets_hidden(account.pubkey),
@@ -25541,6 +25549,8 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         if account is None:
             return _to_join(request)
+        if _core_window(request):
+            return _lite_home(request)                     # the ArcadeCore window's Send (?to=, ?coin= prefill it)
         return render(request, "my_wallet.html", chain=_account_chain(), hidden=_wallets_hidden(account.pubkey),
                       dd_nets=_digidollar_nets())
 
@@ -27565,6 +27575,15 @@ def create_app(state: AppState) -> FastAPI:
         if kind == "p2wpkh":
             return f"segwit_watch:{account.pubkey}:{chain.network}"
         return f"segwit_watch:{kind}:{account.pubkey}:{chain.network}"
+
+    def _kind_balances(account, chain, db) -> list[dict]:
+        """This account's registered address of each other kind on `chain` and what it holds (one per kind)."""
+        out = []
+        for kind in ("p2sh-p2wpkh", "p2wpkh"):
+            addr = state.setting(_segwit_setting(account, chain, kind))
+            if addr:
+                out.append({"kind": kind, "address": addr, "balance": int(utxoslib.balance(db, addr) or 0)})
+        return out
 
     @app.post("/account/segwit/register")
     def account_segwit_register(request: Request, payload: Any = Body(None)):

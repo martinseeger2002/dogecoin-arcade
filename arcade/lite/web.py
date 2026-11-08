@@ -105,14 +105,19 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         from ..web import brand as brandlib
         caller = caller_for(request)
         settings = state.settings()
+        wallet = ("account" if caller.account and account_view(request)
+                  else "node" if caller.audience == "operator" else "")
+        # The wallets this account (or the node, for the operator) keeps out of sight: Send, Receive, Balances and
+        # Transactions leave them out, as the website's Wallet does (Your account -> Your wallets; /account says it
+        # again, so a change in the Account tab shows without a reload).
+        hidden = state.setting(f"wallets_hidden:{caller.account if wallet == 'account' else 'node'}", []) or []
         return TEMPLATES.TemplateResponse(request, "lite.html", {
             "name": brandlib.current().name, "audience": caller.audience,
             "edition": modulelib.edition(settings), "asking": modulelib.asking(settings),
             "apps": [m for m in modulelib.describe(settings)["modules"] if not m["core"]],
             # Whose wallet the Send, Receive and Transactions tabs are: the account's when one is signed in, even at
             # the node's machine, as the full arcade's Wallet decides it; else the node's, for the operator.
-            "wallet": "account" if caller.account and account_view(request)
-                      else "node" if caller.audience == "operator" else "",
+            "wallet": wallet, "hidden": [n for n in hidden if isinstance(n, str)],
             # What wallet.js unlocks an account's words with, as the full arcade's pages give it (base.html).
             "me": wallet_name(request) if caller.account else "", "account": bool(caller.account),
             # The window's tabs after the core's: each module that is on, open to this caller and not hidden by
