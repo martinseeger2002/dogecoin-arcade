@@ -2863,6 +2863,8 @@ if (TABS) {
     } else if (m.locked) {
       try { sessionStorage.removeItem(OPEN_WALLET); } catch (x) {}
       try { sessionStorage.removeItem(OPEN_IMPORTS); } catch (x) {}
+      // Signed out: every wallet this tab had unlocked goes too, not only the current one (2026-11-08).
+      if (m.all) { try { sessionStorage.removeItem(OPEN_WALLETS); } catch (x) {} }
       importKey = null;
     } else if (m.switched && m.from !== THIS_PAGE) {
       // Another tab switched accounts: this one is showing the old one. Not
@@ -2907,25 +2909,30 @@ export async function signOut(chain, {everywhere = false} = {}) {
     }
   } catch (e) { /* nothing unsaved is worth staying signed in for */ }
   try { (await import("/messaging.js")).wipeLocal && await (await import("/messaging.js")).wipeLocal(); } catch (e) {}
-  forgetOpen();
+  forgetOpen({all: true});
   try { sessionStorage.removeItem(SHORT_PASSWORD); sessionStorage.removeItem(SHORT_DISMISSED); } catch (e) {}
   const ended = await fetch(everywhere ? "/auth/logout-everywhere" : "/auth/logout", {method: "POST"});
   // Refused (this browser's session had already run out): the plain sign-out still clears the cookie here.
   if (everywhere && !ended.ok) await fetch("/auth/logout", {method: "POST"});
 }
 
-export function forgetOpen() {
+/** Lock the wallet open in this tab, in every tab. `all` (a sign-out, 2026-11-08, security review): every wallet
+ *  unlocked in each tab goes too. Before, the tab kept the others' words (up to six, for switching accounts) after
+ *  signing out, readable by anybody at that tab. */
+export function forgetOpen({all = false} = {}) {
   let phrase = null;
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
   // Locked means the imported wallets too, in every tab (the `locked` message below clears theirs).
   try { sessionStorage.removeItem(OPEN_IMPORTS); } catch (e) {}
   importKey = null;
-  if (phrase) {
+  if (all) {
+    try { sessionStorage.removeItem(OPEN_WALLETS); } catch (e) {}
+  } else if (phrase) {
     try { sessionStorage.setItem(OPEN_WALLETS,
             JSON.stringify(openWallets().filter((p) => p !== phrase))); } catch (e) {}
   }
-  try { if (TABS) TABS.postMessage({locked: true}); } catch (e) {}
+  try { if (TABS) TABS.postMessage({locked: true, all}); } catch (e) {}
 }
 
 /** Switch this browser to another account signed in on it. Its wallet opens
