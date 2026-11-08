@@ -3719,7 +3719,9 @@ def create_app(state: AppState) -> FastAPI:
         tip = max(int(node.get("headers") or 0), int(node.get("blocks") or 0))
         with state.store() as store:
             cursor = store.scan_cursor(chain.network)
-        read = int(cursor[0]) if cursor else 0
+        if not cursor:
+            return None                 # never read here (a borrowed or fresh feed): no bar that knows where it starts
+        read = int(cursor[0])
         if tip - read <= FEED_BEHIND:
             _feed_from.pop(chain.network, None)
             return None

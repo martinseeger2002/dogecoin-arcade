@@ -98,6 +98,7 @@ def test_a_bellinal_send_is_sat_exact_and_paid_from_clean_coins_at_bells_rate(be
 
 def test_a_bellinal_is_never_checked_by_dogecoins_guard(tmp_path, monkeypatch, bel_coins):
     monkeypatch.setattr(funding, "GUARDS", [])                     # this node reads no Bellscoin ords
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"doge": funding.GUARD})    # and has no Bells guard by name
     with pytest.raises(funding.FundingError, match="not checked on this chain"):
         funding.build_doginal_send(None, BEL, SELLER, {"txid": INS_TX, "vout": 0, "value": 100_000}, INSCRIPTION,
                                    BUYER, rate=fees.MIN_FEE_PER_KB)

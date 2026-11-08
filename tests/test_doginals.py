@@ -6,6 +6,13 @@ import pytest
 
 from arcade import doginals, funding
 
+
+@pytest.fixture(autouse=True)
+def _no_app_guards_by_name(monkeypatch):
+    """guard_for asks funding.GUARD_BY_NET by chain first (PR #106), and an app another test made leaves its real guards
+    there: these tests' own GUARD / GUARDS are the only guards in play."""
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {})
+
 T1, T2, T3 = "11" * 32, "22" * 32, "33" * 32
 
 

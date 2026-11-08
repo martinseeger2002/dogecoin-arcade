@@ -40,6 +40,7 @@ def chain(request, tmp_path, monkeypatch):
     version = NETWORKS[net].pubkeyhash_version
     monkeypatch.setattr(funding, "GUARD", guard if net == "doge" else None)
     monkeypatch.setattr(funding, "GUARDS", [] if net == "doge" else [(lambda a: b58check_decode(a)[0] == version, guard)])
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {NETWORKS[net].name: guard})    # guard_for asks by chain first (#106)
     return net, NETWORKS[net], seller, buyer
 
 

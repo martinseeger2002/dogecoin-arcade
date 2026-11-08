@@ -185,10 +185,12 @@ def guard_for(address: str, network: str | None = None):
     """The inscription guard that watches `address`, or None. Named by its chain where the caller knows it: a DigiByte
     "D" address is Dogecoin's byte, so the address alone would pick Dogecoin's guard (web/docs/exchange-safety.md, the
     DigiByte branch: "never pick the guard by address alone")."""
-    if network is not None and network in GUARD_BY_NET:
-        return GUARD_BY_NET[network]
-    if network not in (None, "doge") and GUARD_APPLIES(address):
-        return None                     # another chain's "D" address: never Dogecoin's to judge
+    if network not in (None, "doge"):
+        if network in GUARD_BY_NET:
+            return GUARD_BY_NET[network]
+        if GUARD_APPLIES(address):
+            return None                 # another chain's "D" address: never Dogecoin's to judge
+    # Dogecoin, or no chain said: GUARD first, as before (GUARD_BY_NET["doge"] is GUARD itself, web/app.py)
     if GUARD is not None and GUARD_APPLIES(address):
         return GUARD
     for applies, guard in GUARDS:

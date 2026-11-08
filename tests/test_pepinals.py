@@ -16,6 +16,13 @@ from arcade.config import NETWORKS                                              
 from arcade.script import b58check_decode, b58check_encode, hash160                           # noqa: E402
 from arcade.txbuild import p2pkh_script                                                       # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _no_app_guards_by_name(monkeypatch):
+    """guard_for asks funding.GUARD_BY_NET by chain first (PR #106), and an app another test made leaves its real guards
+    there: these tests' own GUARD / GUARDS are the only guards in play."""
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {})
+
 COIN = 100_000_000
 PEP = NETWORKS["main"].pubkeyhash_version
 SELLER = b58check_encode(PEP, hash160(_pubkey(0x5E11E4)))

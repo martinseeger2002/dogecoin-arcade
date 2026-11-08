@@ -52,7 +52,10 @@ DEFAULTS = {"name": "Bytelings", "chain": "dgb", "pay_chain": "dgbtest", "price_
             "open": False, "inscribe": False, "opened_at": 0, "evolve_days": 30}
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS config (
+    key       TEXT PRIMARY KEY,
+    value     TEXT NOT NULL
+);
 -- The collection: each piece's picture and traits, then where it was inscribed.
 CREATE TABLE IF NOT EXISTS piece (
     number    INTEGER PRIMARY KEY,

@@ -178,6 +178,6 @@ def test_the_wallet_reads_a_mints_record_whose_last_item_is_its_owners_key(loade
         return (await c.verifyOffer(offer, {...k, key: c.unhex(k.key), pubkey: c.unhex(k.pubkey)})).pays;""",
                 offer, keys)
     vault, dd, record = pays[0], pays[1], pays[2]
-    assert vault["value"] == 10 ** 8 and "Taproot output" in vault["to"] and not vault["mine"]
+    assert vault["value"] == 10 ** 8 and vault["to"].startswith("dgbt1p") and not vault["mine"]   # its address (#100)
     assert dd == {"to": pilot.dd_address("dgbtest", pub[1:]), "dd": 10000, "value": 0, "mine": True}
     assert record["bytes"] > 32 and record["value"] == 0

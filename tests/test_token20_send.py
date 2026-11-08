@@ -84,7 +84,7 @@ def test_a_note_on_its_way_never_pays_and_other_small_coins_do(tmp_path, monkeyp
     db = Database(tmp_path / "l.sqlite")
     install_schema(db)
     address = b58check_encode(30, hash160(PUBKEY))
-    monkeypatch.setattr(funding, "guard_for", lambda a: type("G", (), {"spendable": lambda self, c: c})())
+    monkeypatch.setattr(funding, "guard_for", lambda a, network=None: type("G", (), {"spendable": lambda self, c: c})())
     note = {"txid": "ab" * 32, "vout": 0, "value": t20.POSTAGE, "address": address}
     big = {"txid": "cd" * 32, "vout": 1, "value": 300_000_000, "address": address}
     small = {"txid": "ef" * 32, "vout": 2, "value": 1_000_000, "address": address}
