@@ -116,6 +116,15 @@ that tab, and nothing on Send said where to unlock it.
   button, which opens Send's password box. Unlocking with the send form empty reads the balances again.
 - **Tests:** `tests/test_digidollar_wallet_browser.py` (Firefox): the shut wallet reads $35.75, and with no stored
   key the button unlocks and reads it.
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/arcadecore-names` (on `main` 8e4430f8) · ArcadeCore: the window's last ARCADE Lite names
+
+Found while re-recording the walkthrough videos for ArcadeCore: the window still said ARCADE Lite in a few places.
+- `arcade/lite/templates/lite.html`: Help -> "About ArcadeCore", the About box, the node window's title
+  ("ArcadeCore: node window") and the console's welcome.
+- `arcade/modules.py`: the core module "Your arcade" says "the ArcadeCore window".
+- `arcade/lite/commands.py`, `arcade/lite/web.py`: two messages say ArcadeCore instead of the Lite window.
+- Text only: the edition names (`full`, `lite`), settings, URLs (`/lite`) and the `X-Arcade-Lite` header are unchanged.
+- **Tests:** test_modules, test_lite*, test_module*: 106 passed, 16 skipped.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
 
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
