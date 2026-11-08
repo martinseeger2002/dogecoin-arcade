@@ -240,7 +240,10 @@ def test_each_module_on_is_a_tab_that_opens_its_page_inside_the_window(app, app_
         app_state.set_setting("edition", None)
         app_state.set_setting("modules", None)
     # a page in the window is drawn without its own bar, and its links to another tab open there (base.html)
-    assert "window.parent.liteWindow" not in app.get("/wallet", headers=LOCAL).text, "the full edition's pages"
+    # On any arcade (2026-11-08): a person may wear ArcadeCore on one that opens in another look, and its pages in the
+    # window wear the window's look then; opened on their own they are the website's, so no body is marked Lite.
+    full = app.get("/wallet", headers=LOCAL).text
+    assert "window.parent.liteWindow" in full and "<body data-lite" not in full and " data-lite data-generation" not in full
     app_state.set_setting("edition", "lite")
     try:
         assert "window.parent.liteWindow" in app.get("/wallet", headers=LOCAL).text

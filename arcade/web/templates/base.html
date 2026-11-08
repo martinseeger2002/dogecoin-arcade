@@ -6,19 +6,26 @@
     input field it zoomed in. I don't like that"). iOS still lets a person pinch to zoom. #}
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1{% if fullscreen %},viewport-fit=cover{% endif %}">
 <title>{% block title %}{{ brand.name }}{% endblock %}</title>
-{% if edition_lite %}<script>
+<script>
 /* Inside the ARCADE Lite window (arcade/lite/templates/lite.html; 2026-11-04, SadFrog: "one cohesive application"): a page
-   in one of its tabs is drawn without its own bar, and a link that belongs in another of the window's tabs opens there. */
+   in one of its tabs is drawn without its own bar, and a link that belongs in another of the window's tabs opens there.
+   On any arcade, not only one whose look is ArcadeCore: a person may wear ArcadeCore on an arcade that opens in another
+   look, and its Admin and the rest then wear the window's look and theme too (2026-11-08, SadFrog: "i had pepecoin arcade
+   admin style inside core theme selected - like it was not updated with the rest"). */
 (function () {
   var win = null;
   try { if (window.parent !== window && window.parent.liteWindow) win = window.parent.liteWindow; } catch (e) {}
-  {%- if window_tab %}
+  {%- if edition_lite and window_tab %}
   // A page that is one of the window's tabs (Admin), opened on its own: open it in the window instead, under the
   // window's menus (2026-11-05, SadFrog: "it should be cohesive as the admin operator").
   if (!win && window.parent === window) { location.replace('/#{{ window_tab }}'); return; }
   {%- endif %}
   if (!win) return;
   document.documentElement.classList.add('in-window');
+  {%- if not edition_lite %}
+  // the window's look and this caller's theme (scoped to body[data-lite], set as the body opens, below)
+  document.write('<link rel="stylesheet" href="/lite/pages.css"><link rel="stylesheet" href="/lite/theme.css">');
+  {%- endif %}
   document.addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('a[href]');
     if (!a || (a.target && a.target !== '_self') || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -28,11 +35,11 @@
     var tab = home ? (u.hash.slice(1) || 'overview') : win.route(u.pathname);
     if (tab && tab !== win.route(location.pathname)) {
       e.preventDefault();
-      win.open(tab, home ? undefined : u.pathname + u.search + u.hash);
+      win.open(tab, home || /^\/module\//.test(u.pathname) ? undefined : u.pathname + u.search + u.hash);
     }
   });
 })();
-</script><style>.in-window body>header{display:none}</style>{% endif %}
+</script><style>.in-window body>header{display:none}</style>
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -224,6 +231,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
    element each page has to remember to add: eight templates had one and the
    rest sat stale until somebody pressed reload (the operator, D-142). #}
 <body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %}{% if edition_lite %} data-lite{% endif %} data-generation="{{ state.generation }}">
+{% if not edition_lite %}<script>if (document.documentElement.classList.contains('in-window')) document.body.setAttribute('data-lite', '');</script>{% endif %}
 {% if not embed %}
 <header><div class="bar">
   <span class="brand">{% if edition_lite %}<a href="/">{{ 'ArcadeCore' if brand.name == 'ARCADE' else brand.name ~ ' · ArcadeCore' }}</a>{% else %}{{ brand.name }}{% endif %}</span>

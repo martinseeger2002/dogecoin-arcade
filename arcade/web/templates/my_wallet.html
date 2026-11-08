@@ -1073,9 +1073,13 @@ function drawHead() {
     sub.append(asset.problem ? `${asset.problem} `
       : asset.balance == null ? "Reading your DigiDollars… "
       : `DigiByte's stablecoin, one dollar each, on ${c.label}. Sends pay their network fee in ${COIN()}. `);
+    // Mint, vaults, redeem and the operator's mainnet switch: the DigiDollar module's page, the same forms as
+    // ArcadeCore's DigiDollar tab (2026-11-08: one wallet, whatever the look).
+    const more = el("a", "", "Mint, vaults and redeem →"); more.href = "/module/digidollar";
+    more.style.marginRight = "8px";
     const back = el("button", "wl-backcoin", `Back to ${COIN()}`); back.type = "button";
     back.onclick = () => { asset = null; keep(DDNET, ""); drawHead(); };
-    sub.append(back);
+    sub.append(more, back);
     bits.length = 0;
   } else if (asset && asset.token20) {
     // A DRC-20 / PRC-20 token on the card (2026-10-22: "load it into the wallet balance display just like any

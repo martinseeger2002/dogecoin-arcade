@@ -118,6 +118,12 @@ SadFrog: "add capability to send and receive store digidollar test and digidolla
   dollars, lock and tier), so `ddvaults` finds a vault after its own DigiDollar output moved, and `ddredeem` burns any
   of the owner's DigiDollars for it.
 - **Mainnet sends** wait for the same operator switch as mints (`ddmainnet`). Reads and `ddreceive main` are open.
+- **One wallet in every look** (2026-11-08, SadFrog: "there shouldnt be a differentiation between wallets now it should
+  all be the same thing", "chose the lites version of things"): the website Wallet's DigiDollar send
+  (`/account/digidollar/send`) is the module's `ddsend` too, so mainnet waits for `ddmainnet` there as well, and
+  DigiDollar shows in the website Wallet only while the module is on, as in ArcadeCore. The module's forms, the
+  operator's "Mainnet DigiDollar" switch among them, are one file (`/lite/modforms.js`) drawn in ArcadeCore's tab and on
+  the website's `/module/digidollar`, which the Wallet's DigiDollar card and Admin's module list link to.
 - **Tested against a real DigiByte Core 9.26.7 on regtest** (`tests/test_digidollar_regtest.py`): a miner's coins
   gathered, $100 minted, $40 sent to a second key and back, the supply unchanged, Core's `validateddaddress` taking the
   address in regtest's version, and the vault redeemed with the two coins that came back.

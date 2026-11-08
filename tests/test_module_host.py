@@ -122,7 +122,8 @@ def test_the_module_sign_box_says_every_payment_and_the_prepared_spend_is_bounde
     itself the wallet's coins under any description; and a prepared spend had no limit on its coins."""
     import pathlib
     from arcade import modhost
-    box = (pathlib.Path(__file__).resolve().parent.parent / "arcade/lite/templates/_wallet.html").read_text()
+    # One copy for every look since 2026-11-08: ArcadeCore's tab and the website's /module/<name> (modforms.js)
+    box = (pathlib.Path(__file__).resolve().parent.parent / "arcade/lite/templates/modforms.js").read_text()
     assert "This transaction pays:" in box and "read.pays" in box and "The module says:" in box
     coins = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/coins.js").read_text()
     assert "a Taproot output" in coins, "a vault is said as a payment, not as bytes"

@@ -25548,7 +25548,12 @@ def create_app(state: AppState) -> FastAPI:
         """The DigiByte chains whose Wallet shows DigiDollar as a coin of its own (2026-11-05: "add the digi
         dollar to the main app ... it should be its own wallet coin option", "just like any other coin or chain is added
         or borrowed ... not dependent on the installation of a module"): every DigiByte chain this arcade gives its
-        accounts, run here or borrowed (arcade/digidollar.py)."""
+        accounts, run here or borrowed (arcade/digidollar.py). Only while the DigiDollar module is on, as in ArcadeCore:
+        one wallet whatever the look, and where they differed Lite's way stands (2026-11-08, SadFrog: "there shouldnt
+        be a differentiation between wallets now it should all be the same thing", "chose the lites version of
+        things")."""
+        if "digidollar" not in modulelib.enabled(state.settings()):
+            return []
         return [one.network for one in _account_chains() if one.network in digidollib.NETS]
 
     def _dd_chain(network: str):
@@ -25621,25 +25626,40 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/digidollar/send")
     def account_digidollar_send(request: Request, payload: Any = Body(None)):
-        """Offer a DigiDollar send (arcade/digidollar.py prepare_send): nothing is broadcast here. The browser reads it
-        from its own bytes and signs it, and /account/sign broadcasts it, as any send."""
+        """Offer a DigiDollar send: nothing is broadcast here. Built by the DigiDollar module's `ddsend`, as ArcadeCore's
+        Send builds it, so both looks send the same way and under the same rules, mainnet's operator switch
+        (`ddmainnet`) among them (2026-11-08, SadFrog: "chose the lites version of things"). The browser reads it from
+        its own bytes and signs it, and /account/sign broadcasts it, as any send."""
+        from ..lite import commands as cmdlib
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         ch = _dd_chain(str(said.get("chain") or ""))
+        if "digidollar" not in modulelib.enabled(state.settings()):
+            return JSONResponse({"detail": "DigiDollar is off on this arcade: its operator adds the DigiDollar module "
+                                           "in Admin -> Edition & modules"}, status_code=400)
         _, pub = _dd_owner(account, ch, str(said.get("pubkey") or ""))
         try:
             text = str(said.get("amount") or "").strip().lstrip("$")
             dollars = decimal.Decimal(text)
             if dollars <= 0 or dollars != dollars.quantize(decimal.Decimal("0.01")):
                 raise ValueError("an amount of dollars and cents, more than zero")
-            unsigned = _dd_send(account, ch, pub, str(said.get("to") or ""), int(dollars * 100))
+            to = str(said.get("to") or "").strip()
+            if not to or not to.isalnum():
+                raise ValueError("pay a DigiDollar address (DD... or TD...)")
+            caller = cmdlib.Caller(state, "user", account.pubkey,
+                                   address=lambda chain: _account_address(account.pubkey, chain), name_of=_name_of,
+                                   pubkeys={ch.network: pub.hex()}, offer=_module_offer(account.pubkey))
+            got = cmdlib.run_line(caller, f"ddsend {to} {dollars:.2f} {'main' if ch.is_mainnet else 'test'}")
         except (ValueError, decimal.InvalidOperation, ArithmeticError) as exc:
             msg = str(exc) if not isinstance(exc, decimal.InvalidOperation) else "type an amount of dollars, like 12.50"
             return JSONResponse({"detail": msg}, status_code=400)
-        except Exception as exc:                            # noqa: BLE001 -- a module-style refusal, said
+        except Exception as exc:                            # noqa: BLE001 -- the module's refusal, said
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        offer = _offers.add(account.pubkey, ch.network, unsigned, unsigned.what)
-        return {"offer": offer.id, "chain": ch.network, **unsigned.as_json()}
+        offer = got.get("sign") if isinstance(got, dict) else None
+        if not offer:
+            return JSONResponse({"detail": (got or {}).get("how") or "the DigiDollar module prepared nothing to sign"},
+                                status_code=400)
+        return offer
 
     def _dd_send(account, ch, pub: bytes, to: str, cents: int):
         """The unsigned send of `cents` DigiDollars from this account (its key `pub`, checked by _dd_owner) to the
@@ -25742,6 +25762,20 @@ def create_app(state: AppState) -> FastAPI:
         if _account_view(request):
             _signed_in_account(request)
         return JSONResponse({c.network: _chain_stats(c) for c in state.all_chains})
+
+    @app.get("/module/{name}", response_class=HTMLResponse)
+    def module_page(request: Request, name: str):
+        """A node module from a package, as a page of the website's look: the forms ArcadeCore's tab draws for it
+        (/lite/modforms.js, the same copy) over the module's own page (/m/<name>/). Every look reaches what a module
+        does, its operator's switches among them (2026-11-08, SadFrog: "make sure every feature that is available in full
+        is available in core and vice versa", and for DigiDollar "make a ui for enabling mainnet sends as well")."""
+        settings = state.settings()
+        found = next((m for m in modulelib.packaged(settings) if m.id == name), None)
+        if found is None or name not in modulelib.enabled(settings):
+            raise HTTPException(404, "no such module is on here")
+        chain = _account_chain()
+        return render(request, "module_page.html", module=name, title=found.title, summary=found.summary,
+                      tagchain={"network": chain.network, "version": chain.params.pubkeyhash_version})
 
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
     def my_wallet_tokens(request: Request):

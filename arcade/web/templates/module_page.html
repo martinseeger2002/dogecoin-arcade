@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- A node module from a package in the website's look (app.py module_page, 2026-11-08): the same forms ArcadeCore's tab
+    draws for it, from the same file (/lite/modforms.js), over the module's own page. A spend the module prepares is read
+    by this browser's wallet from the transaction's own bytes, listed, and signed only on a yes. #}
+<style>
+.modforms{display:flex;flex-wrap:wrap;gap:0 10px}
+.modforms fieldset{flex:1 1 220px;max-width:420px;border:1px solid var(--line);border-radius:var(--radius,6px);
+  margin:0 0 12px;padding:8px 10px 10px}
+.modforms label{display:block;margin:0 0 6px;color:var(--muted);font-size:.85rem}
+.modforms label input,.modforms label select{display:block;width:100%;margin-top:2px}
+.modforms .note{margin:0 0 6px;color:var(--muted);font-size:.85rem}
+.modout{margin:0 0 12px}
+.modout .line{font-family:ui-monospace,monospace;color:var(--muted);font-size:.8rem;margin:6px 0 2px}
+.modout pre{margin:0;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:.8rem}
+.modout .err{color:var(--bad,#c62828)}
+.modpage-frame{width:100%;min-height:70vh;border:1px solid var(--line);border-radius:var(--radius,6px);background:transparent}
+</style>
+<h1>{{ title }}</h1>
+<p class="sub muted">{{ summary }}</p>
+<div class="modpanel" data-modpanel="{{ module }}"><p class="muted">Loading…</p></div>
+<iframe class="modpage-frame" title="{{ title }}" src="/m/{{ module }}/"></iframe>
+<script type="module">
+import * as wallet from "/wallet.js";
+import * as modforms from "/lite/modforms.js";
+const TAGCHAIN = {{ tagchain|tojson }};
+let chains = [];
+try { chains = (await wallet.state()).chains || []; } catch (e) { /* signed out: the forms for anyone still work */ }
+const hooks = {pubkeys: () => modforms.pubkeys(wallet, TAGCHAIN, chains),
+               sign: (o) => modforms.signOffer(wallet, TAGCHAIN, chains, o)};
+const box = document.querySelector("[data-modpanel]");
+box.textContent = "";
+modforms.drawModule(box, (line, shown) => modforms.runLine(line, shown, hooks));
+document.body.dataset.moduleReady = "yes";
+</script>
+{% endblock %}

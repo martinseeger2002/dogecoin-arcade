@@ -120,6 +120,33 @@ Reported by the Arcade V1.0 session, approved by the operator. In `arcade/mesh/i
 - **Test:** `tests/test_mesh_introduce.py::test_a_lost_hi_expires_so_the_higher_ids_own_hi_is_answered` loses the lower id's hi, shows the higher id's hi is still refused while that ask is fresh, then ages it and gets a link. It fails without the fix. 155 mesh/udp/punch tests pass.
 
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-cohesive` (on `main` 17c3f88d) · One wallet in every look: framed pages wear the look, DigiDollar is the module's everywhere, module forms on the website
+
+SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing - when you change
+the theme, thats it everything is styled differently but the availability and capability doesnt change - just the way
+users interact - including the admin panel", and "if things are getting chosen chose the lites version of things".
+- **Framed pages wear the look** (`base.html`): a page inside the ArcadeCore window (Admin and the rest) is drawn as the
+  window's, with the caller's theme (`/lite/pages.css`, `/lite/theme.css`, `body[data-lite]`) and without its own bar,
+  on any arcade, not only one whose look is ArcadeCore. Opened on its own it is the website's page as before.
+- **DigiDollar, Lite's way in both** (`web/app.py`): the website Wallet shows DigiDollar only while the DigiDollar
+  module is on, and `/account/digidollar/send` is the module's `ddsend`, so mainnet waits for `ddmainnet` there too.
+  `_dd_send` stays for the Bytelings pad's own DigiDollar-test payments.
+- **Module forms in every look**: the form drawer and the module-offer signing moved unchanged from `lite.html` and
+  `_wallet.html` into `arcade/lite/templates/modforms.js` (`/lite/modforms.js`). ArcadeCore's module tabs use it as
+  before; the website gets `/module/<name>` (`module_page.html`): the same forms over the module's own page. Admin's
+  module list links each module that is on to it (a tab inside ArcadeCore), and the Wallet's DigiDollar card links to
+  mint, vaults and redeem there. DigiDollar 0.4.4 names its operator form "Mainnet DigiDollar", "Mainnet mints and
+  sends".
+- **Still to bring over, either way** (the audit's list, for following branches): arcade tokens and DRC-20 / PRC-20,
+  imported wallets, listing and selling ords and NFTs, inscribing, escrows, stray Doginals and account settings into
+  ArcadeCore; API keys, themes and the console into the website look.
+- **Tests:** `tests/test_digidollar_wallet_browser.py` (Firefox): the website Wallet's send built by the module against a
+  stand-in Core, `/module/digidollar` with the operator's mainnet form, and a framed page wearing the look on an arcade
+  that opens as the website (+2).
+- **For the operator:** please merge into `main`. On an arcade with DigiDollar, add the module (Admin -> Edition &
+  modules) for it to show in either wallet.
+
+### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
 
 291 tests passed on them (API keys, Lite, DigiDollar, Doginals wallet, ord guards, modules).
 - **#113:** `Command.writes` defaults to False, so a command added without saying so would be open to read-only keys. Today all 24 unmarked commands only read. `tests/test_apikeys.py::test_every_console_command_says_whether_a_read_only_key_may_run_it` now lists them by name: a new command fails it until it takes `writes=True` or joins `READS_ONLY`.
