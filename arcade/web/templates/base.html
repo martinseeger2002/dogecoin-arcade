@@ -149,13 +149,26 @@ html.indesk body:not(.fullscreen){padding-top:0}
   }
   var installed = window.navigator.standalone === true ||
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  // THE LOOK this browser wears on a computer (arcade/modules.py LOOKS): its reader's pick (Switch Theme in the desktop,
+  // View in the ArcadeCore window, Themes on the account's page), else the arcade's own. "web" is the website, chosen.
+  var wear = '{{ look if look is defined else desk_default }}';
+  try { wear = localStorage.getItem('arcade.deskview') || wear; } catch (e) {}
+  if (wear === '1') wear = 'w98';
+  // ARCADECORE (once ARCADE Lite; 2026-11-07): the arcade opened in a tab -- its front page, or a bookmark the server
+  // sent on from there -- goes to the ArcadeCore window. Any other page opened in a tab stays that page, such as
+  // File -> Backup from the window: wearing ArcadeCore never sends a page anywhere by itself.
+  if (wear === 'core') {
+    var arrived = null;
+    try { arrived = performance.getEntriesByType('navigation')[0]; } catch (e) {}
+    if (!installed && window.top === window && window.innerWidth > 640 && (location.pathname === '/' ||
+        (arrived && arrived.redirectCount > 0 && !document.referrer)) &&
+        !/^\/(admin|join|restore|signin|offline|clone|home|desktop)(\/|$)/.test(location.pathname)) {
+      location.replace('/lite');
+    }
+    return;
+  }
   {%- if modules_on is defined and 'desktop' not in modules_on %}
   // The Desktop View and the home screen are switched off here (arcade/modules.py): every page stays the website.
-  return;
-  {%- endif %}
-  {%- if edition_lite is defined and edition_lite %}
-  // ARCADE Lite opens on its own window, and Desktop View only when asked (Window -> Desktop View there, and back with
-  // "Back to the Lite window"): a page the Lite window sends a tab to, such as File -> Backup, stays that page.
   return;
   {%- endif %}
   // THE DESKTOP VIEW (desktop.html; 2026-10-28), on a computer's browser only: while its switch is on, a page opened in
@@ -163,10 +176,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
   // or the installed app.
   if (!installed && window.top === window && location.pathname !== '/desktop' && window.innerWidth > 640 &&
       !/^\/(admin|join|restore|signin|offline|clone|home)(\/|$)/.test(location.pathname)) {
-    var deskOn = false;
-    // Nothing chosen yet: the arcade's default look (DESK_DEFAULT, Ubuntu since 2026-10-29); "web" is the website, chosen.
-    try { deskOn = /^(1|w98|ubuntu|dogefeedx)$/.test(localStorage.getItem('arcade.deskview') || '{{ desk_default }}'); } catch (e) {}
-    if (deskOn) {
+    if (/^(w98|ubuntu|dogefeedx)$/.test(wear)) {
       var page = location.pathname + location.search + location.hash;
       location.replace(page === '/' ? '/desktop' : '/desktop#open=' + encodeURIComponent(page));
       return;
@@ -216,7 +226,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
 <body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %}{% if edition_lite %} data-lite{% endif %} data-generation="{{ state.generation }}">
 {% if not embed %}
 <header><div class="bar">
-  <span class="brand">{% if edition_lite %}<a href="/">{{ brand.name }} Lite</a>{% else %}{{ brand.name }}{% endif %}</span>
+  <span class="brand">{% if edition_lite %}<a href="/">{{ 'ArcadeCore' if brand.name == 'ARCADE' else brand.name ~ ' · ArcadeCore' }}</a>{% else %}{{ brand.name }}{% endif %}</span>
   {%- if edition_lite %}
   {#- ARCADE Lite: the window's own tabs, so every page is one window (arcade/lite/templates/lite.html opens /#<tab>) #}
   <nav>

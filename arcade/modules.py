@@ -18,6 +18,14 @@ settings.json keys:
            signed-in users too, or everyone, visitors included. Missing means everyone, as before.
   lite_tabs  {owner: [module ids]}, the module tabs each person hid in their own window (owner: an account's
            public key, or "node" for the operator's own view).
+  look     the look this arcade opens in on a computer: "core" (the ArcadeCore window, at /lite), "ubuntu", "w98" or
+           "dogefeedx" (the Desktop View's looks) or "web" (the website's pages). Each person can wear another one,
+           kept in their browser. Missing means "core" on a Lite arcade and Ubuntu's desktop on a full one.
+
+ArcadeCore is the name ARCADE Lite goes by now (2026-11-07, SadFrog: "lite should be another theme that can be switched
+between ubuntu, window98, called ArcadeCore ... There should be no difference between lite and full other than that").
+The two editions are the same arcade: Lite is the core modules and the ArcadeCore look, Full is every module and the
+look its operator picks when it first starts.
 """
 from __future__ import annotations
 
@@ -25,6 +33,11 @@ from dataclasses import dataclass
 
 EDITIONS = ("full", "lite")
 EDITION_SETTING = "edition"
+LOOK_SETTING = "look"
+#: The looks, in the order the menus list them: the ArcadeCore window, the Desktop View's looks, and the website.
+LOOKS = ("core", "ubuntu", "w98", "dogefeedx", "web")
+DESKTOP_LOOKS = ("ubuntu", "w98", "dogefeedx")
+LOOK_TITLES = {"core": "ArcadeCore", "ubuntu": "Ubuntu", "w98": "Windows 98", "dogefeedx": "DogeFeedX", "web": "Website"}
 SWITCH_SETTING = "modules"
 ACCESS_SETTING = "module_access"
 TABS_SETTING = "lite_tabs"
@@ -255,6 +268,18 @@ def edition(settings: dict) -> str:
     return chosen if chosen in EDITIONS else "full"
 
 
+def look(settings: dict) -> str:
+    """The look this arcade opens in (LOOKS): the operator's pick, else ArcadeCore on Lite and Ubuntu's desktop on
+    Full, as each opened before there was a pick. A desktop look needs the Desktop View module, and the website is
+    what a desktop look falls back to without it."""
+    chosen = settings.get(LOOK_SETTING)
+    if chosen not in LOOKS:
+        chosen = "core" if edition(settings) == "lite" else "ubuntu"
+    if chosen in DESKTOP_LOOKS and "desktop" not in enabled(settings):
+        return "web"
+    return chosen
+
+
 def asking(settings: dict) -> bool:
     """A fresh install whose operator has not chosen an edition yet: the first-run question shows."""
     return settings.get(EDITION_SETTING) == ASK
@@ -417,7 +442,8 @@ def describe(settings: dict) -> dict:
     every = (*_MODULES, *packaged(settings))
     kinds = [k for k in KIND_TITLES if any(m.kind == k for m in every)]
     kinds += sorted({m.kind for m in every} - set(kinds))
-    return {"edition": edition(settings), "asking": asking(settings),
+    return {"edition": edition(settings), "asking": asking(settings), "look": look(settings),
+            "looks": [{"id": k, "title": LOOK_TITLES[k]} for k in LOOKS],
             "categories": [{"id": k, "title": KIND_TITLES.get(k, (k.replace("_", " ").capitalize(), ""))[0],
                             "summary": KIND_TITLES.get(k, ("", ""))[1],
                             "groups": [{"id": g, "title": t, "summary": why} for g, (t, why) in APP_GROUPS.items()]

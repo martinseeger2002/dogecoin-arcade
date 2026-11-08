@@ -344,6 +344,7 @@
   <p class="muted" style="margin-top:0">The website as it is, or a desktop: every page and app in a window you can move,
     size and minimize, with your own wallpaper. Kept in this browser.</p>
   <div class="row" style="gap:8px;flex-wrap:wrap" role="radiogroup" aria-label="Theme">
+    <button type="button" class="btn small ghost" data-desk-set="core" role="radio">ArcadeCore</button>
     <button type="button" class="btn small ghost" data-desk-set="" role="radio">Website</button>
     <button type="button" class="btn small ghost" data-desk-set="w98" role="radio">Windows 98 desktop</button>
     <button type="button" class="btn small ghost" data-desk-set="ubuntu" role="radio">Ubuntu desktop</button>
@@ -416,7 +417,7 @@
   var bs = box.querySelectorAll('[data-desk-set]');
   function now() {
     var v = ''; try { v = localStorage.getItem('arcade.deskview') || ''; } catch (e) {}
-    if (!v) v = '{{ desk_default }}';                 // nothing chosen yet: the arcade's default look
+    if (!v) v = '{{ look if look is defined else desk_default }}';   // nothing chosen yet: the arcade's own look
     return v === '1' ? 'w98' : v === 'web' ? '' : v;
   }
   function paint() {
@@ -432,6 +433,7 @@
       try { localStorage.setItem('arcade.deskview', want || 'web'); } catch (e) {}
       paint();
       var page = location.pathname + location.search;
+      if (want === 'core') { (shell || window).location.href = '/lite'; return; }   // ArcadeCore: its own window
       if (shell) {
         // From one desktop to the other only the #open= part changes, which never loads the page: load it again.
         shell.location.href = want ? '/desktop#open=' + encodeURIComponent(page) : page;

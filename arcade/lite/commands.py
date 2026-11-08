@@ -616,13 +616,34 @@ def edition(caller, name: str = "", confirm: str = "") -> str:
     if name not in modulelib.EDITIONS:
         raise CommandError("usage: edition [full|lite] [yes]")
     if name == "lite" and confirm not in YES:
-        raise CommandError("ARCADE Lite switches off every module but the core (nothing is deleted).\n"
+        raise CommandError("ArcadeCore (Lite) switches off every module but the core (nothing is deleted).\n"
                            "Type `edition lite yes` to switch.")
     before = modulelib.enabled(settings)
     caller.state.set_setting(modulelib.EDITION_SETTING, name)
     caller.state.set_setting(modulelib.SWITCH_SETTING, None)
+    caller.state.set_setting(modulelib.LOOK_SETTING, "core" if name == "lite" else None)
     _apply(caller)
     return f"edition {name}; " + _switched(caller, before)
+
+
+@command("modules", audience="operator")
+def look(caller, name: str = "") -> str:
+    """Say the look this arcade opens in, or change it.
+
+    look                 the look now
+    look core            ArcadeCore, this window
+    look ubuntu|w98      a Desktop View look (needs the desktop module)
+    look web             the website's pages
+    Each person can wear another look; this is the one a new visitor gets."""
+    settings = caller.state.settings()
+    if not name:
+        return modulelib.look(settings)
+    if name not in modulelib.LOOKS:
+        raise CommandError("usage: look [" + "|".join(modulelib.LOOKS) + "]")
+    if name in modulelib.DESKTOP_LOOKS and "desktop" not in modulelib.enabled(settings):
+        raise CommandError("the Desktop View module is off: `install desktop` first")
+    caller.state.set_setting(modulelib.LOOK_SETTING, name)
+    return f"look {name} ({modulelib.LOOK_TITLES[name]})"
 
 
 @command("node")
@@ -878,10 +899,10 @@ def settheme(caller, theme: str = "none") -> str:
     """Make an installed theme this arcade's own look, for everyone who has not picked one, or `none`.
 
     settheme <name>
-    settheme none   ARCADE Lite's own look"""
+    settheme none   ArcadeCore's own look"""
     pid = None if theme == "none" else _theme(caller, theme)
     caller.state.set_setting(packagelib.THEME, pid)
-    return f"this arcade wears {theme}" if pid else "this arcade wears ARCADE Lite's own look"
+    return f"this arcade wears {theme}" if pid else "this arcade wears ArcadeCore's own look"
 
 
 @command("themes", audience="operator")

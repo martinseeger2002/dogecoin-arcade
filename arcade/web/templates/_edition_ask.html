@@ -1,26 +1,46 @@
-{#- The first-run question (arcade/modules.py ASK): a fresh install whose operator has not chosen Full or ARCADE Lite
-    yet. Asked once; the arcade runs as Full until it is answered, and Admin -> Edition & modules changes it later. -#}
+{#- The first-run question (arcade/modules.py ASK): a fresh install whose operator has not chosen yet. One arcade, two
+    starting points (2026-11-07, SadFrog: "Lite will just be ArcadeCore default theme with minimum enabled - and Full is
+    the same thing but with everything enabled and an ask for which ui is wanted upon start up"). Asked once; it runs
+    every module until answered, and Admin -> Edition & modules changes either later. -#}
 {% if edition_ask %}
 <section class="panel" id="editionask">
-  <h2>Full arcade or ARCADE Lite?</h2>
-  <p style="margin:0 0 8px"><b>Full</b> is everything this arcade does: the feed, messages, the exchange, ords and
-    Explore, apps and games. <b>ARCADE Lite</b> starts with the crypto cores only: the chains and their wallets, send
-    and receive, the address book, accounts, settings, help and the mesh link. Anything else can be switched on later,
+  <h2>How should this arcade start?</h2>
+  <p style="margin:0 0 8px"><b>Every module</b> turns on everything this arcade does: the feed, messages, the
+    exchange, ords and Explore, apps and games, and asks which look it opens in. <b>ArcadeCore</b> starts with the
+    crypto cores only: the chains and their wallets, send and receive, the address book, accounts, settings, help and
+    the mesh link, in the ArcadeCore window. It is the same arcade either way: modules and looks can be changed later,
     and nothing is deleted when something is switched off.</p>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <button type="button" data-pick="full">Full arcade</button>
-    <button type="button" data-pick="lite">ARCADE Lite</button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap" id="editionpick">
+    <button type="button" data-step="full">Every module</button>
+    <button type="button" data-pick="lite" data-look="core">ArcadeCore (core only)</button>
+  </div>
+  <div id="lookpick" hidden>
+    <p style="margin:8px 0">Which look should it open in? Each person can switch to another one for themselves.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" data-pick="full" data-look="core">ArcadeCore</button>
+      <button type="button" data-pick="full" data-look="ubuntu">Ubuntu desktop</button>
+      <button type="button" data-pick="full" data-look="w98">Windows 98 desktop</button>
+      <button type="button" data-pick="full" data-look="web">Website</button>
+    </div>
   </div>
   <p class="msg" id="editionsaid" hidden></p>
 </section>
 <script>
 (function () {
+  document.querySelector('#editionask [data-step]').onclick = function () {
+    document.getElementById('editionpick').hidden = true;
+    document.getElementById('lookpick').hidden = false;
+  };
   document.querySelectorAll('#editionask [data-pick]').forEach(function (b) {
     b.onclick = function () {
       fetch('/admin/api/modules', {method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: JSON.stringify({edition: b.dataset.pick})})
+        headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'},
+        body: JSON.stringify({edition: b.dataset.pick, look: b.dataset.look})})
         .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.statusText); return j; }); })
-        .then(function () { location.href = b.dataset.pick === 'lite' ? '/' : location.pathname; })
+        .then(function () {
+          try { localStorage.removeItem('arcade.deskview'); } catch (e) {}   // this browser opens in the look just chosen
+          location.href = b.dataset.look === 'core' ? '/lite' : '/';
+        })
         .catch(function (e) { var m = document.getElementById('editionsaid'); m.hidden = false; m.textContent = e.message; });
     };
   });

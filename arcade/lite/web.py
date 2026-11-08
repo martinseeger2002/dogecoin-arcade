@@ -134,6 +134,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             "ords_on": "ords" in modulelib.enabled(settings), "csrf": state.csrf_token,
             # Window -> Desktop View, while that module is on and this caller may use it: the same arcade as a
             # desktop, and "Back to the Lite window" from there (2026-11-07, SadFrog).
+            "arcade_look": modulelib.look(settings),
             "desktop_on": "desktop" in modulelib.enabled(settings)
                           and modulelib.may_use(settings, "desktop", caller.audience),
             "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),

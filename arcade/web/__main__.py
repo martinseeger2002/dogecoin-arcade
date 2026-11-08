@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         help="the port the router forwards to --mesh-port, if it is a different number")
     parser.add_argument(
         "--edition", choices=["full", "lite"], default=None,
-        help="full or lite (ARCADE Lite: the crypto cores only), for an arcade that has not chosen yet; once chosen, "
+        help="full or lite (lite: the crypto cores only, opening in ArcadeCore), for an arcade that has not chosen yet; once chosen, "
              "Admin -> Edition & modules changes it. A new arcade started without it asks in Admin")
     parser.add_argument(
         "--log-level", default=os.environ.get("ARCADE_LOG_LEVEL", "info"),
@@ -217,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     if face:                                       # a new arcade wears the neutral face (brand.CORE) until one is picked
         state.set_setting("brand", face)
     settings = state.settings()
-    print(f"  edition {'ARCADE Lite' if modulelib.edition(settings) == 'lite' else 'full'}"
+    print(f"  edition {'lite (core modules)' if modulelib.edition(settings) == 'lite' else 'full (every module)'}, look {modulelib.look(settings)}"
           + (" (not chosen yet: Admin asks)" if modulelib.asking(settings) else ""))
 
     # Bots authenticate to /rpc/main and /rpc/test with this file's contents.

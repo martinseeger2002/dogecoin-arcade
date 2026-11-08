@@ -369,7 +369,7 @@ def template(folder: Path, name: str) -> Path:
 
 README = """# {name}
 
-An ARCADE Lite theme. Change the colours in `manifest.json`, then on the arcade's own machine:
+An ArcadeCore theme. Change the colours in `manifest.json`, then on the arcade's own machine:
 
     arcade-cli checktheme ~/{name}     says what is wrong, or the theme's id
     arcade-cli trytheme ~/{name}       shows it in this machine's browser only; `trytheme off` to stop

@@ -3,7 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ name }} Lite</title>
+<title>{{ 'ArcadeCore' if name == 'ARCADE' else name ~ ' · ArcadeCore' }}</title>
+{% if desktop_on %}<script>
+/* A person who wears one of the desktop's looks (View, or Switch Theme there) opens the arcade on that desktop, on a
+   computer; a page in one of this window's tabs, or a phone, stays here. */
+(function () {
+  var wear = ''; try { wear = localStorage.getItem('arcade.deskview') || ''; } catch (e) {}
+  if (/^(1|w98|ubuntu|dogefeedx)$/.test(wear) && window.top === window && window.innerWidth > 640 &&
+      !(window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)))
+    location.replace('/desktop');
+})();
+</script>{% endif %}
 <style>
 /* Hidden means hidden, whatever a panel's own display says (a module's panel is a flex column). */
 [hidden]{display:none !important}
@@ -116,7 +126,6 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   <div class="menu"><button type="button">File</button><ul>
     {% if wallet == 'account' %}<li><button type="button" data-go="/me/backup">Backup…</button></li>
     {% elif audience == 'operator' %}<li><button type="button" data-go="/backup">Backup and restore</button></li>{% endif %}
-    {% if edition == 'full' %}<li><hr></li><li><button type="button" data-go="/">Open the full arcade</button></li>{% endif %}
     {% if account %}<li><button type="button" data-go="/join">Sign out…</button></li>
     {% else %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
   </ul></div>
@@ -135,8 +144,15 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <li><button type="button" data-win="info">Information</button></li>
     <li><button type="button" data-win="console">Console</button></li>
     {% if audience == 'operator' %}<li><button type="button" data-win="peers">Peers</button></li>{% endif %}
-    {% if desktop_on %}<li class="wide-only"><hr></li><li class="wide-only"><button type="button" data-go="/desktop">Desktop View</button></li>{% endif %}
     <li><hr></li><li><button type="button" data-build>Build…</button></li>
+  </ul></div>
+  {#- View: the looks this arcade can be worn in (arcade/modules.py LOOKS; 2026-11-07, SadFrog: ArcadeCore "another theme
+      that can be switched between ubuntu, window98"). The desktop's need its module, and a computer's screen. -#}
+  <div class="menu"><button type="button">View</button><ul>
+    <li><button type="button" data-look="core" aria-checked="true">✓ ArcadeCore</button></li>
+    {% if desktop_on %}<li class="wide-only"><button type="button" data-look="ubuntu">Ubuntu</button></li>
+    <li class="wide-only"><button type="button" data-look="w98">Windows 98</button></li>{% endif %}
+    {% if arcade_look != 'core' %}<li><button type="button" data-look="web">Website</button></li>{% endif %}
   </ul></div>
   <div class="menu"><button type="button">Help</button><ul>
     <li><button type="button" data-run="help">Command list</button></li>
@@ -305,7 +321,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
                   ['Face', n.face], ['Public names', (n.public_names || []).join(', ')],
                   ['Mesh id', short(n.mesh_id)]];
     pairs($('node'), basics);
-    pairs($('info'), basics.concat([['Edition', n.edition === 'lite' ? 'ARCADE Lite' : 'Full']]).concat(!m ? [] : [
+    pairs($('info'), basics.concat([['Edition', n.edition === 'lite' ? 'ArcadeCore (core modules)' : 'Full (every module)']]).concat(!m ? [] : [
       ['Mesh', m.on ? m.links + ' linked of ' + m.known + ' known' : 'off'],
       ['Listening', m.on ? (m.listening || 'dial-out only') : ''], ['Reachable', m.on ? (m.reachable ? 'yes' : 'not proved') : '']]));
     pairs($('aboutinfo'), [['Version', n.version], ['Face', n.face]]);
@@ -473,6 +489,17 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     b.onclick = function () { open('debug'); wtab('console'); send(b.dataset.run); };
   });
   document.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { location.href = b.dataset.go; }; });
+  // View: another look is kept in this browser (base.html and desktop.html read it) and opened at once.
+  document.querySelectorAll('[data-look]').forEach(function (b) {
+    if (b.dataset.look === 'core') return;
+    b.onclick = function () {
+      try { localStorage.setItem('arcade.deskview', b.dataset.look); } catch (e) {}
+      location.href = b.dataset.look === 'web' ? '/' : '/desktop';
+    };
+  });
+  document.querySelector('[data-look="core"]').onclick = function () {
+    try { localStorage.setItem('arcade.deskview', 'core'); } catch (e) {}
+  };
   document.querySelector('[data-about]').onclick = function () { open('about'); };
   document.querySelector('[data-build]').onclick = function () { open('build'); };
   document.querySelectorAll('[data-close]').forEach(function (b) {

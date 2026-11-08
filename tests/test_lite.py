@@ -248,29 +248,47 @@ def test_each_module_on_is_a_tab_that_opens_its_page_inside_the_window(app, app_
         app_state.set_setting("edition", None)
 
 
-def test_lite_goes_to_desktop_view_and_back_only_when_asked(app, app_state):
-    """2026-11-07, SadFrog: from the Lite window to Desktop View "and then back without messing things up or turning
-    off modules". Window -> Desktop View while that module is on (and the caller may use it); the desktop's way out
-    goes back to the Lite window; and no page of a Lite arcade sends its tab to the desktop by itself."""
-    app_state.set_setting("edition", "lite")
+def test_arcadecore_is_a_look_beside_the_desktops_and_lite_and_full_differ_only_in_what_starts(app, app_state):
+    """2026-11-07, SadFrog: Lite "should be another theme that can be switched between ubuntu, window98, called
+    ArcadeCore"; Lite is ArcadeCore with the minimum on, Full is everything on and asks which look it opens in, "no
+    difference between lite and full other than that"."""
+    def post(body):
+        return app.post("/admin/api/modules", headers={**LOCAL, "x-arcade-admin": "1"}, json=body)
     try:
-        assert 'data-go="/desktop"' not in app.get("/lite", headers=LOCAL).text, "the module is off"
-        app_state.set_setting("modules", {"desktop": True})
+        assert modulelib.look(app_state.settings()) == "ubuntu", "a full arcade that never chose opens as it did"
+        assert post({"look": "nowhere"}).status_code == 400
+        said = post({"edition": "lite"}).json()
+        assert said["look"] == "core" and "ArcadeCore" in [x["title"] for x in said["looks"]]
+        assert 'data-tab="overview"' in app.get("/", headers=LOCAL).text, "Lite opens in the ArcadeCore window"
         page = app.get("/lite", headers=LOCAL).text
-        assert '<button type="button" data-go="/desktop">Desktop View</button>' in page
-        assert 'data-tab="m-desktop"' not in page, "a look is worn, not opened"
+        assert '<title>ArcadeCore</title>' in page and 'data-look="core"' in page
+        assert 'data-look="ubuntu"' not in page, "the desktops need their module"
+        assert 'data-look="web"' not in page, "an arcade that opens in ArcadeCore has no separate website"
+        assert post({"module": "desktop", "on": True}).status_code == 200
+        page = app.get("/lite", headers=LOCAL).text
+        assert 'data-look="ubuntu"' in page and 'data-look="w98"' in page and "location.replace('/desktop')" in page
         desk = app.get("/desktop", headers=LOCAL).text
-        assert "var LITE = true, OUT = LITE ? 'Lite window' : 'Website';" in desk
-        assert "if (LITE) { location.href = '/'; return; }" in desk
-        assert "Desktop View only when asked" in app.get("/wallet", headers=LOCAL).text
+        assert 'var LOOK = "core", CORE_ARCADE = LOOK === \'core\';' in desk
+        assert "{k: 'skin:core', label: label('core', 'ArcadeCore')" in desk and "if (s === 'core') { location.href = '/lite'" in desk
+        wallet = app.get("/wallet", headers=LOCAL).text
+        assert "var wear = 'core';" in wallet, "a page in a tab wears the arcade's look and is never sent on by it"
         app_state.set_setting(modulelib.ACCESS_SETTING, {"desktop": "operator"})
-        assert 'data-go="/desktop"' not in app.get("/lite", headers=OUTSIDE).text, "for whom the operator allows"
-    finally:
-        app_state.set_setting("edition", None)
-        app_state.set_setting("modules", None)
+        assert 'data-look="ubuntu"' not in app.get("/lite", headers=OUTSIDE).text, "for whom the operator allows"
         app_state.set_setting(modulelib.ACCESS_SETTING, None)
-    assert "var LITE = false" in app.get("/desktop", headers=LOCAL).text
-    assert "Desktop View only when asked" not in app.get("/wallet", headers=LOCAL).text, "the full edition's pages"
+        # Full: every module, in the look the first-start question picked; ArcadeCore is still one of its looks
+        said = post({"edition": "full", "look": "w98"}).json()
+        assert said["edition"] == "full" and said["look"] == "w98" and all(m["on"] for m in said["modules"])
+        assert 'data-tab="overview"' not in app.get("/", headers=LOCAL).text
+        assert "var wear = 'w98';" in app.get("/wallet", headers=LOCAL).text
+        assert "CORE_ARCADE = LOOK === 'core'" in app.get("/desktop", headers=LOCAL).text
+        said = post({"look": "core"}).json()
+        assert said["edition"] == "full" and said["look"] == "core" and all(m["on"] for m in said["modules"])
+        assert 'data-tab="overview"' in app.get("/", headers=LOCAL).text, "a full arcade can open in ArcadeCore"
+        assert post({"module": "desktop", "on": False}).status_code == 200
+        assert post({"look": "ubuntu"}).json()["look"] == "web", "no desktop module: the website"
+    finally:
+        for key in ("edition", "modules", "look", modulelib.ACCESS_SETTING):
+            app_state.set_setting(key, None)
 
 
 def test_the_operator_says_who_may_use_each_module(app, app_state):
