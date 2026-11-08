@@ -134,7 +134,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <li><button type="button" data-options="modules">Edition and modules…</button></li>
     <li><button type="button" data-options="themes">Themes…</button></li>
     <li><hr></li><li><button type="button" data-open-tab="admin">Admin: every control…</button></li>
-    {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
+    {% if wallet == 'account' %}<li><button type="button" data-open-tab="account">Your account…</button></li>{% endif %}
+    {% elif audience == 'user' %}<li><button type="button" {{ 'data-open-tab="account"' if wallet == 'account' else 'data-go="/me"' }}>Your account…</button></li>
     {% if admin_tab %}<li><hr></li><li><button type="button" data-open-tab="admin">Admin: every control…</button></li>{% endif %}
     {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
     <li><button type="button" data-yourtabs>Your tabs…</button></li>
@@ -187,7 +188,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     {{ icons.get(t.id, icons['module'])|safe }}<span>{{ t.title }}</span></button>
   {% endfor %}
   <button type="button" id="tab-more" aria-haspopup="true" hidden><span>More ▾</span></button>
-  {% if admin_tab %}<button type="button" role="tab" class="end" data-tab="admin" data-src="/admin">
+  {#- Your account: the account's own page (/me: your @name, your key, profile and picture, home background, which
+      wallets show, usage and boosts, sign out everywhere), in a tab that wears the window's look, as Admin does
+      (2026-11-08, SadFrog: "the availability and capability doesnt change - just the way users interact"). #}
+  {% if wallet == 'account' %}<button type="button" role="tab" class="end" data-tab="account" data-src="/me">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-5 15-5 16 0"/></svg><span>Account</span></button>{% endif %}
+  {% if admin_tab %}<button type="button" role="tab" {{ '' if wallet == 'account' else 'class="end" ' }}data-tab="admin" data-src="/admin">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></svg><span>Admin</span></button>{% endif %}
 </div>
 
@@ -220,6 +226,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% include "_apps.html" %}
   {% for t in tabs %}<section data-panel="m-{{ t.id }}" class="frame{{ ' modframe' if t.package }}" hidden>{% if t.package %}<div class="modpanel" data-modpanel="{{ t.id }}" hidden></div>{% endif %}<iframe title="{{ t.title }}" data-src="{{ t.page }}"></iframe></section>
   {% endfor %}
+  {% if wallet == 'account' %}<section data-panel="account" class="frame" hidden><iframe title="Your account" data-src="/me"></iframe></section>{% endif %}
   {% if admin_tab %}<section data-panel="admin" class="frame" hidden><iframe title="Admin" data-src="/admin"></iframe></section>{% endif %}
 </main>
 
@@ -363,9 +370,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 
   // tabs, and the panels with no tab of their own (Join, at /join). A module's tab and Admin hold that page in a
   // frame, loaded the first time the tab is opened and kept while the window is open.
-  var PATHS = {'/join': 'join', '/join/keys': 'join', '/me/backup': 'backup'};
+  // /me and /me/wallet are the Account and Send tabs on an arcade that opens in this window (app.py).
+  var PATHS = {'/join': 'join', '/join/keys': 'join', '/me/backup': 'backup', '/me': 'account', '/me/wallet': 'send'};
+  var showingPanel = 'overview';
   function panel(name, href) {
-    var shown = null;
+    var shown = null, was = showingPanel;
+    showingPanel = name;
     document.querySelectorAll('.toolbar [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.tab === name); });
     document.querySelectorAll('main [data-panel]').forEach(function (p) {
       p.hidden = p.dataset.panel !== name;
@@ -376,6 +386,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     if (frame && (href || !frame.getAttribute('src'))) frame.setAttribute('src', href || frame.dataset.src);
     var mod = shown && shown.querySelector('[data-modpanel]');
     if (mod && window.liteModulePanel) window.liteModulePanel(mod);
+    // Which panel was left for which: the wallet reads again on coming back from the Account tab (_wallet.html)
+    if (was !== name) document.dispatchEvent(new CustomEvent('lite:panel', {detail: {from: was, to: name}}));
     // The address names the tab, so a reload opens it again; a page with a path of its own (/join, /me/backup) keeps it.
     if (history.replaceState && document.querySelector('.toolbar [data-tab="' + name + '"]') && !PATHS[location.pathname]) {
       history.replaceState(null, '', name === 'overview' ? location.pathname : '#' + name);
@@ -413,6 +425,9 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   window.liteWindow = {
     route: function (path) {
       if (path === '/' || path === '/lite') return 'overview';
+      // The account's pages the window has a tab of its own for, before the Account tab's frame claims all of /me/
+      var own = {'/me/wallet': 'send', '/me/backup': 'backup', '/me/messages': 'messages', '/me/nfts': 'assets'}[path];
+      if (own && document.querySelector('main [data-panel="' + own + '"]')) return own;
       // a module's website page (/module/<name>) is its tab here
       var mod = /^\/module\/([^/]+)/.exec(path);
       if (mod && document.querySelector('main [data-panel="m-' + mod[1] + '"]')) return 'm-' + mod[1];
@@ -423,7 +438,15 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
       });
       return best;
     },
-    open: function (name, href) { if (document.querySelector('main [data-panel="' + name + '"]')) panel(name, href); }
+    open: function (name, href) {
+      if (!document.querySelector('main [data-panel="' + name + '"]')) return;
+      panel(name, href);
+      // A Pay link (/me/wallet?to=@name&coin=doge) fills in Send (_wallet.html)
+      if (name === 'send' && href && window.liteSendTo) {
+        var q = new URL(href, location.href).searchParams;
+        if (q.get('to')) window.liteSendTo(q.get('to'), q.get('coin') || '');
+      }
+    }
   };
   document.querySelectorAll('[data-open]').forEach(function (a) {
     a.onclick = function (e) { e.preventDefault(); document.querySelector('.toolbar [data-tab="' + a.dataset.open + '"]').click(); };

@@ -120,6 +120,46 @@ Reported by the Arcade V1.0 session, approved by the operator. In `arcade/mesh/i
 - **Test:** `tests/test_mesh_introduce.py::test_a_lost_hi_expires_so_the_higher_ids_own_hi_is_answered` loses the lower id's hi, shows the higher id's hi is still refused while that ask is fresh, then ages it and gets a link. It fails without the fix. 155 mesh/udp/punch tests pass.
 
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-wallet-parity` (on `team/core-cohesive` 02808d6d) · One wallet, part 2: imported wallets, your account, activity, Send's helpers and Backup in ArcadeCore
+
+SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing ... the availability and
+capability doesnt change - just the way users interact", and "if things are getting chosen chose the lites version of
+things". The website Wallet's wallet management and account features, in ArcadeCore; where the two differed, Lite's way.
+- **Imported wallets** (`arcade/lite/templates/_wallet.html`): a From row in Send, Receive and Transactions (the account's
+  own wallet, then each imported one), and a Wallets… window: import a phrase or a private key (with `/account/imported/busy`
+  said first), open a record sealed under the password (or an earlier one), rename (the main wallet too), remove, and
+  Rescan a read-back cut short. The tidying the website does on a visit runs here too: forget an address with no key in
+  the record, register the record's wallets from another arcade, restart a stopped read-back. Send spends from the
+  picked wallet (`from`, `wallet.importedKeys`); Receive shows its address; Transactions reads `address=`; Balances lists
+  each under its chain. The pick is the website's own (`arcade.wallet.pick.<name>`), so both looks show the same wallet.
+- **Your account** (`lite.html`): an Account tab framing `/me` (your @name, publishing your key, profile and picture,
+  home background, which wallets show, usage and boosts, sign out everywhere), wearing the look as Admin does. Settings ->
+  Your account… opens it, for the operator signed in as an account too. On an arcade that opens in ArcadeCore, `/me`
+  is that tab and `/me/wallet` is Send (`app.py`, `_core_window`); a framed page's link to `/me/wallet`, `/me/backup`,
+  `/me/messages` or `/me/nfts` opens the window's own tab.
+- **Hidden wallets**: `/account` now says `hidden`; ArcadeCore leaves those chains out of Send, Receive, Balances,
+  Transactions and DigiDollar, as the website does, and reads again on leaving the Account tab.
+- **Activity**: sends this browser made wait on top until their block lands (the website's `arcade.wallet.sent.<name>`,
+  so a send from either look waits in both), "On its way" from `/r/pending/<address>`, and Show older (`before=`).
+- **Send's helpers**: Pay to suggests @names from the address book, saved addresses and recent payees; Scan QR
+  (`/qrscan.js`, camera or photo); `?to=@name&coin=` fills Send (a Pay link, or `/me/wallet?to=` on a core arcade).
+- **Backup** (`_backup.html`): not backed up said on Send and Backup, Check them (typed back, checked in the browser,
+  `/account/mainnet`), and Save the recovery page (`/recover`). Not brought over: the per-chain Core restore commands
+  shown beside the words on the website's Backup.
+- **Address types, Lite's way in both**: the pick is kept as `lite_kind_<name>_<network>` (and its address as
+  `..._<kind>`) in both looks (`my_wallet.html` reads ArcadeCore's). `/account` rows carry `kinds` (each registered m/49'
+  or m/84' address and its balance), and Balances counts every kind, each said in the cell's title.
+- **DigiDollar's Transactions, Lite's way in both**: the website's Activity on DigiDollar lists the coins held from
+  `/account/digidollar`, as ArcadeCore does, instead of DigiByte's activity.
+- **Fixed on the website**: the import window asked `/account/imported/busy?chain=[object Object]`, so a running rescan
+  was never said before an import.
+- **Tests:** `tests/test_lite_wallet_parity_browser.py` (+7, Firefox; with the Lite, wallet, imports, DigiDollar, Doginal wallet, me, web and API key suites: 602 passed): import, send from, rename (seen in the website's
+  Wallet), remove; pinned sends, On its way, Show older and a landing; Pay link, @name suggestions and a QR photo;
+  Backup's check and recovery page; the Account tab wearing the look, a hidden wallet left out, `/me` on a core arcade;
+  Balances counting a SegWit address and one address-type pick for both looks; DigiDollar's coins held in both.
+  `test_lite.py` now checks ArcadeCore never links to `/me/wallet` (it names it only to open its own Send).
+- **For the operator:** please merge into `main` after `team/core-cohesive`. Nothing to set on a node.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-cohesive` (on `main` 17c3f88d) · One wallet in every look: framed pages wear the look, DigiDollar is the module's everywhere, module forms on the website
 
 SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing - when you change

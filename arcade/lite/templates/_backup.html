@@ -3,6 +3,10 @@
     open), checked against the account's own address, and never sent anywhere. -#}
 {% if wallet == 'account' %}
 <section data-panel="backup" hidden>
+  <p id="k-not" class="warn" hidden><b>You have not backed up your twelve words.</b> Your coins, the real ones included,
+    can be spent anyway. But lose your password with the words never written down and the account and everything in it
+    is gone for good: nobody here can bring it back.</p>
+  <p id="k-done" class="ok" hidden>Backed up: you typed your words back here and they made this account's own address.</p>
   <fieldset><legend>Your twelve words</legend>
     <p style="margin:0 0 8px">The words are the wallet. This arcade keeps only your wallet sealed with your password,
       which it cannot open; lose the password with the words not written down and nobody can bring them back.</p>
@@ -15,10 +19,30 @@
       <button type="button" id="k-hide">Hide them</button>
     </div>
   </fieldset>
+  {#- Typed back from paper and checked here, against the address this account already has on each chain where coins are
+      money; only the answer reaches the arcade (/account/mainnet), as on the website's Backup (my_backup.html). -#}
+  <fieldset><legend>Mark them as backed up</legend>
+    <p class="muted" style="margin:0 0 8px" id="k-check-why">Whenever you like: type the words back from your paper. They
+      are checked in this browser, against the address this account already has, which only the right words can make.
+      The arcade is told the answer and nothing else. It does not change what you can spend.</p>
+    <textarea id="k-check-words" rows="3" style="width:100%;font-family:var(--mono)" spellcheck="false"
+      autocapitalize="off" autocomplete="off" placeholder="your twelve words, in order, separated by spaces"
+      aria-label="Your twelve words"></textarea>
+    <p style="margin:6px 0 0"><button type="button" id="k-check">Check them</button></p>
+    <p id="k-check-said" class="bad" hidden></p>
+  </fieldset>
   <fieldset><legend>An extra copy of your encrypted wallet</legend>
     <p style="margin:0 0 8px">A file to keep. With your password it opens your wallet on any arcade (Join → Open a
       backup file); without it, it is no use to anybody.</p>
     <button type="button" id="k-file">Save the file</button>
+  </fieldset>
+  <fieldset><legend>If every arcade is gone</legend>
+    <p style="margin:0 0 8px">The coins are on their chains, not in any arcade. The recovery page is one file that turns
+      the twelve words into each chain's addresses, private keys and Core commands, with no arcade and no internet.</p>
+    <a id="k-recover" href="/recover" download="recover-coins.html"><button type="button" tabindex="-1">Save the recovery
+      page</button></a>
+    <p class="muted" style="margin:6px 0 0">Open the saved file, not a link: never type your words into a website you
+      reached by a link, whoever sent it.</p>
   </fieldset>
   <p id="k-said" hidden></p>
 </section>
@@ -57,6 +81,43 @@ $("k-show").onsubmit = async (e) => {
                                                                                     {textContent: word}));
     $("k-shown").hidden = false;
   } catch (x) { tell(String(x.message || x), "bad"); } finally { button.disabled = false; }
+};
+/** Whether the words were ever typed back (/account says it with each chain), shown at the top. */
+async function drawBacked() {
+  let chains = [];
+  try { chains = ((await wallet.state()).chains || []); } catch (e) { return; }
+  const no = chains.some((c) => c.backed_up === false), yes = chains.length && !no;
+  $("k-not").hidden = !no; $("k-done").hidden = !yes;
+  if (yes) $("k-check-why").textContent = "Done already; typing them again changes nothing.";
+  return chains;
+}
+window.liteBackupDraw = drawBacked;                                     // the wallet's "Back them up…" opens it
+if (!document.querySelector('main [data-panel="backup"]').hidden || location.pathname === "/me/backup") drawBacked();
+$("k-check").onclick = async () => {
+  const box = $("k-check-said"); box.hidden = true;
+  const button = $("k-check"); button.disabled = true;
+  try {
+    const signin = await import("/signin.js"), coins = await import("/coins.js");
+    if (!signin.usable) throw new Error("this page cannot do arithmetic here. It needs https or localhost.");
+    const real = ((await wallet.state()).chains || []).filter((c) => c.mainnet);
+    const seed = await signin.toSeed($("k-check-words").value);
+    for (const chain of real) {
+      if (!chain.address) throw new Error(`this account has no ${chain.label} address yet, so there is nothing here to `
+        + "check the words against. Open the wallet once and let this browser register it, then come back.");
+      const made = await coins.address((await coins.coinKey(seed, chain.network)).pubkey, chain.version);
+      if (made !== chain.address) throw new Error(`those words make ${made}, and this account is ${chain.address}. `
+        + "Those are not the same account, so they were not marked as backed up.");
+    }
+    const r = await fetch("/account/mainnet", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                body: JSON.stringify({words_match: true})});
+    const back = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(back.detail || "the arcade would not take it");
+    $("k-check-words").value = "";
+    try { sessionStorage.removeItem("arcade.wallet.backupx"); } catch (e) {}
+    const w = document.getElementById("w-backup"); if (w) w.hidden = true;
+    await drawBacked();
+  } catch (x) { box.textContent = String(x.message || x); box.hidden = false; }
+  finally { button.disabled = false; }
 };
 $("k-file").onclick = async () => {
   tell("");

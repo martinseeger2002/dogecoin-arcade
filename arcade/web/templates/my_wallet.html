@@ -466,26 +466,34 @@ async function ddLoad() {
  * chain's kinds; the first is its ordinary address, the one everything else on
  * this page uses. Another kind changes the card's address, balance, Receive and
  * coin Send. Tokens and NFTs stay on the ordinary address. */
-const KIND = "arcade.wallet.kind:";
 const kinds = (c) => (!NODE_SIDE && c ? wallet.addressKinds(c.network) : []);
+/* The pick is kept in this browser under ArcadeCore's own name for it (lite_kind_<account>_<network>, _wallet.html),
+ * and the kind's address as last seen under that name too, so both looks show the same address type (2026-11-08,
+ * SadFrog: "it should all be the same thing", "chose the lites version of things"). */
+const KIND_WHO = (typeof ARCADE_ME === "string" && ARCADE_ME) || "visitor";
+const kindKey = (c) => `lite_kind_${KIND_WHO}_${c.network}`;
+function kindPicked(c) { try { return localStorage.getItem(kindKey(c)) || ""; } catch (e) { return ""; } }
+function kindPick(c, id) { try { localStorage.setItem(kindKey(c), id); } catch (e) {} }
 let kindSeen = {};                     // "<network>:<kind>" -> {address, balance, at}
 function kindNow() {
   const c = chainNow(), ks = kinds(c);
   if (asset || ks.length < 2 || pickedNow()) return null;
-  const k = ks.find((x) => x.id === kept(KIND + c.network, ks[0].id));
+  const k = ks.find((x) => x.id === (kindPicked(c) || ks[0].id));
   return k && k !== ks[0] ? k : null;
 }
-const kindSpot = (c, k) => `arcade.wallet.kindaddr:${said.pubkey || said.name || ""}:${c.network}:${k.id}`;
+const kindSpot = (c, k) => `${kindKey(c)}_${k.id}`;
 /** That kind's address: derived when the wallet is open, else as last seen in this browser.
  *  `pubkey` (hex) only when derived: a P2SH address is registered with it, the first time. */
 async function kindAddress(c, k) {
   const open = keys || await wallet.opened(c.network).catch(() => null);
   if (open && open.seed) {
     const mine = wallet.keysOn(await wallet.asKind(open, c.network, k.id), c.network);
-    keep(kindSpot(c, k), mine.address);
+    try { localStorage.setItem(kindSpot(c, k), mine.address); } catch (e) {}
     return {address: mine.address, pubkey: [...mine.pubkey].map((b) => b.toString(16).padStart(2, "0")).join("")};
   }
-  return {address: kept(kindSpot(c, k), ""), pubkey: ""};
+  let seen = "";
+  try { seen = localStorage.getItem(kindSpot(c, k)) || ""; } catch (e) {}
+  return {address: seen, pubkey: ""};
 }
 async function loadKind(c, k) {
   const spot = `${c.network}:${k.id}`;
@@ -684,7 +692,7 @@ function drawMenu() {
     const bal = first ? `${coinsOf(c.spendable ?? c.balance)} ${COIN()}`
       : seen && seen.balance != null ? `${coinsOf(seen.balance)} ${COIN()}` : "—";
     option(walletLabel(mainName(c) || "Your wallet", k.label), bal, !w && (first ? !kNow : !!kNow && kNow.id === k.id),
-           () => { pickWallet("main"); keep(KIND + c.network, k.id); drawAll(); });
+           () => { pickWallet("main"); kindPick(c, k.id); drawAll(); });
     if (!first && (!seen || seen.balance == null)) loadKind(c, k).catch(() => {});
   }
   for (const one of importedHere(c)) {
@@ -769,7 +777,7 @@ async function openImport() {
   // ahead -- it joins the next rescan, back to back with this one.
   let waitNote = "";
   try {
-    const r = await fetch("/account/imported/busy?chain=" + encodeURIComponent(c), {cache: "no-store"});
+    const r = await fetch("/account/imported/busy?chain=" + encodeURIComponent(c.network), {cache: "no-store"});
     const said = r.ok ? await r.json() : null;
     if (said && said.busy) waitNote = said.says;
   } catch (err) { /* not known: the import's own answer says where it stands */ }
@@ -1078,7 +1086,7 @@ function drawHead() {
     const more = el("a", "", "Mint, vaults and redeem →"); more.href = "/module/digidollar";
     more.style.marginRight = "8px";
     const back = el("button", "wl-backcoin", `Back to ${COIN()}`); back.type = "button";
-    back.onclick = () => { asset = null; keep(DDNET, ""); drawHead(); };
+    back.onclick = () => { asset = null; keep(DDNET, ""); drawHead(); if (tab === "activity") loadActivity().catch(showError("panel-activity")); };
     sub.append(more, back);
     bits.length = 0;
   } else if (asset && asset.token20) {
@@ -1190,6 +1198,7 @@ let act = {net: null, rows: [], since: null, tip: 0, more: false};
 async function loadActivity(older = false) {
   const c = chainNow();
   if (!c) { $("panel-activity").replaceChildren(el("div", "wl-empty", "No address yet, so nothing has happened.")); return; }
+  if (asset && asset.dd) return ddActivity(c);
   const k = kindNow();
   if (k) {
     act = {net: null, rows: [], since: null, tip: 0, more: false};
@@ -1211,6 +1220,31 @@ async function loadActivity(older = false) {
   act.since = got.since; act.tip = got.tip; act.more = !!got.more;
   landed();
   drawActivity();
+}
+
+/** DigiDollar's activity: the DigiDollars this account holds now, coin by coin, from the arcade's own index
+ * (/account/digidollar), as ArcadeCore's Transactions lists them (2026-11-08, SadFrog: "chose the lites version"). */
+async function ddActivity(c) {
+  const box = $("panel-activity");
+  act = {net: null, rows: [], since: null, tip: 0, more: false};
+  let got;
+  try { got = await ddAsk(`/account/digidollar?chain=${encodeURIComponent(c.network)}&pubkey=${await ddKey(c.network)}`); }
+  catch (e) { box.replaceChildren(el("div", "wl-empty", String(e.message || e))); return; }
+  if (!(asset && asset.dd)) return;
+  box.replaceChildren();
+  const coins = got.coins || [];
+  if (coins.length) box.append(el("div", "wl-day", "Held"));
+  for (const coin of coins) {
+    const b = el("button", "wl-row"); b.type = "button"; b.dataset.ddcoin = coin.txid;
+    const mid = el("span", "wl-mid");
+    mid.append(el("b", "", "DigiDollars held"), el("small", "", coin.height ? `block ${Number(coin.height).toLocaleString()}` : ""));
+    b.append(el("span", "wl-ic in", "$"), mid, el("span", "wl-amt in", dollars(coin.cents)));
+    b.onclick = async () => toast(await copyText(coin.txid) ? "Transaction ID copied" : coin.txid);
+    box.append(b);
+  }
+  if (!coins.length) box.append(el("div", "wl-empty", "No DigiDollars here yet."));
+  box.append(el("p", "wl-since", `${dollars(got.cents)} in all, at ${got.address || "your DigiDollar address"}.`
+    + (got.whole === false ? ` Still reading what came before block ${Number(got.since || 0).toLocaleString()}.` : "")));
 }
 
 function waiting() {
