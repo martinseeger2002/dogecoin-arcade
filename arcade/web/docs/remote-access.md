@@ -46,7 +46,8 @@ The same admin page has a step-by-step wizard for putting your node on a
 domain you control in Cloudflare. Each step can be run again safely:
 
 1. **cloudflared** — found on the machine, or on Linux downloaded into
-   `~/.local/bin` (no sudo). On Windows use `winget install --id
+   `~/.local/bin` (no sudo): one release, checked against its published SHA-256
+   before it is installed (`tunnel.py`, `CLOUDFLARED_VERSION`). On Windows use `winget install --id
    Cloudflare.cloudflared`; on a Mac, `brew install cloudflared`.
 2. **Sign in** — `cloudflared tunnel login` prints a Cloudflare link; open it
    and pick your domain. `cert.pem` lands in `~/.cloudflared`.
