@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
+
+291 tests passed on them (API keys, Lite, DigiDollar, Doginals wallet, ord guards, modules).
+- **#113:** `Command.writes` defaults to False, so a command added without saying so would be open to read-only keys. Today all 24 unmarked commands only read. `tests/test_apikeys.py::test_every_console_command_says_whether_a_read_only_key_may_run_it` now lists them by name: a new command fails it until it takes `writes=True` or joins `READS_ONLY`.
+- **#114:** the Wallet's guard calls name their chain. With master's `guard_for`, Dogecoin keeps `GUARD` first, and another chain's "D" address with no guard of its own is refused as not checked.
+
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #108 #109 #110 #111 #112 onto master
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/lite-assets` (on `main` 45b0e26b) · ArcadeCore: an Assets tab, and Send for an ord or an arcade NFT
 
