@@ -245,9 +245,11 @@ def test_many_doginals_come_a_page_at_a_time(browser, served, signed_in, reads):
 def test_doginals_come_in_inscription_order_with_their_collections_and_a_card(browser, served, signed_in, reads):
     """2026-11-05, the operator: "they should be ordered by inscription number earliest first", "if they are a part of a
     collection, they should have the collection metadata with them", "Each one should be able to be clicked, and
-    their card should open with all of the information and a content link"; Send and one List on the card."""
+    their card should open with all of the information and a content link"; Send and one List on the card (List while
+    the operator has selling while away on, node_trades, as the arcade asks for it, 2026-11-08)."""
     import random
     base, state = served
+    state.set_setting("node_trades", True)
     txs = [f"{n:064x}" for n in range(0x7000, 0x7000 + 40)]
     rng = random.Random(5)
     numbers = {t + "i0": n for t, n in zip(txs, rng.sample(range(1000, 900000), len(txs)))}
@@ -327,6 +329,7 @@ def test_doginals_come_in_inscription_order_with_their_collections_and_a_card(br
         browser.execute_script('document.querySelector(".dg-x").click()')
         assert not browser.find_elements(By.CSS_SELECTOR, ".dg-modal")
     finally:
+        state.set_setting("node_trades", False)
         state.ord_indexes = real[0]
         if real[1] is not None:
             state.known_collections = real[1]

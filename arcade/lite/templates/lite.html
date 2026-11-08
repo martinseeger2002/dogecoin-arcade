@@ -184,8 +184,9 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12H6M11 6l-6 6 6 6"/></svg><span>Receive</span></button>
   <button type="button" role="tab" data-tab="transactions">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Transactions</span></button>
-  {#- Assets: the ords and arcade NFTs this account holds, while the Ord indexes module is on (2026-11-08). #}
-  {% if ords_on and wallet == 'account' %}<button type="button" role="tab" data-tab="assets">
+  {#- Assets: what the wallet holds besides coins -- tokens, DRC-20 / PRC-20, arcade NFTs, and the ords while the Ord
+      indexes module is on -- for an account and for the operator's node wallet (2026-11-08, _assets.html). #}
+  {% if wallet %}<button type="button" role="tab" data-tab="assets">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M20 16l-5-5-9 9"/></svg><span>Assets</span></button>{% endif %}
   <button type="button" role="tab" data-tab="addresses">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="12" cy="10" r="3"/><path d="M8 17c1-2 7-2 8 0"/></svg><span>Address book</span></button>
@@ -231,6 +232,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     </div>
   </section>
   {% include "_wallet.html" %}
+  {% include "_assets.html" %}
   {% include "_addressbook.html" %}
   {% include "_join.html" %}
   {% include "_backup.html" %}

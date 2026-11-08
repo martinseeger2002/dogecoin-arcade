@@ -15,6 +15,8 @@ from fastapi.templating import Jinja2Templates
 
 from . import commands as cmdlib
 from .. import modules as modulelib
+from .. import ord_chains as ordchainslib
+from ..config import NETWORKS
 from .. import packages as packagelib
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -137,6 +139,12 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             "most_kb": packagelib.MOST_BYTES // 1000,
             "messages_on": "messages" in modulelib.enabled(settings),
             "ords_on": "ords" in modulelib.enabled(settings), "csrf": state.csrf_token,
+            # Assets (_assets.html): what the Wallet may do with each chain's ords (ord_chains.wallet_table, as the full
+            # Wallet's ord_wallet() gives it, with each chain's address version), and whether selling an arcade NFT
+            # while away is on here (the full arcade's node_trades).
+            "ord_wallet": {n: {**v, "version": NETWORKS[n].pubkeyhash_version if n in NETWORKS else None}
+                           for n, v in ordchainslib.wallet_table().items()},
+            "node_trades": bool(state.setting("node_trades", False)),
             # Window -> Desktop View, while that module is on and this caller may use it: the same arcade as a
             # desktop, and "Back to the Lite window" from there (2026-11-07, SadFrog).
             "arcade_look": modulelib.look(settings),
