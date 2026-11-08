@@ -17,7 +17,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 
-from arcade import script                                         # noqa: E402
+import signup_proof as SP                                         # noqa: E402
 from arcade.web import app as appmod                              # noqa: E402
 
 
@@ -61,8 +61,8 @@ def test_asking_another_arcade_never_follows_a_redirect_nor_reaches_a_private_on
 
 def test_signup_refuses_a_name_the_chain_gives_to_another_address(client, monkeypatch):
     page, state = client
-    mine = script.b58check_encode(113, bytes(range(20)))
-    theirs = script.b58check_encode(113, bytes(range(20, 40)))
+    owner = SP.coin_key()
+    theirs = SP.address_of(state, owner)
 
     class Index:
         def address_of(self, wanted):
@@ -70,15 +70,18 @@ def test_signup_refuses_a_name_the_chain_gives_to_another_address(client, monkey
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
     blob = {"sealed": "c2VhbGVk", "salt": "00", "nonce": "00", "iterations": 600000}
 
-    def signup(tag, pubkey, address):
-        return page.post("/signup", json={"tag": tag, "pubkey": pubkey, "address": address, "blob": blob})
-
-    refused = signup("taken", "11" * 32, mine)
+    refused = SP.signup(page, state, "taken", blob=blob)
     assert refused.status_code == 400 and "claimed on the chain" in refused.json()["detail"]
     assert state.vault().get("taken") is None, "nothing filed under somebody else's name"
-    owned = signup("taken", "22" * 32, theirs)
+    # The owner's address is public: posting it is not enough (2026-11-08, security review). Before, this filed the
+    # name under the poster's own key and sealed wallet, and the owner's password no longer opened it here.
+    page.cookies.clear()
+    posed = SP.signup(page, state, "taken", address=theirs, blob=blob)
+    assert posed.status_code == 400, posed.text
+    assert state.vault().get("taken") is None and "arcade_session" not in page.cookies
+    owned = SP.signup(page, state, "taken", coin=owner, blob=blob)
     assert owned.status_code == 200, owned.text
-    assert signup("unclaimed", "33" * 32, mine).status_code == 200, "a name nobody holds yet is free"
+    assert SP.signup(page, state, "unclaimed", blob=blob).status_code == 200, "a name nobody holds yet is free"
 
 
 def test_the_mesh_pass_through_says_who_really_asked():

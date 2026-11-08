@@ -221,6 +221,13 @@ class KeyStore:
                 return db.execute("UPDATE apikey SET off=? WHERE id=?", (int(off), kid)).rowcount > 0
             return db.execute("UPDATE apikey SET off=? WHERE id=? AND owner=?", (int(off), kid, owner)).rowcount > 0
 
+    def off_for(self, owner: str) -> int:
+        """Switch off every key an account made (its "sign out everywhere", 2026-11-08): a key outlived the sessions
+        before, so a key made by whoever held a session went on acting as the account. Off, not deleted: the owner sees
+        them and switches back on the ones that are theirs."""
+        with self._db() as db:
+            return db.execute("UPDATE apikey SET off=1 WHERE owner=? AND off=0", (owner,)).rowcount
+
     def delete(self, owner: str | None, kid: str) -> bool:
         with self._db() as db:
             if owner is None:

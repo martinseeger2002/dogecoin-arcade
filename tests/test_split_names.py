@@ -15,15 +15,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_game_door import OUTSIDE, _ashvale                     # noqa: E402
 
+from nacl.signing import SigningKey                              # noqa: E402
+
+import signup_proof as SP                                         # noqa: E402
 from arcade import script                                         # noqa: E402
+from arcade.config import NETWORKS                               # noqa: E402
 from arcade.web import app as appmod                              # noqa: E402
 from arcade.web.app import create_app                             # noqa: E402
 from arcade.web.state import AppState, ChainContext               # noqa: E402
 
 BLOB = {"sealed": "c2VhbGVk", "salt": "00", "nonce": "00", "iterations": 600000}
 LOCAL = {"host": "127.0.0.1:8420"}
-THEIRS, NEW = "ab" * 32, "11" * 32
-ADDR = script.b58check_encode(113, bytes(range(20)))
+# Real keys since 2026-11-08: /signup checks the account key's signature and the coin key's proof of the address.
+THEIRS_KEY, NEW_KEY = SigningKey(bytes([0xAB] * 32)), SigningKey(bytes([0x11] * 32))
+THEIRS, NEW = THEIRS_KEY.verify_key.encode().hex(), NEW_KEY.verify_key.encode().hex()
+THEIRS_COIN = SP.coin_key(0xAB)
+ADDR = script.b58check_encode(NETWORKS["regtest"].pubkeyhash_version, script.hash160(THEIRS_COIN[1]))
 OTHER = script.b58check_encode(113, bytes(range(20, 40)))
 
 
@@ -70,8 +77,8 @@ def two(tmp_path, no_nodes, monkeypatch):
     return home, here, here_client, asked
 
 
-def _sign_up(app, tag, pubkey, address=OTHER):
-    return app.post("/signup", json={"tag": tag, "pubkey": pubkey, "address": address, "blob": BLOB})
+def _sign_up(app, state, tag, key, coin=None):
+    return SP.signup(app, state, tag, key=key, coin=coin, blob=BLOB)
 
 
 def test_the_name_check_says_a_name_is_held_on_another_arcade(two):
@@ -87,7 +94,7 @@ def test_the_name_check_says_a_name_is_held_on_another_arcade(two):
 
 def test_sign_up_refuses_a_name_another_arcade_holds_under_another_key(two):
     _, here, app, _ = two
-    refused = _sign_up(app, "wanderer", NEW)
+    refused = _sign_up(app, here, "wanderer", NEW_KEY)
     assert refused.status_code == 400
     assert "already has an account on home.example.com: sign in instead" in refused.json()["detail"]
     assert here.vault().get("wanderer") is None, "no new empty wallet under their name"
@@ -96,7 +103,7 @@ def test_sign_up_refuses_a_name_another_arcade_holds_under_another_key(two):
 
 def test_the_same_key_elsewhere_is_the_same_person_bringing_their_account(two):
     _, here, app, _ = two
-    brought = _sign_up(app, "wanderer", THEIRS, address=ADDR)
+    brought = _sign_up(app, here, "wanderer", THEIRS_KEY, coin=THEIRS_COIN)
     assert brought.status_code == 200, brought.text
     assert here.vault().get("wanderer")["pubkey"] == THEIRS
 
@@ -108,7 +115,7 @@ def test_sign_up_still_works_when_no_other_arcade_answers(two, monkeypatch):
         raise requests.ConnectionError("no route to host")
     monkeypatch.setattr(appmod.requests, "get", down)
     assert app.get("/signup/wanderer").json()["free"] is True, "nobody could say otherwise"
-    assert _sign_up(app, "wanderer", NEW).status_code == 200
+    assert _sign_up(app, here, "wanderer", NEW_KEY).status_code == 200
     assert here.vault().get("wanderer")["pubkey"] == NEW
 
 
@@ -131,13 +138,13 @@ def test_a_slow_arcade_never_holds_the_sign_up_up_and_its_late_answer_is_kept(tw
 
 
 def test_no_other_arcade_known_signs_up_as_before(tmp_path, no_nodes, monkeypatch):
-    _, app = _arcade(tmp_path, "alone")
+    alone, app = _arcade(tmp_path, "alone")
 
     def never(url, **kwargs):
         raise AssertionError("nobody to ask")
     monkeypatch.setattr(appmod.requests, "get", never)
     assert app.get("/signup/wanderer").json()["free"] is True
-    assert _sign_up(app, "wanderer", NEW).status_code == 200
+    assert _sign_up(app, alone, "wanderer", NEW_KEY).status_code == 200
 
 
 def test_admin_lists_the_local_names_another_arcade_holds_under_another_key(two, monkeypatch):
