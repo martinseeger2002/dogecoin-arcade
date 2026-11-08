@@ -415,9 +415,9 @@ SadFrog: "all litecoin addresses send and receive like we just did with digibyte
   `funding.build` from one: BIP-341 SIGHASH_DEFAULT over every input, a 64-byte Schnorr witness, change back to it,
   priced at 57.5 vB an input. coins.js verifyOffer works the digest out itself (the DigiDollar Taproot code) and says
   the change as change. `utxos.SPENDABLE` and `blkscan` file v1 outputs of watched addresses. Imports take `p2tr`.
-- **Inscriptions:** `funding.guard_for(address, params)` gives a SegWit or Taproot address its chain's guard
-  (`GUARD_BY_NET`), keyed by outpoint as before; `choose` passes the chain. Litecoin's guard, once re-enabled, covers
-  ltc1p with no more code.
+- **Inscriptions:** main's `funding.guard_for(address, network)` already gives a SegWit or Taproot address its chain's
+  guard (`GUARD_BY_NET`), keyed by outpoint as before (rebased on 8e4430f8, 2026-11-08: our own `params` version is
+  dropped for it). Litecoin's guard, once re-enabled, covers ltc1p with no more code.
 - **Restore kit:** tr(86h) on DigiByte. **Litecoin Core 0.21.5.8 has no tr() descriptors**, so Core cannot bring back
   ltc1p coins; the Backup page says so and names the address and path.
 - **Checked:** BIP-341 wallet vectors and BIP-86's in Python and coins.js; the browser's digests equal the arcade's; a

@@ -370,9 +370,9 @@ def test_a_taproot_send_never_spends_an_inscribed_coin(tmp_path, monkeypatch):
     address = taproot.address(params, pub)
     guard = _Guard({("aa" * 32, 0)})
     monkeypatch.setattr(funding, "GUARD_BY_NET", {"dgb": guard})
-    assert funding.guard_for(address, params) is guard, "a dgb1p address gets DigiByte's guard"
+    assert funding.guard_for(address, params.name) is guard, "a dgb1p address gets DigiByte's guard"
     assert funding.guard_for(address) is None, "by address alone, as before: no version byte to watch"
-    assert funding.guard_for(segwit_encode("dgb", 0, bytes(20)), params) is guard, "dgb1q too"
+    assert funding.guard_for(segwit_encode("dgb", 0, bytes(20)), params.name) is guard, "dgb1q too"
     db = Database(tmp_path / "index.sqlite")
     install_schema(db)
     for txid, value in (("aa" * 32, 10 ** 9), ("bb" * 32, 3 * 10 ** 8)):
