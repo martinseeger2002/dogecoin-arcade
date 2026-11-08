@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/ord-walk-speed` (on `main` 8e4430f8) · Ord walk: two hot spots out
+
+SadFrog asked to speed up the Litecoin ordinals walk. py-spy on the walk (mini, Litecoin blocks ~2.59M, the 2023 batch
+transfers) showed one line taking 56% of the time.
+- **`_ord_block`:** "old ones gone to the fee" checked each floating inscription against the whole `carried` list
+  (`any(...)` per inscription). A transaction moving thousands of inscriptions made that quadratic. Now a set of the
+  carried ids: same order, each id carried once, as before.
+- **`owner_of`:** a fifth of what was left went on bech32 checksums for the same few ltc1 addresses. The names it makes
+  are kept per index (bounded at 200,000, cleared when full).
+- **Effect:** the Litecoin walk went from about 1.7 to 2.9 blocks a second; the slowest batch blocks (0.3 a second) no
+  longer stall. Dogecoin, Pepecoin and Bells walks run the same code.
+- **Threads:** not the answer here. The walk applies blocks in order (inscription numbers depend on it) in one Python
+  thread, and the scan lanes already read ahead. What is left is spread out: SQLite writes, notes, JSON.
+- **Tests:** test_doginal_index, test_ord_*, test_shared_walk, test_bells_index, test_bellinals, test_inscription_trace,
+  test_taproot*, test_bells_luckycoin: 209 passed, 1 skipped.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
+
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
 
 PR #97 (nodes globe) is held for the operator, because it lists members' cities. Its log entries came in with #106 and were taken out until it lands.
