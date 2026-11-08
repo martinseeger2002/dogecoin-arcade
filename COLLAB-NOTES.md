@@ -88,6 +88,36 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 · SadFrog's side (Claude) · branch `team/bytelings` (on `main` c69f944e) · Bytelings: the arcade's DigiByte collection and a launchpad paid in DigiDollar test
+
+SadFrog: "a digibyte ordinals collection of 100 generated pixel creatures ... on a launch pad that only takes
+digidollar test ... the main collection of the Arcade on digibyte thanking people for testing out digidollar test",
+then "100 babys that can eventually become bigger ... every 30 days gain the ability to evolve".
+
+- **The art:** `examples/bytelings/generate.py` draws 100 baby pixel monsters (32x32, about 350 bytes each) from a
+  seed as a HashLips build. Our own monsters; no other franchise's characters. The grown stages are drawn too, for
+  later drops (`--stage`). `examples/bytelings/README.md` has the plan and the to-do (evolving by burning babies, on a
+  later Bytelings site).
+- **The pad:** `arcade/ddpad.py` (its book and tick) and `arcade/web/ddpadweb.py` (`/bytelings`, `/ddpad/state`,
+  `/ddpad/picture/<n>`, `/ddpad/mint`, and a card on the Exchange's Launchpad tab). A mint holds a random piece (which
+  one is said only once paid, so nobody rerolls), the Wallet's own DigiDollar send pays $1 DigiDollar test to the pad
+  (`app.py _dd_send`, factored out of `/account/digidollar/send`, unchanged for the Wallet), and once that payment is
+  in a block the pad sends the piece to the account's DigiByte address: the inscribed coin whole as output 0,
+  `funding.build_doginal_send`. One per account, per DigiByte address and per DigiDollar address. The pad has its own
+  key, `ddpad.key` (0600, as `trade.key`), and inscribes its pieces to itself one at a time. Nothing runs unless an
+  operator loads a build (`python -m arcade.ddpad <home> load ...`); an arcade without one is unchanged.
+- **Safety (exchange-safety.md, updated):** the DigiByte rule "never pick the guard by address alone" now holds in
+  code: `funding.guard_for(address, network)`, `ord_guard` by `params.name`, and `choose(..., network=)` from `build`
+  and the ord send. Before this, a DigiByte "D" address on an arcade with Dogecoin was judged by Dogecoin's ord index.
+  Test: `test_a_digibyte_d_address_is_checked_by_digibytes_guard_never_dogecoins`.
+- **Tests:** `tests/test_ddpad.py` (hold, pay, deliver, let go, limits, the 30 days, the routes, a payment read
+  back as dollars), `tests/test_ddpad_regtest.py` (DigiByte Core 9.26.7 takes the pad's commit, reveal and delivery,
+  and the picture reads back from the chain), the safety page's list, test_digidollar*, test_web, and the Wallet's
+  DigiDollar send in Firefox.
+- **For the operator:** please merge. SadFrog's side will run the pad on node 3 once it is
+  published there (node 3 runs only published code); the 100 are inscribed meanwhile from a test node with the pad's
+  key, which then moves to node 3 with its book.
+
 ### 2026-11-07 A player's borrowed relay list is asked again after 2 minutes, not 3 hours (Claude; found with the GBC session)
 
 - **What happened:** `arcade_relays` (`arcade/web/realtime.py`) kept each player's borrowed relays for LOGIN_TTL/2

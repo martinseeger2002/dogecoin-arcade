@@ -218,7 +218,9 @@ that Kotia's own Core signed.
   copy's maker is never tried again, and no wallet file is ever copied. Tests: `tests/test_core_copy.py`.
 * **The DigiByte branch** (team/digibyte): its "D" addresses are Dogecoin's byte. Coin choice must name
   its chain to the inscription guard (`funding.guard_for(address, network)`), never pick the guard by
-  address alone.
+  address alone. Held by `funding.guard_for` and `ord_guard` (by `params.name`) and `choose(..., network=)`,
+  which `build` and the ord send pass (2026-11-07, for the Bytelings pad). Test:
+  `tests/test_ord_chains_more.py::test_a_digibyte_d_address_is_checked_by_digibytes_guard_never_dogecoins`.
 
 ## Checking a change against this page
 
