@@ -940,7 +940,38 @@ document.body.dataset.profileReady = "yes";
 {% endif %}
 
 {% if whose and whose.address %}<div class="ptab" id="ptab-posts">{% endif %}
-{% if posts %}
+{% if loading %}
+{#- THE FEED IS LOADING (2026-11-07, SadFrog): while the reader catches up with the chain, a bar instead of the posts,
+    so they do not pour in one batch after another; the page shows them once it has caught up. -#}
+{%- set span = [loading.tip - loading['from'], 1]|max %}
+<div class="panel feedloading" id="feedloading" role="status" aria-live="polite">
+  <p style="margin:0 0 6px"><b>The feed is loading</b></p>
+  <p class="muted" style="margin:0 0 10px">Reading posts from the {{ chain.label }} chain:
+    block <span id="fl-read">{{ "{:,}".format(loading.read) }}</span> of <span id="fl-tip">{{ "{:,}".format(loading.tip) }}</span>.
+    The posts show here once it has caught up.</p>
+  <progress id="fl-bar" max="{{ span }}" value="{{ loading.read - loading['from'] }}" style="width:100%;height:12px"></progress>
+</div>
+<script>
+(function () {
+  var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+  function poll() {
+    fetch('/feed/progress', {cache: 'no-store', credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (p) {
+        if (!p.loading) { location.reload(); return; }
+        var bar = document.getElementById('fl-bar');
+        if (!bar) return;
+        bar.max = Math.max(p.tip - p.from, 1); bar.value = p.read - p.from;
+        document.getElementById('fl-read').textContent = fmt(p.read);
+        document.getElementById('fl-tip').textContent = fmt(p.tip);
+        setTimeout(poll, 2000);
+      })
+      .catch(function () { setTimeout(poll, 5000); });
+  }
+  setTimeout(poll, 2000);
+})();
+</script>
+{% elif posts %}
   {% for p in posts %}{{ card(p) }}{% endfor %}
   {% if cursor %}
   <div id="more" data-next="{{ cursor }}" style="text-align:center;padding:14px">
