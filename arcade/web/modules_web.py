@@ -5,6 +5,7 @@ on. Background jobs are started once, so they follow a switch at the next restar
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,42 @@ def guard(app, state, admin_check, signed_in) -> None:
             if not modulelib.may_use(settings, mid, audience_of(request, admin_check, signed_in)):
                 return PlainTextResponse("Not on this arcade.", status_code=404, headers=NO_STORE)
         return await call_next(request)
+
+
+def needs(app, state) -> None:
+    """An app that reaches for a switched-off module is told which one (2026-11-08, SadFrog: "warn what other modules
+    are needed when starting an app"; ASHVALE on a Lite node with Rooms off started a new character, because the
+    game never found the Bank that keeps the hero). The page API of a module that is off answers instead of a bare
+    404: its script (/r/realtime.js, /r/llm.js ...) runs and tells the page's viewer, which warns over the app and
+    names the module; its other /r/ calls say which module is off. Nothing of the module's API is defined, so a page
+    that checks for it (window.arcade.realtime) still finds it missing."""
+
+    @app.middleware("http")
+    async def module_off(request: Request, call_next):
+        path = request.url.path
+        if path.startswith("/r/"):
+            mid = modulelib.module_of(path)
+            if mid is not None and not getattr(modulelib.MODULES.get(mid), "core", True):
+                missing = modulelib.off(state.settings())
+                if mid in missing:
+                    return _off_answer(mid, missing[mid], path)
+        return await call_next(request)
+
+
+def _off_answer(mid: str, title: str, path: str) -> Response:
+    said = f"{title} is switched off on this arcade"
+    headers = {**NO_STORE, "Access-Control-Allow-Origin": "*"}
+    if path.endswith(".js"):
+        note = json.dumps({"arcade": "needs", "module": mid})
+        script = (f"// {said}, so {path} is not here (Admin -> Edition & modules).\n"
+                  f"(function () {{\n"
+                  f"  try {{ console.warn({json.dumps(said + ': ' + path + ' is not here.')}); }} catch (e) {{}}\n"
+                  f"  try {{ if (window.parent && window.parent !== window) window.parent.postMessage({note}, '*'); }}"
+                  f" catch (e) {{}}\n"
+                  f"}})();\n")
+        return Response(script, media_type="application/javascript", headers=headers)
+    return JSONResponse({"ok": False, "error": said, "module": mid, "title": title}, status_code=404,
+                        headers=headers)
 
 
 def register(app, state, admin_check, signed_in=None) -> None:
@@ -153,5 +190,6 @@ def register(app, state, admin_check, signed_in=None) -> None:
         return answer()
 
     guard(app, state, admin_check, signed_in)
+    needs(app, state)
     apply = gate(app, state)
     state.apply_modules = apply                            # the console's install and remove (arcade/lite/commands.py)

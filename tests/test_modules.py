@@ -338,3 +338,43 @@ def test_a_new_arcade_starts_neutral_and_an_existing_one_keeps_its_face(tmp_path
     (home / "settings.json").write_text(json.dumps({"auto_update": False}))
     install.write_edition(home, "lite", dry_run=False, fresh=False)        # --edition on an arcade already here
     assert "brand" not in json.loads((home / "settings.json").read_text())
+
+
+# --- an app that needs a module that is off (2026-11-08) -------------------------------------------------------------
+
+
+def test_a_switched_off_modules_page_api_says_which_module_it_is(lite, app_state):
+    """ASHVALE on a Lite node with Rooms off started a new character: /r/realtime.js was a bare 404, so the game never
+    reached the Bank and nobody was told why. Now the script runs and tells the viewer which module is missing, and a
+    read of a module that is off names it."""
+    client = TestClient(lite)
+    assert modulelib.off(app_state.settings())["rooms"] == "Rooms and calls"
+    assert "wallet" not in modulelib.off(app_state.settings())                    # the core is never off
+    js = client.get("/r/realtime.js")
+    assert js.status_code == 200 and js.headers["content-type"].startswith("application/javascript")
+    assert '{"arcade": "needs", "module": "rooms"}' in js.text and "arcade.realtime" not in js.text
+    assert js.headers["cache-control"] == "no-store"                                # comes back the moment it is on
+    swap = client.get("/r/swap.js")
+    assert swap.status_code == 200 and '"module": "exchange"' in swap.text
+    book = client.get("/r/book")
+    assert book.status_code == 404 and book.json()["module"] == "exchange"
+    assert "switched off on this arcade" in book.json()["error"]
+    assert client.get("/r/storage.js").status_code == 200 and "needs" not in client.get("/r/storage.js").text
+    client.post("/admin/api/modules", headers=ADMIN, json={"module": "rooms", "on": True})
+    real = client.get("/r/realtime.js").text
+    assert "arcade.realtime" in real and '"arcade": "needs"' not in real
+    assert "rooms" not in modulelib.off(app_state.settings())
+
+
+def test_the_app_viewer_knows_what_is_off_and_warns_in_its_own_words(lite, app_state):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_games import _inscribe
+    txid = "ab" * 32
+    _inscribe(app_state, txid, 1, "ndTq6goKXGb6JLoRRQPwks2kn6bWeGKX1G", {"game": {"name": "Ashvale"}})
+    client = TestClient(lite)
+    client.post("/admin/api/modules", headers=ADMIN, json={"module": "ords", "on": True})   # the viewer, as on think
+    page = client.get(f"/inscriptions/{txid}/full")
+    assert page.status_code == 200
+    said = page.text.split("var modulesOff = ", 1)[1].split(", needsSaid", 1)[0]
+    assert json.loads(said)["rooms"] == "Rooms and calls"
+    assert "m.arcade === 'needs'" in page.text and "/admin#modules" in page.text

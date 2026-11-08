@@ -342,6 +342,13 @@ def job_on(settings: dict, job: str) -> bool:
     return mid is None or mid in enabled(settings)
 
 
+def off(settings: dict) -> dict[str, str]:
+    """The arcade's own modules that are not running here, by id, with their titles: what an app that reaches for
+    one is told is missing (modules_web.needs, the viewer's warning in _page_doors.js.html)."""
+    on = enabled(settings)
+    return {m.id: m.title for m in _MODULES if not m.core and m.id not in on}
+
+
 def needed_by(mid: str) -> list[str]:
     """The modules that cannot run without `mid`, directly or through another."""
     out: list[str] = []

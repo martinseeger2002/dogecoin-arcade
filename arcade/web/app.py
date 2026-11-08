@@ -3566,6 +3566,8 @@ def create_app(state: AppState) -> FastAPI:
         return "PEP" if where else "PEP TEST"
 
     TEMPLATES.env.globals["coin_of"] = _coin_of
+    # The modules switched off here, {id: title}: the app viewer names the one an app reached for (_page_doors.js.html).
+    TEMPLATES.env.globals["modules_off"] = lambda: modulelib.off(state.settings())
     # An inscription's content: this arcade's own /content/<id>, read from the chain (arcade/doginals.py), 2026-10-15.
     TEMPLATES.env.globals["doginal_content"] = lambda inscription: __import__(
         "arcade.doginals", fromlist=["content_url"]).content_url(str(inscription))

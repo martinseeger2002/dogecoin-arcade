@@ -2701,9 +2701,42 @@
       answer({ok: false, error: 'app: op is state'});
     }
 
+    // AN APP THAT NEEDS A MODULE THAT IS OFF (2026-11-08, SadFrog: "warn what other modules are needed when starting an
+    // app"): the module's script, answered by modules_web.needs while it is off, told us which. Warned over the app,
+    // once per module; the name comes from this page's own list of what is off, never from the message, so a page
+    // cannot put its own words up here.
+    var modulesOff = {{ modules_off()|tojson }}, needsSaid = {};
+    function needsNote(id){
+      if (!Object.prototype.hasOwnProperty.call(modulesOff, id) || needsSaid[id]) return;
+      needsSaid[id] = true;
+      var bar = document.getElementById('arcade-needs');
+      if (!bar) {
+        bar = document.createElement('div'); bar.id = 'arcade-needs'; bar.setAttribute('role', 'alert');
+        bar.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483000;'
+          + 'width:min(640px,calc(100% - 24px));display:flex;flex-direction:column;gap:6px;font:14px/1.4 system-ui,sans-serif';
+        document.body.appendChild(bar);
+      }
+      var row = document.createElement('div');
+      row.style.cssText = 'background:#2b2210;color:#ffe9b8;border:1px solid #d9a636;border-radius:8px;'
+        + 'padding:10px 36px 10px 12px;position:relative;box-shadow:0 4px 16px rgba(0,0,0,.4)';
+      var b = document.createElement('b'); b.textContent = (gameName || 'This app') + ' needs ' + modulesOff[id] + '.';
+      row.appendChild(b);
+      row.appendChild(document.createTextNode(' This arcade has it switched off, so part of the app will not work here'
+        + (id === 'rooms' ? ' (a game cannot reach your saved progress or other players).' : '.') + ' '));
+      var a = document.createElement('a'); a.href = '/admin#modules'; a.target = '_blank'; a.rel = 'noopener';
+      a.style.color = '#ffd36b'; a.textContent = 'Switch it on in Admin \u2192 Edition & modules';
+      row.appendChild(a);
+      row.appendChild(document.createTextNode(' if this is your arcade; otherwise ask its operator.'));
+      var x = document.createElement('button'); x.type = 'button'; x.textContent = '\u00d7'; x.setAttribute('aria-label', 'Close');
+      x.style.cssText = 'position:absolute;right:6px;top:4px;background:none;border:0;color:#ffe9b8;font-size:20px;cursor:pointer';
+      x.onclick = function(){ row.remove(); };
+      row.appendChild(x); bar.appendChild(row);
+    }
+
     window.addEventListener('message', function(e){
       if (!sandbox || e.source !== sandbox.contentWindow) return;
       var m = e.data || {};
+      if (m.arcade === 'needs') { needsNote(String(m.module || '')); return; }
       if (!doors[m.arcade] || typeof m.seq !== 'number') return;
       function answer(body){
         body.arcade = m.arcade; body.seq = m.seq;
