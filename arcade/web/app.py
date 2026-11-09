@@ -13445,6 +13445,13 @@ def create_app(state: AppState) -> FastAPI:
         _set_session(answer, token, request)
         return answer
 
+    def _wait_answer(seconds: int, why: str) -> JSONResponse:
+        """A plain 429 that says how long (2026-11-09, security review): in the words and in Retry-After."""
+        seconds = max(1, int(seconds))
+        said = f"{seconds} seconds" if seconds < 90 else f"{(seconds + 59) // 60} minutes"
+        return JSONResponse({"detail": f"{why}. Wait {said}.", "wait": seconds}, status_code=429,
+                            headers={"Retry-After": str(seconds)})
+
     @app.get("/signin/{tag}")
     def signin_blob(request: Request, tag: str):
         """The encrypted wallet for a name, for the browser to open.
@@ -13457,11 +13464,16 @@ def create_app(state: AppState) -> FastAPI:
         register = state.accounts()
         who = apikeylib.client_ip(request)
         now = int(time.time())
-        if register._rate_limited(f"vault:{who}", now):
-            return JSONResponse(
-                {"detail": "too many in a row. Wait a few minutes."},
-                status_code=429)
+        # Two limits (2026-11-09, security review): this visitor (caller_ip: an edge's header only from loopback),
+        # then this name across every visitor, so a crawl of one name from many addresses is bounded too. Each says
+        # how long to wait. Neither makes a weak password safe: one copy is enough to guess at offline.
+        wait = register.wait_for(f"vault:{who}", now)
+        if wait:
+            return _wait_answer(wait, "too many sign-ins from here in a row")
         register._attempt(f"vault:{who}", now)
+        wait = register.vault_lookup_wait(tag, who, now)
+        if wait:
+            return _wait_answer(wait, "this name's wallet was asked for from too many places this hour")
         found = state.vault().get(tag)
         if found is None:
             # Made on another arcade (2026-10-19: "I shouldn't have to enter a URL for the other Arcade. It
@@ -29519,6 +29531,11 @@ def create_app(state: AppState) -> FastAPI:
         can open it without the password, and nobody can change it without the words. Only a signed record."""
         if _peer_data_limited(request):
             return JSONResponse({"detail": "too many in a row. Wait a few minutes."}, status_code=429)
+        # Sealed with the same password as /signin/{tag}'s wallet, so the same count of places a name went to
+        # (2026-11-09, security review); a visitor that had one may have the other.
+        wait = state.accounts().vault_lookup_wait(tag, apikeylib.client_ip(request), int(time.time()))
+        if wait:
+            return _wait_answer(wait, "this name's wallet was asked for from too many places this hour")
         found = state.vault().get(tag)
         have = state.imported_wallets().get(found["pubkey"]) if found else None
         if not have or not have.get("signed"):

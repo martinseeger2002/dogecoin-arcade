@@ -139,3 +139,66 @@ def test_behind_the_tunnel_each_visitor_has_their_own_sign_in_allowance(client):
     codes = [via.get("/signin/nobody?here=1", headers=one).status_code for _ in range(22)]
     assert codes[-1] == 429, codes
     assert via.get("/signin/nobody?here=1", headers=other).status_code == 404, "the next visitor is not held up"
+
+
+def _through_the_tunnel(page):
+    """A client whose every request arrives from loopback, as the arcade's own tunnel's do."""
+    from fastapi.testclient import TestClient
+    inner = page.app
+
+    async def tunnel(scope, receive, send):
+        await inner({**scope, "client": ("127.0.0.1", 40000)} if scope["type"] == "http" else scope, receive, send)
+    return TestClient(tunnel)
+
+
+def _from(ip):
+    return {"host": "127.0.0.1:8420", "cf-connecting-ip": ip}
+
+
+def test_a_visitor_over_the_sign_in_limit_is_told_how_long_to_wait(client):
+    """2026-11-09, security review: the 429 said "a few minutes"; it says how many, and Retry-After does too."""
+    page, state = client
+    via = _through_the_tunnel(page)
+    answers = [via.get("/signin/nobody?here=1", headers=_from("203.0.113.9")) for _ in range(21)]
+    held = answers[-1]
+    assert [a.status_code for a in answers[:20]] == [404] * 20
+    assert held.status_code == 429, held.text
+    wait = held.json()["wait"]
+    assert 0 < wait <= 300 and held.headers["retry-after"] == str(wait)
+    assert "Wait 5 minutes" in held.json()["detail"], held.json()
+
+
+def test_one_names_sealed_wallet_goes_to_a_bounded_number_of_places_an_hour(client):
+    """2026-11-09, security review: the per-visitor limit held one address, and a name asked for from many addresses
+    was handed out to every one. Now a name goes to VAULT_VISITORS different visitors an hour; a visitor already
+    counted (a second try, the owner's own phone) is let in again, and other names are not held up."""
+    from arcade import accounts as accountslib
+    page, state = client
+    via = _through_the_tunnel(page)
+    many = accountslib.VAULT_VISITORS
+    codes = [via.get("/signin/wanted?here=1", headers=_from(f"198.51.100.{i}")).status_code for i in range(many)]
+    assert codes == [404] * many, codes
+    held = via.get("/signin/wanted?here=1", headers=_from("192.0.2.200"))
+    assert held.status_code == 429, held.text
+    assert 3500 < held.json()["wait"] <= 3600 and held.headers["retry-after"] == str(held.json()["wait"])
+    assert "Wait 60 minutes" in held.json()["detail"]
+    # Its sealed record of imported wallets counts the same places (same password, same guessing).
+    assert via.get("/signin/wanted/imported", headers=_from("192.0.2.200")).status_code == 429
+    assert via.get("/signin/WANTED?here=1", headers=_from("192.0.2.201")).status_code == 429, "any spelling"
+    assert via.get("/signin/wanted?here=1", headers=_from("198.51.100.3")).status_code == 404, \
+        "a visitor already counted signs in again"
+    assert via.get("/signin/someone-else?here=1", headers=_from("192.0.2.200")).status_code == 404
+
+
+def test_a_names_lookup_places_free_up_as_the_hour_passes(client):
+    from arcade import accounts as accountslib
+    _, state = client
+    register = state.accounts()
+    now = 1_800_000_000
+    for i in range(accountslib.VAULT_VISITORS):
+        assert register.vault_lookup_wait("wanted", f"v{i}", now + i) == 0
+    wait = register.vault_lookup_wait("wanted", "late", now + 100)
+    assert wait == accountslib.VAULT_WINDOW - 100, "until the first visitor's lookup is an hour old"
+    assert register.vault_lookup_wait("wanted", "late", now + accountslib.VAULT_WINDOW + 1) == 0
+    register.sweep(now + 1000)
+    assert register.vault_lookup_wait("wanted", "later", now + 1000) > 0, "the sweep keeps an hour of lookups"
