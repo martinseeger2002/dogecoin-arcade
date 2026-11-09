@@ -12806,6 +12806,22 @@ def create_app(state: AppState) -> FastAPI:
                 return True
         return False
 
+    #: What a first claim without its key's proof is told (/account/address, /account/segwit/register, /signup).
+    UNPROVED_CLAIM = "this address was not proved yours: its own key has to sign for it. Reload the page and try again"
+
+    def _claim_unproved(pubkey: str, chain, address: str, kind: str, coin_pubkey, signature) -> bool:
+        """Whether a first claim of `address` on `chain` for account `pubkey` lacks its key's proof (2026-11-09,
+        security review). The proof is /signup's and an imported wallet's (wallet_imports.check_proof): the address's
+        own key signs that it is this account's, on this chain. Before, the first account to post an address nobody
+        here held got it, though anybody else might hold its key."""
+        from .. import wallet_imports
+        try:
+            wallet_imports.check_proof(chain.params, pubkey, chain.network, address, str(coin_pubkey or "").strip(),
+                                       kind, str(signature or "").strip())
+        except wallet_imports.ImportRefused:
+            return True
+        return False
+
     def _account_doge_address(pubkey: str) -> str:
         """The account's Dogecoin address: the one its browser gave, else its Pepecoin mainnet key's twin (the same
         key -- coins.js derives both on coin type 3; _doge_twin). "" when this node runs no Dogecoin or knows neither."""
@@ -13388,9 +13404,16 @@ def create_app(state: AppState) -> FastAPI:
                 continue
             if _check_address(elsewhere, mainnet=other):
                 continue
-            state.set_setting(_address_key(pubkey, other), elsewhere)
             their_key = str(said.get(f"coin_pubkey_{other.network}",
                                      "")).strip().lower()
+            # Proved like the first (2026-11-09, security review): its key signs that it is this account's
+            # (`address_signature_<network>`). One that is not, or another account's, is left for the wallet to
+            # file later at /account/address, which asks the same.
+            if (_claim_unproved(pubkey, other, elsewhere, "p2pkh", their_key,
+                                said.get(f"address_signature_{other.network}"))
+                    or _address_held_by_another(pubkey, other, elsewhere)):
+                continue
+            state.set_setting(_address_key(pubkey, other), elsewhere)
             if their_key:
                 state.set_setting(_coinkey_key(pubkey, other), their_key)
             try:
@@ -26923,6 +26946,12 @@ def create_app(state: AppState) -> FastAPI:
         # mintpad's announced listings, who a payment woke) was written and read as A's on B's address.
         if _address_held_by_another(account.pubkey, chain, address):
             return JSONResponse({"detail": "that address is another account's on this arcade"}, status_code=409)
+        # And a first claim is proved (2026-11-09, security review): an address nobody here holds yet is still
+        # somebody's, so its key signs that it is this account's (wallet_js `claimProof`). The address the account
+        # already has needs nothing new.
+        if address != _account_address(account.pubkey, chain) and _claim_unproved(
+                account.pubkey, chain, address, "p2pkh", said.get("coin_pubkey"), said.get("address_signature")):
+            return JSONResponse({"detail": UNPROVED_CLAIM}, status_code=400)
         state.set_setting(_address_key(account.pubkey, chain), address)
         coin = str(said.get("coin_pubkey", "")).strip().lower()
         if coin:
@@ -28139,9 +28168,11 @@ def create_app(state: AppState) -> FastAPI:
         an UNSIGNED send from this address, but only the holder of the key can
         sign it, so accepting an address here moves nothing and is safe.
 
-        A nested address hides its key hash, so the first registration of one
-        carries `pubkey`: the node checks the address is that key's
-        P2SH-P2WPKH and keeps the key hash to build sends from it."""
+        The first registration of an address carries its `pubkey` and that
+        key's `address_signature` (wallet_imports.check_proof, 2026-11-09): the
+        node checks the address is that key's and the key signed it over to this
+        account. A nested address hides its key hash, which is kept from it to
+        build sends."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
@@ -28166,19 +28197,15 @@ def create_app(state: AppState) -> FastAPI:
         if any(value == addr and name != key and name.startswith("segwit_watch:")
                and name.endswith(f":{chain.network}") for name, value in state.settings().items()):
             return JSONResponse({"detail": "that address is another account's on this arcade"}, status_code=409)
-        if kind == "p2sh-p2wpkh" and not prior:
-            from ..script import p2sh_p2wpkh_address
-            try:
-                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
-            except ValueError:
-                pubkey = b""
-            if len(pubkey) != 33 or p2sh_p2wpkh_address(
-                    chain.params, hash160(pubkey)) != addr:
-                return JSONResponse(
-                    {"detail": "a P2SH-segwit address is registered with the "
-                               "public key it was made from"}, status_code=400)
-            state.set_setting(f"segwit_keyhash:{account.pubkey}:{chain.network}",
-                              hash160(pubkey).hex())
+        # A first registration is proved (2026-11-09, security review), as /account/address: the address's key
+        # (`pubkey`) signs that it is this account's (`address_signature`). That also shows a nested address is that
+        # key's P2SH-P2WPKH, whose key hash is kept to build sends from it.
+        if not prior:
+            if _claim_unproved(account.pubkey, chain, addr, kind, said.get("pubkey"), said.get("address_signature")):
+                return JSONResponse({"detail": UNPROVED_CLAIM}, status_code=400)
+            if kind == "p2sh-p2wpkh":
+                state.set_setting(f"segwit_keyhash:{account.pubkey}:{chain.network}",
+                                  hash160(bytes.fromhex(str(said.get("pubkey")).strip())).hex())
         state.set_setting(key, addr)
         _watch(addr, "account segwit (m/84')" if kind == "p2wpkh"
                else "account segwit (m/49')", chain)

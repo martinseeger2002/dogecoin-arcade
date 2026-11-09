@@ -189,6 +189,7 @@ def test_a_payout_waits_rather_than_pay_one_person_from_anothers_deposit(two_cha
 from fastapi.testclient import TestClient                               # noqa: E402
 from test_account_claim import _sign_in                                 # noqa: E402
 from test_funding import _pubkey, _sign                                 # noqa: E402
+from address_claim import file_address                            # noqa: E402
 from arcade.script import b58check_encode, hash160                      # noqa: E402
 
 
@@ -199,7 +200,7 @@ def person(app, state, which):
     pub = _pubkey(secret)
     test_addr = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(pub))
     main_addr = b58check_encode(state.ledger.params.pubkeyhash_version, hash160(pub))
-    said = who.post("/account/address", json={"address": test_addr, "coin_pubkey": pub.hex()})
+    said = file_address(who, test_addr, secret)
     assert said.status_code == 200, said.text
     # the stand-in mainnet runs regtest's address versions, which /account/address rightly
     # refuses as a mainnet address: written where that route writes a real one

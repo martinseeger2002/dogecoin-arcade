@@ -22,9 +22,9 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_me_page import _seat, public, EDGE            # noqa: F401,E402
+from address_claim import file_address                            # noqa: E402
 
-MAIN = "PiNoqXu5dWsaEhiuoWCHwsZFB1e2CJBNmD"
-TEST = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+from address_claim import MAIN, TEST                              # noqa: E402,F401
 SOMEBODY = "mfvqxFCtMc4sgdgQvBEGnMEVYpiQMqBjE9"
 
 
@@ -48,7 +48,7 @@ def _inscribed(state, owner, *, number=1, txid=None):
 def test_an_account_sees_what_it_holds(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     txid = _inscribed(state, TEST, number=7)
     said = app.get("/account/nfts").json()
     pieces = [p for chain in said["chains"] for p in chain["pieces"]]
@@ -60,7 +60,7 @@ def test_an_account_sees_what_it_holds(client):
 def test_it_does_not_see_somebody_elses(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     _inscribed(state, SOMEBODY, number=9, txid="22" * 32)
     said = app.get("/account/nfts").json()
     pieces = [p for chain in said["chains"] for p in chain["pieces"]]
@@ -71,7 +71,7 @@ def test_a_piece_that_is_not_yours_cannot_be_sent(client):
     """Ownership is the chain's answer, not a hidden field's."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     other = _inscribed(state, SOMEBODY, number=9, txid="33" * 32)
     answer = app.post("/account/nft/send",
                       json={"piece": other, "to": SOMEBODY})
@@ -82,7 +82,7 @@ def test_a_piece_that_is_not_yours_cannot_be_sent(client):
 def test_a_piece_nobody_has_heard_of_is_refused(client):
     app, _ = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     answer = app.post("/account/nft/send",
                       json={"piece": "44" * 32, "to": SOMEBODY})
     assert answer.status_code == 400
@@ -94,7 +94,7 @@ def test_it_will_not_send_to_an_address_on_the_other_chain(client):
     from a piece going somewhere nobody can reach."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     mine = _inscribed(state, TEST, number=11, txid="55" * 32)
     answer = app.post("/account/nft/send", json={"piece": mine, "to": MAIN})
     assert answer.status_code == 400
@@ -104,7 +104,7 @@ def test_it_will_not_send_to_an_address_on_the_other_chain(client):
 def test_it_will_not_send_a_piece_to_itself(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     mine = _inscribed(state, TEST, number=12, txid="66" * 32)
     answer = app.post("/account/nft/send", json={"piece": mine, "to": TEST})
     assert answer.status_code == 400
@@ -142,7 +142,7 @@ def test_the_public_nfts_page_offers_the_account_s_inscribe(public):
     """
     app, _ = public
     _seat(app)
-    app.post("/account/address", json={"address": TEST}, headers=EDGE)
+    file_address(app, TEST, headers=EDGE)
     body = app.get("/nfts", headers=EDGE).text
     assert 'id="inscribe-it"' in body and 'id="run-start"' in body
     assert "/account/inscribe" in body and "/account/run/plan" in body
@@ -188,7 +188,7 @@ def test_the_run_list_is_asked_the_way_the_route_is_built(client):
 
     app, _ = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     assert app.get("/account/run").status_code != 200, "this route is a post"
     assert "runs" in app.post("/account/run").json()
     shared = pathlib.Path("arcade/web/templates"
@@ -238,7 +238,7 @@ def test_only_the_holder_can_price_a_piece(client):
     from anybody else and this refuses it before that."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     other = _inscribed(state, SOMEBODY, number=21, txid="77" * 32)
     answer = app.post("/account/nft/sell",
                       json={"piece": other, "amount": "10"})
@@ -249,7 +249,7 @@ def test_only_the_holder_can_price_a_piece(client):
 def test_a_price_of_nothing_is_refused(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     mine = _inscribed(state, TEST, number=22, txid="88" * 32)
     answer = app.post("/account/nft/sell", json={"piece": mine, "amount": ""})
     assert answer.status_code == 400
@@ -261,7 +261,7 @@ def test_taking_the_price_off_is_the_same_handshake(client):
     and that is the right place for it to stop."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     mine = _inscribed(state, TEST, number=23, txid="99" * 32)
     answer = app.post("/account/nft/sell",
                       json={"piece": mine, "unlist": True})
@@ -285,7 +285,7 @@ def test_the_wallet_tab_reads_collections_then_pages_one(client):
     items in our collections". Grouped and counted by the node, then paged."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     for n in range(1, 6):
         txid = f"{n:02x}" * 32
         _inscribed(state, TEST, number=n, txid=txid)
@@ -311,7 +311,7 @@ def test_the_wallet_tab_reads_collections_then_pages_one(client):
 def test_nobody_elses_pieces_are_in_the_collections(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     _inscribed(state, SOMEBODY, number=9, txid="77" * 32)
     said = app.get(f"/account/nfts/collections?chain={state.messaging.network}").json()
     assert said["collections"] == []

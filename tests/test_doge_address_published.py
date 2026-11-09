@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                                 # noqa: F401,E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade.messaging import envelope as E                             # noqa: E402
 
@@ -63,8 +64,8 @@ def test_a_key_published_before_dogecoin_counts_as_not_published_so_the_page_pub
     net = state.messaging.network
     home = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(_pubkey(int("41" * 32, 16))))
     doge = b58check_encode(30, hash160(_pubkey(int("42" * 32, 16))))
-    assert app.post("/account/address", json={"address": home, "chain": net}).status_code == 200
-    assert app.post("/account/address", json={"address": doge, "chain": "doge"}).status_code == 200
+    assert file_address(app, home, int("41" * 32, 16), chain=net).status_code == 200
+    assert file_address(app, doge, int("42" * 32, 16), chain="doge").status_code == 200
     with state.store() as store:
         store.add_key_announcement("b1" * 32, home, KEY, "fp", 100, 1, stated=True)      # mined, no Dogecoin address
     said = app.get("/account").json()

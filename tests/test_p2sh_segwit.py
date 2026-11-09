@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_node2_segwit_app import _ready, THEIRS                 # noqa: E402
+from address_claim import register_segwit                         # noqa: E402
 from test_funding import _pubkey                                 # noqa: E402
 
 import pytest                                                    # noqa: E402
@@ -83,12 +84,12 @@ def test_assemble_pushes_the_redeem_script_and_witnesses_the_signature():
 
 def test_register_needs_the_pubkey_the_address_is_made_from(client, monkeypatch):
     app, _, _ = _ready(client, monkeypatch)
-    for bad in ({}, {"pubkey": "02" * 33}, {"pubkey": "zz"}):
+    # the key alone is not enough since 2026-11-09: it signs that the address is this account's (address_claim)
+    for bad in ({}, {"pubkey": "02" * 33}, {"pubkey": "zz"}, {"pubkey": PUB.hex()}):
         r = app.post("/account/segwit/register",
                      json={"chain": "ltctest", "address": NESTED, **bad})
         assert r.status_code == 400, (bad, r.text)
-    r = app.post("/account/segwit/register",
-                 json={"chain": "ltctest", "address": NESTED, "pubkey": PUB.hex()})
+    r = register_segwit(app, NESTED, int("49" * 32, 16), chain="ltctest")
     assert r.status_code == 200 and r.json()["kind"] == "p2sh-p2wpkh", r.text
     # once registered, a locked wallet (no pubkey) may say it again
     assert app.post("/account/segwit/register",
@@ -98,11 +99,8 @@ def test_register_needs_the_pubkey_the_address_is_made_from(client, monkeypatch)
 def test_nested_and_native_are_registered_side_by_side(client, monkeypatch):
     app, _, _ = _ready(client, monkeypatch)
     native = script.p2wpkh_address(P, script.hash160(_pubkey(int("84" * 32, 16))))
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": native}).status_code == 200
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": NESTED,
-                          "pubkey": PUB.hex()}).status_code == 200
+    assert register_segwit(app, native, int("84" * 32, 16), chain="ltctest").status_code == 200
+    assert register_segwit(app, NESTED, int("49" * 32, 16), chain="ltctest").status_code == 200
     other = script.p2sh_p2wpkh_address(P, script.hash160(_pubkey(int("48" * 32, 16))))
     r = app.post("/account/segwit/register",
                  json={"chain": "ltctest", "address": other,
@@ -112,9 +110,7 @@ def test_nested_and_native_are_registered_side_by_side(client, monkeypatch):
 
 def test_send_from_the_nested_address_builds_a_bip143_offer(client, monkeypatch):
     app, state, chain = _ready(client, monkeypatch)
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": NESTED,
-                          "pubkey": PUB.hex()}).status_code == 200
+    assert register_segwit(app, NESTED, int("49" * 32, 16), chain="ltctest").status_code == 200
     with state.token_index(chain).open() as db:
         db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",
                         ("ef" * 32, 0, NESTED, 3 * 100_000_000, 1))
@@ -159,10 +155,8 @@ TO_TAPROOT = script.segwit_encode("tltc", 1, bytes(range(32)))
 
 
 def _three_funded(app, state, chain):
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": NESTED, "pubkey": PUB.hex()}).status_code == 200
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": NATIVE}).status_code == 200
+    assert register_segwit(app, NESTED, int("49" * 32, 16), chain="ltctest").status_code == 200
+    assert register_segwit(app, NATIVE, int("84" * 32, 16), chain="ltctest").status_code == 200
     with state.token_index(chain).open() as db:
         for n, addr in enumerate((LEGACY_FROM, NESTED, NATIVE)):
             db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",

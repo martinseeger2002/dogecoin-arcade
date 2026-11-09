@@ -33,6 +33,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_account_claim import _catch_up, _sign_in                   # noqa: E402
 from test_funding import _pubkey, _sign                              # noqa: E402
 from test_web import app_state, client                               # noqa: F401,E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import encoding, fees, funding, inscriptions as I        # noqa: E402
 from arcade import payload as P, utxos                               # noqa: E402
@@ -92,8 +93,7 @@ def _seated(app, state, rpc, which: int, coins=(4.0, 1.0)):
         "the node has no key for this address, which is the whole point"
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    assert app.post("/account/address", json={
-        "address": mine, "coin_pubkey": pubkey.hex()}).status_code == 200
+    assert file_address(app, mine, secret).status_code == 200
     for amount in coins:
         rpc.call("sendtoaddress", mine, amount)
     rpc.call("generate", 1)

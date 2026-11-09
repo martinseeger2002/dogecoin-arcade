@@ -12,6 +12,7 @@ from test_web import app_state, client                          # noqa: F401,E40
 from test_me_page import _seat                                   # noqa: E402
 from test_litecoin_testnet import _with_ltc_test                  # noqa: E402
 from test_funding import _pubkey                                 # noqa: E402
+from address_claim import file_address, register_segwit           # noqa: E402
 
 from arcade import funding, script                               # noqa: E402
 from arcade.config import NETWORKS                               # noqa: E402
@@ -28,17 +29,18 @@ def _ready(client, monkeypatch):
     chain = _with_ltc_test(state, monkeypatch, ready=True)
     _seat(app)
     # as sign-up leaves it: a P test coin address, whose L test twin is the account's legacy L test address
-    pep_test = script.b58check_encode(113, script.hash160(_pubkey(int("36" * 32, 16))))
-    assert app.post("/account/address", json={"address": pep_test}).status_code == 200
+    pep_test = script.b58check_encode(state.messaging.params.pubkeyhash_version,
+                                      script.hash160(_pubkey(int("36" * 32, 16))))
+    assert file_address(app, pep_test, int("36" * 32, 16)).status_code == 200
     ltc_test = script.b58check_encode(111, script.hash160(_pubkey(int("36" * 32, 16))))
-    r = app.post("/account/address", json={"address": ltc_test, "chain": "ltctest"})
+    r = file_address(app, ltc_test, int("36" * 32, 16), chain="ltctest")
     assert r.status_code == 200, r.text
     return app, state, chain
 
 
 def test_register_watches_the_segwit_address_and_balance_reads_it(client, monkeypatch):
     app, state, chain = _ready(client, monkeypatch)
-    said = app.post("/account/segwit/register", json={"chain": "ltctest", "address": MINE})
+    said = register_segwit(app, MINE, int("35" * 32, 16), chain="ltctest")
     assert said.status_code == 200, said.text
     assert said.json()["watching"] == MINE
     bal = app.get("/account/segwit/balance", params={"address": MINE, "network": "ltctest"}).json()
@@ -54,10 +56,9 @@ def test_register_refuses_what_is_not_a_native_segwit_address_here(client, monke
 
 def test_register_takes_one_segwit_address_per_account_and_chain(client, monkeypatch):
     """The cap on the gap: an account cannot grow the watch list with strangers'
-    addresses. (It still never proves it holds the m/84' key.)"""
+    addresses. (And since 2026-11-09 its first registration proves it holds the m/84' key.)"""
     app, _, _ = _ready(client, monkeypatch)
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": MINE}).status_code == 200
+    assert register_segwit(app, MINE, int("35" * 32, 16), chain="ltctest").status_code == 200
     assert app.post("/account/segwit/register",
                     json={"chain": "ltctest", "address": MINE}).status_code == 200
     for n in range(3):
@@ -68,7 +69,7 @@ def test_register_takes_one_segwit_address_per_account_and_chain(client, monkeyp
 
 def test_send_from_the_segwit_address_builds_a_bip143_offer(client, monkeypatch):
     app, state, chain = _ready(client, monkeypatch)
-    assert app.post("/account/segwit/register", json={"chain": "ltctest", "address": MINE}).status_code == 200
+    assert register_segwit(app, MINE, int("35" * 32, 16), chain="ltctest").status_code == 200
     index = state.token_index(chain)
     with index.open() as db:
         db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",
@@ -108,8 +109,7 @@ def test_send_from_refuses_a_non_segwit_from(client, monkeypatch):
 
 def test_send_from_refuses_a_segwit_address_this_account_never_registered(client, monkeypatch):
     app, _, _ = _ready(client, monkeypatch)
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": MINE}).status_code == 200
+    assert register_segwit(app, MINE, int("35" * 32, 16), chain="ltctest").status_code == 200
     r = app.post("/account/send", json={"to": THEIRS, "amount": "1", "chain": "ltctest",
                                         "from": SOMEONE})
     assert r.status_code == 400 and "register" in r.json()["detail"], r.text

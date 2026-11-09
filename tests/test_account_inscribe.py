@@ -24,6 +24,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_account_claim import _catch_up, _sign_in                # noqa: E402
 from test_funding import _pubkey, _sign                           # noqa: E402
 from test_web import app_state, client                            # noqa: E402,F401
+from address_claim import file_address                            # noqa: E402
 
 from arcade.script import b58check_encode, hash160                 # noqa: E402
 
@@ -72,8 +73,7 @@ def seated(arcade):
     # The coin key travels with the address because a Class B payload puts
     # the sender's key into every data output, and the node cannot derive it:
     # the one thing it is not allowed to have is the key itself.
-    assert app.post("/account/address", json={
-        "address": mine, "coin_pubkey": pubkey.hex()}).status_code == 200
+    assert file_address(app, mine, SECRET).status_code == 200
     rpc.call("sendtoaddress", mine, 4.0)
     rpc.call("generate", 1)
     _catch_up(state, rpc)

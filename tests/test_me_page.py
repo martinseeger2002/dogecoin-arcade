@@ -14,6 +14,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
+from address_claim import TEST, file_address                      # noqa: E402
 
 LOCAL = {"host": "127.0.0.1:8420"}
 
@@ -324,8 +325,7 @@ def test_reading_an_account_tops_it_back_up(client, monkeypatch):
 
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"},
-             headers=LOCAL)
+    file_address(app, TEST, headers=LOCAL)
     asked = []
     monkeypatch.setattr(faucetlib, "top_off",
                         lambda chain, faucet, pubkey, address, spendable, now=None:
@@ -335,7 +335,7 @@ def test_reading_an_account_tops_it_back_up(client, monkeypatch):
         if asked:
             break
         _time.sleep(0.05)
-    assert asked and asked[0] == ("mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg", 0)
+    assert asked and asked[0] == (TEST, 0)
 
 
 def test_one_create_tab_and_backup_on_the_wallet_page(public):

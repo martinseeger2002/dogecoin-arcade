@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_funding import _pubkey, _sign                          # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import tags as taglib, utxos                         # noqa: E402
 from arcade.db import StateDB                                    # noqa: E402
@@ -127,7 +128,7 @@ def test_an_account_claims_a_name_with_a_key_the_node_never_saw(arcade):
     # believes the rest, because only the machine that made it can say.
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    told = app.post("/account/address", json={"address": mine})
+    told = file_address(app, mine, SECRET)
     assert told.status_code == 200, told.text
 
     # With no coins there is nothing to build, and it says so rather than
@@ -188,7 +189,7 @@ def test_an_offer_cannot_be_signed_twice(arcade):
                            hash160(pubkey))
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    app.post("/account/address", json={"address": mine})
+    file_address(app, mine, SECRET + 1)
     rpc.call("sendtoaddress", mine, 4.0)
     rpc.call("generate", 1)
     _catch_up(state, rpc)
@@ -215,7 +216,7 @@ def test_an_offer_belongs_to_the_account_that_asked_for_it(arcade):
                            hash160(pubkey))
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    app.post("/account/address", json={"address": mine})
+    file_address(app, mine, SECRET + 2)
     rpc.call("sendtoaddress", mine, 4.0)
     rpc.call("generate", 1)
     _catch_up(state, rpc)
@@ -237,7 +238,7 @@ def test_a_name_already_taken_is_refused_before_anything_is_paid_for(arcade):
                            hash160(pubkey))
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    app.post("/account/address", json={"address": mine})
+    file_address(app, mine, SECRET + 3)
     rpc.call("sendtoaddress", mine, 4.0)
     rpc.call("generate", 1)
     index = _catch_up(state, rpc)
@@ -256,7 +257,7 @@ def test_a_name_already_taken_is_refused_before_anything_is_paid_for(arcade):
     other = _pubkey(SECRET + 4)
     theirs = b58check_encode(state.messaging.params.pubkeyhash_version,
                              hash160(other))
-    app.post("/account/address", json={"address": theirs})
+    file_address(app, theirs, SECRET + 4)
     rpc.call("sendtoaddress", theirs, 4.0)
     rpc.call("generate", 1)
     _catch_up(state, rpc)
@@ -273,7 +274,7 @@ def test_a_name_that_is_not_a_name_is_refused(arcade):
                            hash160(pubkey))
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    app.post("/account/address", json={"address": mine})
+    file_address(app, mine, SECRET + 5)
     for bad in ("", "a b", "@@", "x" * 40, "Мартин"):
         refused = app.post("/account/claim", json={"tag": bad})
         assert refused.status_code == 400, bad
@@ -304,7 +305,7 @@ def test_a_key_in_the_mempool_is_not_yet_a_key_on_the_chain(arcade):
                            hash160(_pubkey(SECRET + 6)))
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    app.post("/account/address", json={"address": mine})
+    file_address(app, mine, SECRET + 6)
     assert app.get("/account").json()["address"] == mine
 
     key = bytes.fromhex(login)          # shape only; nothing is encrypted here
@@ -351,7 +352,7 @@ def test_a_payment_the_index_has_read_is_not_also_on_its_way(arcade):
                              hash160(_pubkey(SECRET + 8)))
     rpc.call("generate", 101)
     _catch_up(state, rpc)
-    app.post("/account/address", json={"address": mine})
+    file_address(app, mine, SECRET + 7)
     rpc.call("sendtoaddress", mine, 4.0)
     rpc.call("generate", 1)
     _catch_up(state, rpc)

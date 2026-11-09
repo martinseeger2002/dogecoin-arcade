@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_funding import _pubkey, _sign                          # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import utxos                                         # noqa: E402
 from arcade.messaging import feed as feedlib                     # noqa: E402
@@ -114,8 +115,7 @@ def account(arcade):
                            hash160(pubkey))
     rpc.call("generate", 120)
     _catch_up(state)
-    app.post("/account/address", json={"address": mine,
-                                       "coin_pubkey": pubkey.hex()})
+    file_address(app, mine, SECRET)
     rpc.call("sendtoaddress", mine, 20.0)
     rpc.call("generate", 1)
     _catch_up(state)

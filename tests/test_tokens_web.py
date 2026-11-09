@@ -17,12 +17,13 @@ from fastapi.testclient import TestClient
 
 from arcade.config import NETWORKS
 from arcade.rpc import RpcClient
-from arcade.script import b58check_encode, hash160
+from arcade.script import b58check_encode
 from arcade.web import app as app_module
 from arcade.web.app import create_app
 from arcade.web.state import AppState, ChainContext
 from arcade.web.watcher import BlockWatcher
 from test_end_to_end import chain  # noqa: F401  (fixture re-export)
+from address_claim import file_address, keyed                      # noqa: E402,F401
 
 
 @dataclasses.dataclass
@@ -700,11 +701,10 @@ def test_the_you_pill_on_a_holders_row_names_whoever_is_looking(web):
     assert app.post("/auth/login", json={
         "pubkey": key.verify_key.encode().hex(), "nonce": challenge["nonce"],
         "signature": signature.hex(), "join": True}).status_code == 200
-    theirs = b58check_encode(state.ledger.params.pubkeyhash_version,
-                             hash160(key.verify_key.encode()))
+    theirs, coin = keyed(state.ledger.network, 0x7e1, params=state.ledger.params)
     assert not node.rpc.call("validateaddress", theirs).get("ismine"), \
         "the node has no key for this address, which is the whole point"
-    assert app.post("/account/address", json={"address": theirs}).status_code == 200
+    assert file_address(app, theirs, coin).status_code == 200
 
     send = dict(csrf_token=csrf, sender=alice, property_id=str(pid))
     txid = shown(app.post("/tokens/send", data={**send, "amount": "400",

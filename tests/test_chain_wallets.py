@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                                 # noqa: F401,E402
+from address_claim import file_address, keyed                     # noqa: E402
 
 from arcade.messaging import envelope as E                             # noqa: E402
 from arcade.web import door                                            # noqa: E402
@@ -116,8 +117,8 @@ def test_an_announcement_without_litecoin_is_published_again(client, monkeypatch
     net = state.messaging.network
     home = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(_pubkey(int("41" * 32, 16))))
     ltc = b58check_encode(48, hash160(_pubkey(int("43" * 32, 16))))
-    assert app.post("/account/address", json={"address": home, "chain": net}).status_code == 200
-    assert app.post("/account/address", json={"address": ltc, "chain": "ltc"}).status_code == 200
+    assert file_address(app, home, int("41" * 32, 16), chain=net).status_code == 200
+    assert file_address(app, ltc, int("43" * 32, 16), chain="ltc").status_code == 200
     with state.store() as store:
         store.add_key_announcement("c1" * 32, home, KEY, "fp", 100, 1, stated=True)          # before Litecoin
     said = app.get("/account").json()
@@ -133,13 +134,12 @@ def test_a_litecoin_arrival_is_named_ltc_and_its_list_starts_where_the_index_doe
     and a watch filed before its index held a block starts at the index's first block."""
     from test_me_page import _seat
     from test_litecoin_network import _with_ltc
-    from arcade.script import b58check_encode
     from arcade import utxos
     app, state = client
     ltc = _with_ltc(state, monkeypatch, ready=True)
     _seat(app)
-    address = b58check_encode(48, bytes(range(20)))
-    assert app.post("/account/address", json={"address": address, "chain": "ltc"}).status_code == 200
+    address, _ = keyed("ltc", 0x4c7c)
+    assert file_address(app, address, chain="ltc").status_code == 200
     chains = app.get("/account").json()["chains"]
     assert next(c for c in chains if c["network"] == "ltc")["coin"] == "LTC"
     page = app.get("/me/wallet").text
@@ -162,12 +162,11 @@ def test_a_wallets_balance_is_read_only_when_it_is_asked_for(client, monkeypatch
     other comes back with its address and `"lazy": true`, no balance, until asked for by `?chains=` (or `all`)."""
     from test_me_page import _seat
     from test_litecoin_network import _with_ltc
-    from arcade.script import b58check_encode
     app, state = client
     _with_ltc(state, monkeypatch, ready=True)
     _seat(app)
-    address = b58check_encode(48, bytes(range(20)))
-    assert app.post("/account/address", json={"address": address, "chain": "ltc"}).status_code == 200
+    address, _ = keyed("ltc", 0x4c7c)
+    assert file_address(app, address, chain="ltc").status_code == 200
     ltc = lambda said: next(c for c in said["chains"] if c["network"] == "ltc")      # noqa: E731
     lazy = ltc(app.get("/account").json())
     assert lazy["lazy"] is True and lazy["balance"] is None and lazy["address"] == address

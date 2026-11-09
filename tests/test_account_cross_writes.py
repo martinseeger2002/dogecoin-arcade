@@ -28,6 +28,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_funding import _pubkey                                 # noqa: E402
 from test_web import app_state                                   # noqa: F401,E402
+from address_claim import file_address, register_segwit           # noqa: E402
 
 from arcade.config import NETWORKS                               # noqa: E402
 from arcade.script import b58check_encode, hash160               # noqa: E402
@@ -129,12 +130,12 @@ def test_no_account_route_writes_another_accounts_things(app_state, where):
     a_pub = _sign_in(a, asks)
 
     # B's own things, each kept under B's sign-in key.
-    test = NETWORKS["test"]
+    test = state.messaging.params
     b_addr = b58check_encode(test.pubkeyhash_version, hash160(_pubkey(int("b0" * 32, 16))))
-    b_coin = _pubkey(int("b1" * 32, 16)).hex()
-    assert b.post("/account/address", headers=LOCAL, json={"address": b_addr, "coin_pubkey": b_coin}).status_code == 200
+    b_coin = _pubkey(int("b0" * 32, 16)).hex()
+    assert file_address(b, b_addr, int("b0" * 32, 16), headers=LOCAL).status_code == 200
     a_addr = b58check_encode(test.pubkeyhash_version, hash160(_pubkey(int("a0" * 32, 16))))
-    assert a.post("/account/address", headers=asks, json={"address": a_addr}).status_code == 200
+    assert file_address(a, a_addr, int("a0" * 32, 16), headers=asks).status_code == 200
     made = b.post("/account/keys", headers=LOCAL, json={"name": "b's key"})
     b_kid = str(made.json().get("kid") or made.json().get("id") or "") if made.status_code == 200 else ""
     b_llm = ""
@@ -190,11 +191,11 @@ def test_an_account_cannot_file_another_accounts_address_as_its_own(app_state):
     app = create_app(app_state)
     a, b = TestClient(app), TestClient(app)
     a_pub, b_pub = _sign_in(a, LOCAL), _sign_in(b, LOCAL)
-    test = NETWORKS["test"]
+    test = app_state.messaging.params
     b_addr = b58check_encode(test.pubkeyhash_version, hash160(_pubkey(int("b0" * 32, 16))))
     a_addr = b58check_encode(test.pubkeyhash_version, hash160(_pubkey(int("a0" * 32, 16))))
-    assert b.post("/account/address", json={"address": b_addr}).status_code == 200
-    assert a.post("/account/address", json={"address": a_addr}).status_code == 200
+    assert file_address(b, b_addr, int("b0" * 32, 16)).status_code == 200
+    assert file_address(a, a_addr, int("a0" * 32, 16)).status_code == 200
     r = a.post("/account/address", json={"address": b_addr})
     assert r.status_code == 409 and "another account" in r.json()["detail"], r.text
     assert app_state.setting(f"address:{a_pub}") == a_addr and app_state.setting(f"address:{b_pub}") == b_addr
@@ -218,9 +219,8 @@ def test_an_account_cannot_register_another_accounts_segwit_address(app_state, m
     native = script.p2wpkh_address(p, hash160(_pubkey(int("84" * 32, 16))))
     nested_key = _pubkey(int("49" * 32, 16))
     nested = script.p2sh_p2wpkh_address(p, hash160(nested_key))
-    assert b.post("/account/segwit/register", json={"chain": "ltctest", "address": native}).status_code == 200
-    assert b.post("/account/segwit/register", json={"chain": "ltctest", "address": nested,
-                                                    "pubkey": nested_key.hex()}).status_code == 200
+    assert register_segwit(b, native, int("84" * 32, 16), chain="ltctest").status_code == 200
+    assert register_segwit(b, nested, int("49" * 32, 16), chain="ltctest").status_code == 200
     r = a.post("/account/segwit/register", json={"chain": "ltctest", "address": native})
     assert r.status_code == 409 and "another account" in r.json()["detail"], r.text
     r = a.post("/account/segwit/register", json={"chain": "ltctest", "address": nested, "pubkey": nested_key.hex()})

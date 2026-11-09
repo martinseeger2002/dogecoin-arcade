@@ -20,6 +20,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_me_page import _seat                                   # noqa: E402
 from test_litecoin_testnet import _with_ltc_test                  # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec, utils   # noqa: E402
@@ -202,7 +203,7 @@ def test_another_account_cannot_read_or_spend_your_imported_address(client, monk
 def test_a_send_from_an_imported_wallet_takes_only_its_coins_and_gives_change_back_to_it(client, monkeypatch):
     app, state, chain, account = _ready(client, monkeypatch)
     main = script.b58check_encode(111, script.hash160(_key(0x7000)[1]))
-    assert app.post("/account/address", json={"address": main, "chain": "ltctest"}).status_code == 200
+    assert file_address(app, main, 0x7000, chain="ltctest").status_code == 200
     imported = _proof(account, 0x7001)
     assert app.post("/account/imported/address", json=imported).status_code == 200
     with state.token_index(chain).open() as db:

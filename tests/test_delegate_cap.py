@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                               # noqa: F401,E402
 from test_trade_tab import run_wallet_js                              # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import node_trader as NT, trade as T                     # noqa: E402
 
@@ -203,6 +204,6 @@ def test_an_accounts_exchange_page_carries_the_warning(client):
     app, state = client
     _seat(app)
     mine = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(_pubkey(int("31" * 32, 16))))
-    assert app.post("/account/address", json={"address": mine, "chain": state.messaging.network}).status_code == 200
+    assert file_address(app, mine, int("31" * 32, 16), chain=state.messaging.network).status_code == 200
     page = app.get("/exchange?tab=swaps").text
     assert "HELD_WORDS" in page and "This arcade holds this order's key while it trades for you" in page
