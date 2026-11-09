@@ -24,7 +24,12 @@ button{font:inherit;font-weight:600;padding:10px 20px;border-radius:999px;border
   <h1>The arcade can't be reached</h1>
   <p>Your phone is offline, or the arcade's node is. Nothing is lost: your messages and
     coins live on the chain, not on this phone.</p>
-  <button type="button" onclick="location.reload()">Try again</button>
+  <button type="button" id="again">Try again</button>
 </div>
+{#- Inline with the page's nonce, so the copy the service worker keeps works with no network (sw.js): the cached
+    answer carries its own header and its own nonce together. -#}
+<script nonce="{{ csp_nonce }}">
+document.getElementById('again').addEventListener('click', function () { location.reload(); });
+</script>
 </body>
 </html>

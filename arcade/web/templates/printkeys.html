@@ -12,7 +12,7 @@
   </div>
 
   <div class="row noprint" style="margin:16px 0">
-    <button type="button" onclick="window.print()">Print this page</button>
+    <button type="button" id="print-keys">Print this page</button>
     <span class="muted" style="font-size:.86rem">This page exists only in this tab.
       Closing it is enough &mdash; nothing was written to disk.</span>
   </div>
@@ -48,4 +48,7 @@ table.keys td.key{font-weight:600}
   a[href]:after{content:""}
 }
 </style>
+<script nonce="{{ csp_nonce }}">
+document.getElementById('print-keys').addEventListener('click', function () { window.print(); });
+</script>
 {% endblock %}
