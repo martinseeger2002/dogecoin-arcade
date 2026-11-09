@@ -735,7 +735,9 @@ def test_removing_the_picture_forgets_the_sizes(phone):
             if len(browser.execute_script(READ_SIZES)["labels"]) == 3:
                 break
             time.sleep(0.5)
-        browser.execute_script("clearPick()")
+        # The Remove button's own listener (messages.html), clicked in the page: in the phone frame it sits below the
+        # bottom of the headless window, where a pointer click lands on nothing.
+        browser.execute_script("arguments[0].click()", browser.find_element(By.ID, "picked-clear"))
         time.sleep(0.3)
         state = browser.execute_script(READ_SIZES)
         assert state["labels"] == [] and state["name"] is None
@@ -799,13 +801,13 @@ def test_clicking_a_picture_opens_it_rather_than_downloading_it(phone):
     visit, peer = phone
     browser = visit(f"/messages/{peer}")
     try:
-        # Put a picture in the conversation the way a received one looks.
+        # Put a picture in the conversation the way a received one looks (messages.html: the page's own listener
+        # opens it, no inline handler since the script policy, 2026-11-09).
         browser.execute_script("""
             const row = document.createElement('div');
             row.className = 'bubble-row theirs';
             row.innerHTML = '<div class="bubble"><a class="media" id="shot"' +
-              ' href="/x?download=1" onclick="arcadeOpenImage(\\'/x\\', \\'cat.jpg\\',' +
-              ' \\'/x?download=1\\'); return false">' +
+              ' href="/x?download=1" data-open-image="/x" data-name="cat.jpg">' +
               '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="cat.jpg">' +
               '</a></div>';
             (document.querySelector('.bubbles') || document.body)
