@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/dgb-staging-tests` (on `main` 50182a46) · DigiByte staging checks, two fixes
+
+Staging checks from the security review, against DigiByte Core 9.26.7 on regtest (`tests/test_dgb_staging_regtest.py`,
+skipped without `digibyted` or `node`; the mini has it in `~/pytmp/bin` now). Four commits:
+
+- **fdbf4e65 the checks.** coins.js, Python and Core's `deriveaddresses` agree on legacy, P2SH-P2WPKH and native SegWit
+  for m/44', m/49', m/84' (coin types 3 and 1). A send from each kind goes through `/account/send`, coins.js
+  `verifyOffer` + `signInput` (`tests/js/dgb_staging.mjs`) and `/account/sign`. Core's `testmempoolaccept` allows each
+  one, and `decoderawtransaction` shows the payee (a P2SH one too), amount and fee that verifyOffer showed. The restore
+  kit's printed lines open the words in a fresh Core: it finds and spends all four kinds. An index credit from a
+  reorged-away block is taken back.
+- **1c2ed6f9 fix: a lock a reorg left nowhere.** Core still finds a lock in a stale block, at 0 confirmations, so
+  `node_trader.observe` read it as a lock in the mempool. A zero-conf swap then locked its side against it. It is now
+  no lock. Rule 9 in exchange-safety.md says so, and that `swap_confirm_all` does not reach a swap between two test
+  chains.
+- **d351f456 fix: another account's address.** `/account/address` and `/account/segwit/register` took any address of
+  the chain's shape, so account A could file B's. They now answer 409 for an address another account holds.
+  *Still open:* nothing proves a first claim; `/signup`'s `check_proof` would need wallet_js `tellTheNode` to sign.
+- **083f6fb2 the sweep** (`tests/test_account_cross_writes.py`). All 158 /account write routes are asked as A with
+  B's ids, from here and from outside. Nothing of B's changes.
+
+Not fixed, seen on the way: `/account/mintpad/announced` files a new setting for any collection name it is sent.
+Seven routes answer 500 on a wrongly shaped body (bundle/fill, dust/sweep, fill, fill/sign, list/sign, mailbox,
+trade/facts).
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/mesh-proxy-visitor` (on `main` 50182a46) · the mesh port's pass-through names the caller it knows
 
 From the outside security review. One commit, 4c9ec6f7.
