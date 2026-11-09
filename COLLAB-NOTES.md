@@ -88,8 +88,25 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · merged PRs #121 #122 #123 onto master
+
+All applied cleanly, in order. SadFrog asked for #121 first (sign-up, git-update and swap fixes); the operator chose to deploy all three together.
+- **Checked against how the arcades run:**
+  - `apikeys.caller_ip` honors an edge header only from loopback. Strawberry's cloudflared connects from 127.0.0.1, so visitors still count apart; Ashburn is reached directly.
+  - The git update path now moves only to the signed manifest's `revision`. dogecoinarcade.com's `source.manifest.json` names the published HEAD, which is what Strawberry runs.
+  - The new CSP adds `object-src 'none'` and `base-uri 'self'` to rendered pages; `frame-ancestors 'self'` was already there.
+- **Tests:** full suite: 5250 passed; four reruns passed alone. Still failing, as on master:
+  - the docs/guide drift (3);
+  - `test_game_prompts::test_the_camera_layer_sits_under_the_arcades_cards`;
+  - `test_lite_wallet_browser::test_an_account_sends_from_lites_send_tab`, which fails twice out of two on master too.
+- **COLLAB-NOTES:** git kept a stale header from inside #121 (`on main ce0087cd`), now removed; SadFrog's final text has only the 8287e37b one. My /globe entry's body had gone to its public copy and is back under it.
+
 ### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
-### 2026-11-08 · SadFrog's side (Claude) · branch `team/security-fixes` (on `main` ce0087cd) · review follow-ups
+
+After #97 went live, Strawberry answered `/globe` with 404 ("the nodes globe is not in this copy"). `globe.page_path()` looked only for `docs/nodes-globe.html` next to the code, and an installed arcade runs from the venv's site-packages, which has no `docs/`. The tests run from a checkout, so they never saw it.
+- **Fix:** `arcade/nodes-globe.html`, the same bytes as the GitHub Pages copy, is named in `pyproject.toml` package-data, and `page_path()` looks there first.
+- **Test:** `tests/test_globe.py::test_the_installed_package_carries_the_globe_page_as_docs_has_it` keeps the two copies identical. Change `docs/nodes-globe.html` and copy it over.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/security-fixes` (on `main` 8287e37b) · review follow-ups
 
 Follow-ups from two outside reviews of 8e4430f8 (the DigiByte wallet, and the whole source), checked against the code;
@@ -170,12 +187,6 @@ to (`key_for` → `pubkey`), so it has to come from that address.
   needs its first; it fails only when 12 workers split the two, and passes when run in order.
 - **For the operator:** please merge into `main`. Nothing to set on a node. A node that stored a profile like that
   before keeps it until its next rescan; we found none.
-
-### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
-
-After #97 went live, Strawberry answered `/globe` with 404 ("the nodes globe is not in this copy"). `globe.page_path()` looked only for `docs/nodes-globe.html` next to the code, and an installed arcade runs from the venv's site-packages, which has no `docs/`. The tests run from a checkout, so they never saw it.
-- **Fix:** `arcade/nodes-globe.html`, the same bytes as the GitHub Pages copy, is named in `pyproject.toml` package-data, and `page_path()` looks there first.
-- **Test:** `tests/test_globe.py::test_the_installed_package_carries_the_globe_page_as_docs_has_it` keeps the two copies identical. Change `docs/nodes-globe.html` and copy it over.
 
 ### 2026-11-09 · the operator's side (Claude) · Core copies are served faster: 6 pieces at once, 240 a minute per asker
 
