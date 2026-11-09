@@ -31,7 +31,7 @@
   <div class="mecard-top">
     <img id="me-face" alt="" hidden>
     <span id="me-letter" class="me-letter me-add" role="button" tabindex="0"
-          title="Add a picture" onclick="document.getElementById('profile-edit').scrollIntoView({behavior:'smooth'})">@</span>
+          title="Add a picture">@</span>
     <div style="min-width:0">
       <div class="me-name" id="tag">&mdash;</div>
       <div class="muted" style="font-size:.84rem" id="tag-note"></div>
@@ -522,6 +522,8 @@ import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}"
 import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
 
 const $ = (id) => document.getElementById(id);
+// The "@" on the card leads to the picture field (a listener, not an inline handler: the script policy, 2026-11-09).
+$("me-letter").addEventListener("click", () => $("profile-edit").scrollIntoView({behavior: "smooth"}));
 const say = (text) => { $("trouble").textContent = text;
                         $("trouble").hidden = !text; };
 const news = (text) => { $("news").textContent = text;

@@ -93,7 +93,7 @@
      any means at all — it is just an address.</p>
   <div class="phrase" style="font-size:.95rem" id="myaddr">{{ my_address }}</div>
   <div class="row" style="margin:10px 0 0">
-    <button type="button" class="ghost" onclick="copyOf('myaddr', event)">Copy my address</button>
+    <button type="button" class="ghost" data-copy="myaddr">Copy my address</button>
     <a class="ghost btn" href="/contacts">Address book</a>
     <a class="ghost btn" href="/backup">Back up my wallet</a>
   </div>
@@ -114,7 +114,7 @@
       you before your key has been seen on the chain. Longer, but works immediately.</p>
     <div class="phrase" style="font-size:.82rem" id="contact">{{ contact_code }}</div>
     <button type="button" class="ghost" style="margin-top:9px"
-            onclick="copyOf('contact', event)">Copy</button>
+            data-copy="contact">Copy</button>
   </details>
 
   <div class="note" style="margin-top:16px">
@@ -166,5 +166,9 @@ function copyOf(id, ev){
     b.textContent = 'Copied'; setTimeout(function(){ b.textContent = old; }, 1400);
   });
 }
+// The Copy buttons name what they copy (data-copy); a listener, not an inline handler (the script policy, 2026-11-09).
+document.querySelectorAll('[data-copy]').forEach(function(b){
+  b.addEventListener('click', function(ev){ copyOf(b.getAttribute('data-copy'), ev); });
+});
 </script>
 {% endblock %}
