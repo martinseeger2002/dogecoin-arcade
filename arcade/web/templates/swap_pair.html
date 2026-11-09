@@ -138,7 +138,7 @@
                 hold. Just like token pairs"): each is its own market, so picking one opens it. #}
             {%- if quotes %}
             <select class="unit ex-quote-pick" aria-label="Priced in"
-                    onchange="location.href = '/exchange/swap/{{ b.key|urlencode }}/' + encodeURIComponent(this.value)">
+                    data-market="/exchange/swap/{{ b.key|urlencode }}/">
               <option value="{{ q.key }}" selected>{{ qname }}</option>
               {%- for o in quotes if not o.on %}<option value="{{ o.key }}">{{ o.label }}</option>{% endfor %}
             </select>
@@ -171,6 +171,12 @@
       (function () {
         var root = document.getElementById("ex-trade"); if (!root) return;
         var $ = function (id) { return document.getElementById(id); };
+        // Picking another coin or token to price in opens that market (a listener, not an inline handler: the script
+        // policy, 2026-11-09).
+        var quotePick = root.querySelector(".ex-quote-pick");
+        if (quotePick) quotePick.addEventListener("change", function () {
+          location.href = quotePick.getAttribute("data-market") + encodeURIComponent(quotePick.value);
+        });
         var whole = {{ whole|tojson }}, qname = {{ qname|tojson }}, bname = {{ bname|tojson }};
         var asks = [{% for o in asks if not o.mine %}{{ {"price": o.price, "base": o.base_shown, "quote": o.quote_shown, "id": o.id}|tojson }},{% endfor %}];
         var bids = [{% for o in bids if not o.mine %}{{ {"price": o.price, "base": o.base_shown, "quote": o.quote_shown, "id": o.id}|tojson }},{% endfor %}];

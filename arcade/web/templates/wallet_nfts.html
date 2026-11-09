@@ -15,8 +15,7 @@
   {% if row.held and row.content_type.startswith('image/') %}
     <a class="media" href="/content/{{ row.txid }}?download=1"
        title="{{ row.txid }} — click to open"
-       onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
-                '/content/{{ row.txid }}?download=1'); return false">
+       data-open-image="/content/{{ row.txid }}" data-name="#{{ row.number }}">
       <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
            loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
   {% endif %}
@@ -74,4 +73,15 @@
     {% for row in mine %}{{ card(row, tags, listed) }}{% endfor %}
   </div>
 {% endif %}
+<script nonce="{{ csp_nonce }}">
+// A picture opens over the page; the link stays a download for no script, the middle click and the menu. A listener,
+// not an inline handler (the script policy, 2026-11-09).
+document.addEventListener('click', function (event) {
+  var link = event.target.closest && event.target.closest('a[data-open-image]');
+  if (!link) return;
+  event.preventDefault();
+  var src = link.getAttribute('data-open-image');
+  arcadeOpenImage(src, link.getAttribute('data-name'), src + '?download=1');
+});
+</script>
 {% endblock %}

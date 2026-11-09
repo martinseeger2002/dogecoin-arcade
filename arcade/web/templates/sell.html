@@ -71,8 +71,7 @@
              placeholder="5" value="{{ amount }}"></div>
     <div class="field" style="flex:0 0 170px;margin:0">
       <label for="kind">Paid in</label>
-      <select autocomplete="off" name="kind" id="kind"
-              onchange="document.getElementById('sell-token').hidden = this.value !== 'token'">
+      <select autocomplete="off" name="kind" id="kind">
         <option value="coins" {{ 'selected' if kind != 'token' }}>{{ chain.label }} coins</option>
         {% if tokens %}<option value="token" {{ 'selected' if kind == 'token' }}>a token</option>{% endif %}
       </select></div>
@@ -96,4 +95,10 @@
     exactly it in one press; the piece moves only when you accept, in one
     transaction carrying both sides.</p>
 </form>
+<script nonce="{{ csp_nonce }}">
+// A token price shows the token picker (a listener, not an inline handler: the script policy, 2026-11-09).
+document.getElementById('kind').addEventListener('change', function () {
+  document.getElementById('sell-token').hidden = this.value !== 'token';
+});
+</script>
 {% endblock %}
