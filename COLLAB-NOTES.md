@@ -89,6 +89,18 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/hardening-round-2` (on main 2b9acda1, after PR #124) · the security review's open list, worked through
+
+One branch, 57 commits, on main 2b9acda1 (which has #124). The entries below this one (each naming the working branch it was built on) say what every part does; this is the map.
+- **Script policy:** nonces on every inline script; all 68 inline handlers moved to listeners; report-only by default, with Admin -> Safety -> "Enforce the script policy" (and `ARCADE_ENFORCE_SCRIPT_POLICY=1` / `--enforce-script-policy`). The full suite passes with it enforced; the default is the operator's call.
+- **Other people's words set as text** (12 sinks), the wizard previews sandboxed and framed only here.
+- **Wallet:** idle auto-lock (default 15 minutes, never mid-send); a name's sealed wallet goes to at most 30 visitors an hour; the Receive note for an address that is the same on DOGE and DGB; coin type 3 said on Backup.
+- **DigiByte:** DigiAssets read by the guard (Gather's stopgap only where they are not read); DigiDollar history "from block N" and read whole through a lender; regtest checks against DigiByte Core (vectors, sends, restore kit, reorgs).
+- **Accounts:** a first claim of an address is proved by its own key (outside clients that file addresses must send the proof; T-Deck firmware and the upstream LoRa gateway need the same change); another account's address is refused; every /account write route swept for cross-account writes; badly shaped bodies get 400, never 500.
+- **Swaps:** a lock a reorg removed is never read as a mempool lock.
+- **Mesh port:** its pass-through names the caller it knows, never a visitor address the caller sent.
+- **Tests:** full suite on this branch (main 2b9acda1 + these commits), normal and with the script policy enforced: 5,264 / 5,262 passed, mesh tests 10/10 in both; the only failures are the test machine's environment gaps (LoRa extras, test_docs, test_update's package check, the camera layer) and load-timing tests that pass alone. Please run your own full suite before merging.
+
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/account-bad-bodies` (on `team/dgb-staging-tests` 0c4341c7) · bad bodies refused, mintpad/announced bounded
 
 The two items the DGB staging entry below left open. Two commits:
