@@ -126,7 +126,7 @@
         &#128078;{% if p.dislikes %} {{ p.dislikes }}{% endif %}</button></form>
 
     <button class="ghost small" type="button"
-            onclick="toggle('reply-{{ p.txid }}')">Reply</button>
+            data-toggle="reply-{{ p.txid }}">Reply</button>
 
     {# Shared once is shared: a second share is a second paid transaction
        saying the same thing (a tester, 2026-09-26). So a share you made
@@ -151,7 +151,7 @@
        `/feed/<txid>/tip` is the route, it is simply not one the door opens
        for anybody but whoever runs the node, so the script at the bottom of
        this page answers it here instead, with this key. #}
-    <button class="ghost small" type="button" data-tip-for="{{ p.txid }}" onclick="toggle('tip-{{ p.txid }}')"
+    <button class="ghost small" type="button" data-tip-for="{{ p.txid }}" data-toggle="tip-{{ p.txid }}"
             title="Coins to the author, in the same transaction that says which post{{ ' — tipped %d time%s so far' % (p.tips, '' if p.tips == 1 else 's') if p.tips }}">Tip</button>
     <form method="post" action="/feed/{{ p.txid }}/tip" id="tip-{{ p.txid }}"
           data-author="{{ p.author }}" data-author-name="{{ p.author|who_text }}" hidden style="margin:6px 0 0;width:100%">
@@ -224,7 +224,7 @@
           id="fold-{{ p.txid }}"
           data-shut="{{ count }} comment{{ '' if count == 1 else 's' }}"
           data-open="Hide {{ count }} comment{{ '' if count == 1 else 's' }}"
-          onclick="foldComments(this, 'thread-{{ p.txid }}')">
+          data-fold="thread-{{ p.txid }}">
     {{ count }} comment{{ '' if count == 1 else 's' }}</button>
   {% endif %}
 
@@ -1045,10 +1045,18 @@ function inCard(from, id){
   }
   return document.getElementById(id);
 }
-function toggle(id){
-  var el = inCard(window.event && window.event.target, id);
+function toggle(id, from){
+  var el = inCard(from || (window.event && window.event.target), id);
   if (el) el.hidden = !el.hidden;
 }
+// Reply, Tip and the comment count answer these listeners rather than inline onclicks (the script policy,
+// 2026-11-09); on the document, so the posts scrolling and the in-place refresh add answer too.
+document.addEventListener('click', function(e){
+  var b = e.target.closest && e.target.closest('button[data-toggle], button[data-fold]');
+  if (!b) return;
+  if (b.dataset.fold) foldComments(b, b.dataset.fold);
+  else toggle(b.dataset.toggle, b);
+});
 
 // Comments fold both ways: a count that only opens is a count you can press
 // once (the operator).
