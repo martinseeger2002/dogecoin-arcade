@@ -16,6 +16,12 @@
     </form>
     <div id="k-shown" hidden>
       <ol id="k-words" style="columns:3;margin:10px 0;font-family:var(--mono)"></ol>
+      {#- 2026-11-09 (security review): the words' coin type, as the website's Backup says it (my_backup.html). -#}
+      <p class="muted" id="k-coin-type" style="margin:0 0 8px">These words use <b>coin type 3</b> for every coin
+        (<code>m/44'/3'/&hellip;</code>, and <code>m/49'/3'</code> and <code>m/84'/3'</code> for SegWit addresses; test
+        chains use coin type 1). A wallet that expects a coin's registered number (DigiByte 20, Litecoin 2) shows an
+        empty wallet until it is pointed at coin type 3. Your coins are not lost: the
+        <a href="/recover" download="recover-coins.html">recovery page</a> lists each chain's path and keys.</p>
       <button type="button" id="k-hide">Hide them</button>
     </div>
   </fieldset>

@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/receive-cointype` (on `main` 50182a46) · same-address note on Receive, coin type 3 on Backup
+
+From the security review of the DigiByte work. Every real coin uses coin type 3, and Dogecoin and DigiByte share key-hash byte 30, so an account's legacy `D...` address is the same string on both chains.
+- **Receive:** `wallet.js sameAddressNote(network, address)` says "This address is the same on Dogecoin and DigiByte. Check the chain before sending." for a legacy byte-30 address on `doge` or `dgb` only. SegWit, P2SH, DigiDollar and every other chain get nothing (no other pair shares coin type and byte; `regtest` and `ltctest` both use 111, but regtest is the tests' own chain). It is drawn in ArcadeCore's Receive tab (`#w-same`), the website Wallet's Receive sheet (`#receive-same`) and the address chip's "copied" toast. The node's own wallet module has no such call and shows nothing.
+- **Backup:** both looks say, under the twelve words, that they use coin type 3 (`m/44'/3'`, and `m/49'/3'` / `m/84'/3'` for SegWit; coin type 1 on test chains). A wallet expecting DigiByte 20 or Litecoin 2 shows empty until pointed at 3. The line links `/recover`, in step with the Litecoin key's note on the same page and with `restore_kit.py`.
+- **Tests:** `tests/test_same_address_note.py` and `tests/test_same_address_note_browser.py`. All five fail on 50182a46.
+- **Needs from you:** a look at the wording; nothing deployed.
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/dd-history-from` (on `main` 50182a46) · DigiDollar history from block N, read whole through a lender
 
 Security review: on an arcade that borrows DigiByte, an account's DigiDollar history said `whole: false` for good (it
