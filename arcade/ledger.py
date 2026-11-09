@@ -481,6 +481,8 @@ class LedgerIndex:
             return [self._property_row(db, row) for row in rows]
 
     def property(self, property_id: int) -> dict[str, Any] | None:
+        if isinstance(property_id, int) and not -2**63 <= property_id < 2**63:
+            return None             # past what SQLite holds is no token, not a 500 (2026-11-09, security review)
         with self.open() as db:
             row = db.conn.execute(
                 "SELECT * FROM property WHERE property_id = ?", (property_id,)
@@ -998,6 +1000,8 @@ class LedgerIndex:
 
     def inscription(self, key: str | int) -> dict | None:
         """By txid or by number -- a number is what people say out loud."""
+        if isinstance(key, int) and not -2**63 <= key < 2**63:
+            return None             # past what SQLite holds is no inscription, not a 500 (2026-11-09, security review)
         with self.open() as db:
             column = "number" if isinstance(key, int) else "txid"
             row = db.conn.execute(
@@ -2822,6 +2826,8 @@ def parse_amount(text: str, divisible: bool) -> int:
         value = Decimal(raw)
     except InvalidOperation:
         raise AmountError(f"{text!r} is not a number.") from None
+    if not value.is_finite():           # "Infinity" and "NaN" are Decimals too, and were a 500 (2026-11-09)
+        raise AmountError(f"{text!r} is not a number.")
     if value <= 0:
         raise AmountError("the amount must be more than zero.")
     if divisible:

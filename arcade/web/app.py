@@ -903,6 +903,57 @@ def _percent(text: Any, label: str) -> float:
     return value
 
 
+# A field of a request body, read by its shape (2026-11-09, security review). Routes had read `int(said.get(x) or 0)`
+# and `for s in said.get(x) or []` on the browser's word, so a list where a number goes, a number where a list goes,
+# or no signed bytes at all reached Python's own errors -- or the node -- and came back a 500. These refuse with a
+# plain ValueError instead, which every route already answers 400, and before the node is asked anything. What a
+# well-shaped body gets is unchanged: each reads exactly what the line it replaced read.
+
+def _said_int(said: dict, field: str, label: str, default: int = 0) -> int:
+    """A whole number from a body: what `int(said.get(field) or default)` read (`default` for none, null or ""),
+    refused rather than crashed on."""
+    value = said.get(field)
+    if value is None or value == "":
+        return default
+    if isinstance(value, (list, dict)):
+        raise ValueError(f"{label} has to be a number")
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{label} has to be a whole number") from None
+
+
+def _said_list(said: dict, field: str, label: str) -> list:
+    """A list from a body: what `said.get(field) or []` read, and nothing else (a string or a number is not one)."""
+    value = said.get(field)
+    if not value:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{label} has to be a list")
+    return value
+
+
+def _said_hex(said: dict, field: str, label: str, sizes: tuple = (), least: int = 0) -> str:
+    """Hex from a body: what `str(said.get(field) or "")` read, refused unless it is hex -- of one of `sizes` bytes
+    when it says anything, and of at least `least` bytes (so none at all is refused too). Answered as it came."""
+    value = said.get(field) or ""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} has to be hex")
+    try:
+        got = len(bytes.fromhex(value))
+    except ValueError:
+        raise ValueError(f"{label} has to be hex") from None
+    if got and sizes and got not in sizes:
+        raise ValueError(f"{label} has to be {' or '.join(str(n) for n in sizes)} bytes of hex")
+    if got < least:
+        raise ValueError(f"{label} is too short to be one" if got else f"name {label}")
+    return value
+
+
+#: The fewest bytes a transaction is: one input with an empty script, one output with an empty script, no witness.
+_SMALLEST_TX = 60
+
+
 async def _sandbox_names_its_host(request: Request, call_next):
     """Every sandboxed response names the host it came from beside 'self'
     (contentlib.own_origin says why: Safari reads 'self' as nothing). Out here
@@ -16951,7 +17002,7 @@ def create_app(state: AppState) -> FastAPI:
     def account_ord_forget(request: Request, payload: Any = Body(None)):
         """Take a finished ord off this account's list (the ord itself is on the chain and stays the account's)."""
         account = _signed_in_account(request)
-        rid = str((payload or {}).get("run") or "")
+        rid = str((payload if isinstance(payload, dict) else {}).get("run") or "")
         with _ord_lock:
             runs = _ord_runs()
             run = runs.get(rid)
@@ -18305,7 +18356,7 @@ def create_app(state: AppState) -> FastAPI:
             side = str(said.get("side") or "")
             if side not in ("ask", "bid"):
                 raise ValueError("an order is an ask or a bid, and says which")
-            prop = index.property(int(said.get("property_id") or 0))
+            prop = index.property(_said_int(said, "property_id", "the token number"))
             if prop is None:
                 raise tokenlib.TokenError(
                     f"there is no token {said.get('property_id')}.")
@@ -18563,7 +18614,7 @@ def create_app(state: AppState) -> FastAPI:
             return _node_trades_refused()
         try:
             index = state.token_index(chain)
-            prop = index.property(int(said.get("property_id") or 0))
+            prop = index.property(_said_int(said, "property_id", "the token number"))
             if prop is None:
                 raise ValueError("there is no such token")
             units = parse_amount(str(said.get("amount", "")), prop["divisible"])
@@ -18650,8 +18701,8 @@ def create_app(state: AppState) -> FastAPI:
         s = _standing.get(str(said.get("standing") or ""))
         if not s or s["account"] != account.pubkey:
             return JSONResponse({"detail": "no buy order of yours by that id"}, status_code=404)
-        signatures = [str(x) for x in (said.get("signatures") or [])]
         try:
+            signatures = [str(x) for x in _said_list(said, "signatures", "the signatures")]
             chain = _chain_asked({"chain": s["network"]})
             pubkey = _coin_pubkey(account.pubkey, chain)
             if hash160(pubkey) != b58check_decode(s["buyer"])[1]:
@@ -19418,7 +19469,7 @@ def create_app(state: AppState) -> FastAPI:
                         "moved. Ask for the answer again and sign that; a "
                         "signature over the old bytes would trade something you "
                         "never agreed to.")
-                signatures = [str(x) for x in (said.get("signatures") or [])]
+                signatures = [str(x) for x in _said_list(said, "signatures", "the signatures")]
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey:
                     raise ValueError("this request names no public key, and a "
@@ -20102,7 +20153,7 @@ def create_app(state: AppState) -> FastAPI:
             main = _account_address(account.pubkey, chain)
             if not main:
                 raise ValueError("this account has no address yet")
-            index = int(said.get("index") or 0)
+            index = _said_int(said, "index", "the pool's number")
             if not 1 <= index < 2 ** 31:
                 raise ValueError("a pool address is derived at an index from 1 to 2^31-1")
             pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
@@ -20161,7 +20212,7 @@ def create_app(state: AppState) -> FastAPI:
             index = state.token_index(chain)
             if str(said.get("kind") or "token") == "nft":
                 return _fund_nft_pool(account, chain, main, pool, said)
-            prop = index.property(int(said.get("property_id") or 0))
+            prop = index.property(_said_int(said, "property_id", "the token number"))
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {said.get('property_id')}.")
             units = parse_amount(str(said.get("lot", "")), prop["divisible"])
@@ -21105,7 +21156,7 @@ def create_app(state: AppState) -> FastAPI:
         if kind not in ("coin", "token", "nft", "doginal", "token20"):
             raise ValueError("a lock holds a coin, a token, an NFT, a Doginal or a DRC-20 / PRC-20 token")
         asset = str(leg.get("asset") or "").lower()
-        amount = int(leg.get("amount") or 0)
+        amount = _said_int(leg, "amount", "a leg's amount")
         if kind == "token20":
             # A DRC-20 / PRC-20 token (2026-10-22): its tick and a whole number of tokens (token20_swap).
             from ..trade_orders import TICK20, TOKEN20_MAX
@@ -21636,7 +21687,8 @@ def create_app(state: AppState) -> FastAPI:
         try:
             chain = _chain_asked(said)
             owner = _account_address(account.pubkey, chain)
-            lock = {"txid": str(said.get("txid") or "").lower(), "vout": int(said.get("vout") or 0)}
+            lock = {"txid": _said_hex(said, "txid", "the lock's txid", sizes=(32,), least=32).lower(),
+                    "vout": _said_int(said, "vout", "the lock's output")}
             leg = _trade_leg(said.get("leg"), chain, account)
             with chain.rpc() as rpc:
                 seen = observe(rpc, lock, {owner})
@@ -22121,7 +22173,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             chain = _chain_asked(said)
             return JSONResponse(_referee_sign(chain, str(said.get("pool") or ""),
-                                              int(said.get("lot", -1)), str(said.get("raw") or ""),
+                                              _said_int(said, "lot", "the lot", -1), str(said.get("raw") or ""),
                                               said.get("replay")))
         except (ValueError, fundinglib.FundingError, refereelib.RefereeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -22733,7 +22785,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             from ..encoding import encode_class_c
             index = state.token_index(chain)
-            prop = index.property(int(said.get("property_id") or 0))
+            prop = index.property(_said_int(said, "property_id", "the token number"))
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {said.get('property_id')}.")
             units = (int(pool["lot"]) if pool is not None
@@ -22865,8 +22917,11 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": f"this account has no {chain.label} "
                            f"address yet"}, status_code=400)
-        raw = str(said.get("raw") or "")
         try:
+            # The leg's shape, before the node is asked to read it (2026-11-09, security review: none was a 500).
+            raw = _said_hex(said, "raw", "the signed leg", least=_SMALLEST_TX)
+            signatures = [str(s) for s in _said_list(said, "signatures", "the leg's signatures")]
+            pubkey = bytes.fromhex(_said_hex(said, "pubkey", "your public key", sizes=(33, 65)))
             # A claim: sha256 of its phrase, worked out in the browser, so the
             # phrase itself never reaches this node until somebody claims.
             claim_hash = str(said.get("claim_hash") or "").strip().lower()
@@ -22912,9 +22967,7 @@ def create_app(state: AppState) -> FastAPI:
             price = 0 if token_priced else parse_amount(said_amount, True)
             with chain.rpc() as rpc:
                 listing = state.listings.register(
-                    rpc, raw=raw,
-                    signatures=[str(s) for s in (said.get("signatures") or [])],
-                    pubkey=bytes.fromhex(str(said.get("pubkey") or "")),
+                    rpc, raw=raw, signatures=signatures, pubkey=pubkey,
                     network=chain.network, owner=address, price=price,
                     # A mintpad lists a whole set for weeks, not a day
                     # (2026-09-26); anything else keeps LISTED_FOR.
@@ -23268,7 +23321,7 @@ def create_app(state: AppState) -> FastAPI:
                                    "and sign that; a signature over the old "
                                    "bytes would buy something you never "
                                    "agreed to."}, status_code=409)
-                signatures = [str(x) for x in (said.get("signatures") or [])]
+                signatures = [str(x) for x in _said_list(said, "signatures", "the signatures")]
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey:
                     raise ValueError("this request names no public key, and a "
@@ -23931,16 +23984,19 @@ def create_app(state: AppState) -> FastAPI:
         if kind in ("token", "inscription"):
             price = 0                 # paid in the ledger, not in a coin (D-183)
         elif kind == "coins":
-            price = int(take.get("sats") or 0)
+            price = _said_int(take, "sats", "the coins a leg takes")
         elif str(leg.get("amount", "")).strip() in ("", "0"):
             price = 0
         else:
             price = parse_amount(str(leg.get("amount", "")), True)
+        # The leg's shape before the node is asked (2026-11-09, security review): no bytes, or a number where the
+        # signatures go, was a 500.
+        raw = _said_hex(leg, "raw", "the signed leg", least=_SMALLEST_TX)
+        signatures = [str(s) for s in _said_list(leg, "signatures", "the leg's signatures")]
+        pubkey = bytes.fromhex(_said_hex(leg, "pubkey", "the seller's public key", sizes=(33, 65)))
         with chain.rpc() as rpc:
             listing = state.listings.register(
-                rpc, raw=str(leg.get("raw") or ""),
-                signatures=[str(s) for s in (leg.get("signatures") or [])],
-                pubkey=bytes.fromhex(str(leg.get("pubkey") or "")),
+                rpc, raw=raw, signatures=signatures, pubkey=pubkey,
                 network=chain.network, owner=str(leg.get("seller") or ""),
                 price=price,
                 seconds=listingslib.ANSWERED_FOR, record=False)
@@ -24356,7 +24412,7 @@ def create_app(state: AppState) -> FastAPI:
         me = _account_address(account.pubkey, chain)
         hand = said.get("handoff") if isinstance(said.get("handoff"), dict) else {}
         expect = said.get("expect") if isinstance(said.get("expect"), dict) else {}
-        raw = str(hand.get("raw") or "")
+        raw = _said_hex(hand, "raw", "the bundle's bytes", least=_SMALLEST_TX)     # before the node (2026-11-09)
         index = state.token_index(chain)
         with chain.rpc() as rpc:
             tx = rpc.call("decoderawtransaction", raw)
@@ -24577,7 +24633,7 @@ def create_app(state: AppState) -> FastAPI:
                                    "and sign that; a signature over the old "
                                    "bytes would buy something you never "
                                    "agreed to."}, status_code=409)
-                signatures = [str(x) for x in (said.get("signatures") or [])]
+                signatures = [str(x) for x in _said_list(said, "signatures", "the signatures")]
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey:
                     raise ValueError("this request names no public key, and a "
@@ -25465,7 +25521,7 @@ def create_app(state: AppState) -> FastAPI:
                                "the shop would refuse these signatures, and a "
                                "message spent finding that out is a message fee "
                                "gone."}, status_code=409)
-            signatures = [str(x) for x in (said.get("signatures") or [])]
+            signatures = [str(x) for x in _said_list(said, "signatures", "the signatures")]
             pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
             if not pubkey:
                 raise ValueError("this request names no public key, and a "
@@ -25668,7 +25724,7 @@ def create_app(state: AppState) -> FastAPI:
                            f"address yet"}, status_code=400)
         try:
             index = state.token_index(chain)
-            property_id = int(said.get("property_id", 0))
+            property_id = _said_int(said, "property_id", "the token number")
             prop = index.property(property_id)
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {property_id}.")
@@ -25872,7 +25928,7 @@ def create_app(state: AppState) -> FastAPI:
         action = str(said.get("action") or "")
         try:
             index = state.token_index(chain)
-            property_id = int(said.get("property_id", 0))
+            property_id = _said_int(said, "property_id", "the token number")
             prop = index.property(property_id)
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {property_id}.")
@@ -26454,7 +26510,7 @@ def create_app(state: AppState) -> FastAPI:
         said = payload if isinstance(payload, dict) else {}
         try:
             out = state.mailbox().put(account.pubkey, str(said.get("blob") or ""),
-                                      int(said.get("base") or 0))
+                                      _said_int(said, "base", "the base"))
         except MailboxMoved as exc:
             return JSONResponse({"detail": str(exc), "updated": exc.updated},
                                 status_code=409)
@@ -26657,9 +26713,9 @@ def create_app(state: AppState) -> FastAPI:
         # A tip may be paid on either chain (2026-10-13: "testnet PEP
         # mainnet PEP"); every other reaction is a note on the tag chain.
         try:
-            chain = (_chain_asked(said) if int(said.get("kind", 0) or 0) == feedlib.TIP
+            chain = (_chain_asked(said) if _said_int(said, "kind", "a reaction's kind") == feedlib.TIP
                      else _account_chain())
-        except (TypeError, ValueError) as exc:
+        except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         address = _account_address(account.pubkey, chain)
         if not address:
@@ -27046,7 +27102,7 @@ def create_app(state: AppState) -> FastAPI:
         """How many days a listing asked to stand, 0 for the default, capped at 90."""
         try:
             return max(0, min(90, int(said.get("days") or 0)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
 
     #: What one coin from a split is worth: enough to stand under a listing and
@@ -27116,7 +27172,7 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "this account has no address yet"},
                                 status_code=400)
         try:
-            count = int(said.get("count") or 0)
+            count = _said_int(said, "count", "how many coins")
             if not 1 <= count <= 60:
                 raise ValueError("split into between 1 and 60 coins")
             each = SPLIT_EACH
@@ -27391,7 +27447,7 @@ def create_app(state: AppState) -> FastAPI:
         address = _account_address(account.pubkey, chain)
         index = state.token_index(chain)
         try:
-            prop = index.property(int(said.get("property_id") or 0))
+            prop = index.property(_said_int(said, "property_id", "the token number"))
             if prop is None:
                 raise ValueError("which token?")
             lot = parse_amount(str(said.get("lot") or ""), bool(prop["divisible"]))
@@ -27463,7 +27519,10 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         address = _account_address(account.pubkey, chain)
         name = str(said.get("collection") or "").strip()[:120]
-        ids = [str(i) for i in (said.get("ids") or []) if isinstance(i, str)][:100]
+        try:
+            ids = [str(i) for i in _said_list(said, "ids", "ids") if isinstance(i, str)][:100]
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
         if not address or not name:
             return JSONResponse({"detail": "which collection?"}, status_code=400)
         key = f"announced:{chain.network}:{address}:{name}"
@@ -29930,7 +29989,7 @@ def create_app(state: AppState) -> FastAPI:
             offered = str(said.get("offer", ""))
             try:
                 offer = _offers.take(offered, account.pubkey)
-                signatures = [str(x) for x in (said.get("signatures") or [])]
+                signatures = [str(x) for x in _said_list(said, "signatures", "the signatures")]
                 pubkey = bytes.fromhex(str(said.get("pubkey", "")))
                 signed = fundinglib.assemble(offer.unsigned, signatures, pubkey)
             except (accountlib.OfferError, fundinglib.FundingError,
@@ -36731,8 +36790,11 @@ def create_app(state: AppState) -> FastAPI:
         lister = _account_address(account.pubkey, chain)
         if not lister:
             return JSONResponse({"detail": "this account has no address yet"}, status_code=400)
-        orders = [o for o in (said.get("orders") or []) if isinstance(o, dict)][:trade_orders.MAX_ORDERS]
-        cancels = [str(c) for c in (said.get("cancels") or []) if isinstance(c, str)][:100]
+        try:
+            orders = [o for o in _said_list(said, "orders", "orders") if isinstance(o, dict)][:trade_orders.MAX_ORDERS]
+            cancels = [str(c) for c in _said_list(said, "cancels", "cancels") if isinstance(c, str)][:100]
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
         # Nothing listed twice, and no more of a token than is free (2026-10-22: a listing "should be locked
         # as listed until it is unlisted or purchased"): the page posts its whole book, so these are its totals.
         # Orders this book already holds as cancelled are not the tab's any more: left out, and named back so the tab
@@ -36792,7 +36854,11 @@ def create_app(state: AppState) -> FastAPI:
         room (book_relay.py). Only the account's own orders."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
-        ids = [str(i) for i in (said.get("ids") or []) if isinstance(i, str) and re.fullmatch(r"ord-[0-9a-f]{16}", i)][:50]
+        try:
+            ids = [str(i) for i in _said_list(said, "ids", "ids")
+                   if isinstance(i, str) and re.fullmatch(r"ord-[0-9a-f]{16}", i)][:50]
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
         mine = [a for a in (_account_address(account.pubkey, c) for c in _account_chains()) if a]
         gone = state.trade_orders.cancel_local(mine, ids) if ids and mine else 0
         # A delegated order: its node sends the side back to this account (node_trader.release).

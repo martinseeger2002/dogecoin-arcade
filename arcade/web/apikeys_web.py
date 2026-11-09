@@ -184,7 +184,9 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
 
     @app.post("/account/keys/{kid}")
     def account_key_switch(request: Request, kid: str, body: Any = Body(None)):
-        if not store().set_off(account_of(request), kid, bool((body or {}).get("off"))):
+        # A body that is not an object reads as none, as null always did, not a 500 (2026-11-09, security review).
+        said = body if isinstance(body, dict) else {}
+        if not store().set_off(account_of(request), kid, bool(said.get("off"))):
             raise HTTPException(404, "no such key of yours")
         return JSONResponse({"ok": True}, headers=NO_STORE)
 
