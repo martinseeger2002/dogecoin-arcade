@@ -7,6 +7,7 @@ in it -- almost nothing on the operator's version would be true.
 """
 
 import pathlib
+import re
 import sys
 
 import pytest
@@ -343,7 +344,8 @@ def test_one_create_tab_and_backup_on_the_wallet_page(public):
     for where in ('href="/nfts"', 'href="/tokens"', 'href="/mintpad/new"', 'href="/create/ord"'):
         assert where in create, where
     assert '>Creator</a>' in nav, "the tab is called Creator (2026-10-23)"
-    assert 'class="on" href="/create"' in app.get("/tokens", headers=EDGE).text, \
+    # The tab may carry its module between the two (data-module, base.html: Your tabs, 2026-11-08).
+    assert re.search(r'<a class="on"[^>]* href="/create"', app.get("/tokens", headers=EDGE).text), \
         "the Create tab stays lit on the pages behind it"
 
 

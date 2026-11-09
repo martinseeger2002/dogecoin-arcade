@@ -222,7 +222,8 @@ def test_the_wallet_offers_send_and_list_for_a_bellinal_and_no_swap(bel):
     page = app.get("/me/wallet").text
     assert '"bel": {"counter": "doge", "list": true, "send": true, "swap": false, "tab": "bellinals"' in page
     # Send and one List on the Wallet's Doginals (2026-11-05); no Swap there for any chain.
-    assert "const viewOnly = !can.send;" in page and "if (can.list) {" in page and "if (can.swap) {" not in page
+    # List only while this arcade trades NFTs (LISTS, my_wallet.html; 2026-11-08, as ArcadeCore's Assets).
+    assert "const viewOnly = !can.send;" in page and "if (can.list && LISTS) {" in page and "if (can.swap" not in page
 
 
 # --- end to end, on a real Bellscoin ------------------------------------------------------------------------------------

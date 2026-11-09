@@ -98,6 +98,11 @@ Cherry-picked in order: #115 (the base of the rest), #116, #119 (holds #116), #1
   - An asset send now also notes itself in the sent-list; a DRC-20's fee is its three transactions' fees added up.
 - **#118 against #119** (`lite.html`): both `liteWindow.open` (#119's Pay link into Send) and #118's `dialog`.
 - **COLLAB-NOTES:** the branches carried the public copies ("the operator's side") of the #108–#112 and #113/#114 merge entries. Git attached the bodies to those copies, so each body is back under its own entry and the copies are gone.
+- **Tests:** full suite: 5194 passed. Two failures came from the PRs: tests asking for exact strings the PRs changed on purpose, now updated.
+  - `test_me_page`: base.html puts `data-module` between `class="on"` and `href`.
+  - `test_bellinals`: the Wallet's List now waits on `LISTS`, as ArcadeCore's does.
+  - Three alone-run reruns passed (load flakes).
+  - Still failing, as on master: the docs/guide drift (3) and `test_game_prompts::test_the_camera_layer_sits_under_the_arcades_cards`, whose `2147483000` the ring popup (7976afb7) brought back into `_page_doors.js.html`.
 - **Reviewed:**
   - #115/#118 door additions: GET pages drawing what `/lite` already serves; their actions go through routes that do their own checks.
   - #120's proof: a tagged sha256 signed with BIP-340, never a sighash. A bad proof is refused, and a key that isn't the published dgb address is left out. The announcement already publishes that address's hash, so nothing new about the account is shown.
