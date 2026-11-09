@@ -1,6 +1,7 @@
 """The enforced script policy in a real browser (phase 2, 2026-11-09, security review): with Admin -> Safety -> "Enforce
 the script policy" on, a page's own scripts run and a script slipped into it does not -- an injected <script>, an
-on...= attribute, a javascript: address -- while one carrying the page's nonce still would."""
+on...= attribute, a javascript: address -- while one carrying the page's nonce still would. The pages built in Python
+(the globe, the mesh Browser) run."""
 
 import pathlib
 import socket
@@ -115,6 +116,14 @@ def test_switched_off_the_same_injection_runs(browser, served):
         assert (bare, attr, nonced) == (1, 1, 1)
     finally:
         state.set_setting(SCRIPT_POLICY_SETTING, True)
+
+
+def test_the_pages_built_in_python_run_under_it(browser, served):
+    base, _ = served
+    browser.get(base + "/globe")
+    WebDriverWait(browser, 15).until(lambda d: d.execute_script("return typeof window.THREE") == "object")
+    browser.get(base + "/browser")
+    WebDriverWait(browser, 15).until(lambda d: d.execute_script("return Array.isArray(window.back)"))
 
 
 def test_the_switch_in_admin_turns_it_off_and_on(browser, served):

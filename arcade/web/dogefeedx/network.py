@@ -31,13 +31,16 @@ APP_NAME = "Network"
 APP_ICON = "/dogefeedx/network/icon-32.png"
 
 
-def register(app, state, *, admin_check: Callable | None = None) -> None:
+def register(app, state, *, admin_check: Callable | None = None, render: Callable | None = None) -> None:
     """Register the Network app with FastAPI and the DogeFeedX dock.
 
     Args:
         app: FastAPI application instance
         state: AppState instance
         admin_check: Optional function to verify admin access
+        render: the web app's page renderer (create_app's `render`), so the page is drawn with base.html and its
+            scripts carry the page's nonce. 2026-11-09 (security review): it imported `render` from arcade.web.app,
+            where it is no module name, so the page was always sent as its template's unrendered text.
     """
 
     def _admin_check(request: Request) -> None:
@@ -126,15 +129,11 @@ def register(app, state, *, admin_check: Callable | None = None) -> None:
     @app.get("/dogefeedx/network")
     def network_page(request: Request):
         """Render the Network app page."""
-        try:
-            from arcade.web.app import render
-            return render(request, "dogefeedx/network.html",
-                          app_id=APP_ID,
-                          app_name=APP_NAME)
-        except ImportError:
+        if render is None:     # registered on its own (tests/test_dogefeedx_network.py): the template's text
             return HTMLResponse(TEMPLATE_PATH.read_text() if TEMPLATE_PATH.exists() else
                                 f"<html><body><h1>{APP_NAME}</h1><p>Template not found</p></body></html>",
                                 headers={"Cache-Control": "no-store"})
+        return render(request, "dogefeedx/network.html", app_id=APP_ID, app_name=APP_NAME)
 
     @app.get("/dogefeedx/network/api/status")
     def network_status(request: Request):
