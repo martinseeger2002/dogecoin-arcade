@@ -89,6 +89,30 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/address-claim-proof` (on `team/dgb-staging-tests` 0c4341c7) · a first claim of an address is proved
+
+From the security review. `/account/address` and `/account/segwit/register` took the first claim of any well-formed
+address as the signed-in account's; the 409 on the branch below stops only an address another account here holds. An
+address nobody here held could still be filed by anybody, though another person holds its key. Two commits:
+
+- **aa2aeb32 the wallets sign.** Every caller sends the address key's proof: the bytes `/signup` and an imported
+  wallet already sign (`coins.importProof`, `wallet_imports.check_proof`), as `address_signature` (and
+  `address_signature_<network>` for sign-up's other chains). wallet_js `claimProof` (tellTheNode, signUp, fileHere),
+  the Wallet card's and ArcadeCore's address-type registration, the extension (`chains.claimProof` into
+  `tellAddresses`), and the LoRa gateway (ADDR carries the coin key's signature after the key).
+- **0154d3b5 the node asks.** A first claim without a valid proof is a 400 ("this address was not proved yours");
+  saying the account's own address again needs none. Sign-up leaves an unproved other-chain address unfiled. The
+  proof replaces the nested-SegWit pubkey check. `tests/address_claim.py` files addresses as the browser does; the
+  tests that posted keyless addresses use keyed ones through it.
+
+Tests: `tests/test_address_claim_proof.py`, `test_extension.py`, `test_lora_gateway.py`, the touched account tests and
+`test_lite_wallet_parity_browser.py` (the real browser registers a Native SegWit address from ArcadeCore and the
+website's Wallet): 614 passed, 16 skipped; LoRa 30 passed.
+
+**Needs from the other side:** the C++ T-Deck client and the upstream LoRa gateway need the ADDR change
+(`arcade/lora/SOURCE.md`); until then a T-Deck's first address on a chain is refused with that reason. An outside
+client of `/account/address` must send the proof too.
+
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/dgb-staging-tests` (on `main` 50182a46) · DigiByte staging checks, two fixes
 
 Staging checks from the security review, against DigiByte Core 9.26.7 on regtest (`tests/test_dgb_staging_regtest.py`,
