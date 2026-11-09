@@ -167,8 +167,9 @@ def test_digidollar_is_a_coin_of_its_own_with_balance_receive_and_a_checked_send
         db.conn.commit()
     state.dd_core.outs = {("dd" * 32, 1): (0, tr.p2tr(tr.tweak(pub[1:]))),
                           ("aa" * 32, 0): (150_000_000, p2pkh_script(me["address"]))}
-    # The transaction that made the $60: a send's record, OP_RETURN "DD" 2 <6000>, its one zero-value Taproot output.
-    state.dd_core.txs = {"dd" * 32: {"txid": "dd" * 32, "vout": [
+    # The transaction that made the $60: a send's record, OP_RETURN "DD" 2 <6000>, its one zero-value Taproot output; a
+    # DigiDollar send's version, as DigiByte marks every DigiDollar transaction (only those are read: 2026-11-08).
+    state.dd_core.txs = {"dd" * 32: {"txid": "dd" * 32, "version": (2 << 24) | 0x0770, "vout": [
         {"n": 0, "value": 0.5, "scriptPubKey": {"hex": p2pkh_script(me["address"]).hex()}},
         {"n": 1, "value": 0, "scriptPubKey": {"hex": tr.p2tr(tr.tweak(pub[1:])).hex()}},
         {"n": 2, "value": 0, "scriptPubKey": {"hex": (b"\x6a\x02DD\x01\x02" + tr.push(tr.num(6000))).hex()}}]}}
