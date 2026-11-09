@@ -89,6 +89,27 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/mesh-proxy-visitor` (on `main` 50182a46) · the mesh port's pass-through names the caller it knows
+
+From the outside security review. One commit, 4c9ec6f7.
+- **What was wrong:** `wsock._proxy` (the mesh port's pass-through for `/realtime/` and `/signin/<name>`) reaches the
+  web app from loopback, where `apikeys.caller_ip` believes an edge's header, and it passed the caller's own
+  `Cf-Connecting-Ip` on. On a node whose mesh port is open with no edge in front, a caller naming a new address each
+  time had a new allowance each time (sign-in, sign-up, the sealed-wallet lookup, any `client_ip` limit).
+- **Now:** the pass-through takes off `Cf-Connecting-Ip`, `X-Forwarded-For`, `X-Real-Ip`, `Forwarded`,
+  `True-Client-Ip` and folded header lines, and sends one `X-Forwarded-For`: the visitor the arcade's own tunnel names
+  when it connects from loopback (read as `caller_ip` reads it), else the socket's own peer. `X-Forwarded-Proto` /
+  `-Host` are kept only from loopback. The quick tunnel (`cloudflared --url` at the mesh port) still counts each visitor.
+- **Other pass-throughs checked, none forward a visitor's headers:** corelink (chain RPC), the LoRa / T-Deck gateways,
+  the mesh relays, llmshare.
+- **Left as is (not forgeable, noted only):** `_peer_data_limited`, the coin-walk `asker` and Lite's console limit
+  count by the socket peer, so behind a tunnel all visitors share one count there.
+- **Tests:** `test_signin_hardening` 16 passed (the forged-address test fails on the old pass-through); neighbours
+  (mesh, mesh web/relay/turn/introduce, realtime, apikeys, explore, faucet, sign-in/sign-up, blind signing, game door,
+  operator trust, three realtime/sign-in browser tests) 240 passed, 1 skipped; two timing failures under `-n 4`
+  (`test_mesh::test_an_arcade_links_with_every_arcade_it_knows...`, `test_realtime_web::test_a_player_signed_in_elsewhere...`)
+  passed alone; `test_realtime_anynode_browser`, `test_mesh_named`, `test_talk_relay` alone: all passed.
+- **Needs from the operator:** apply 4c9ec6f7.
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/wallet-idle-lock` (on `main` 50182a46) · idle wallet lock; sealed-wallet lookups limited per name
 
 Two follow-ups from the security review, one commit each, each with its tests. Not deployed.
