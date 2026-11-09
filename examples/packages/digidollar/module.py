@@ -241,11 +241,14 @@ RIPE = 100
 
 
 def _coins(ctx, net: str, address: str) -> tuple[list[dict], bytes]:
-    """The caller's coins that can be spent now (a mined block's only once ripe), and the script they pay."""
+    """The caller's coins that can be spent now (a mined block's only once ripe), and the script they pay. Each coin
+    says `read` when the arcade read it for DigiAssets before listing it (its guard does on DigiByte, 2026-11-09)."""
     found = ctx.rpc(net, "scantxoutset", "start", [f"addr({address})"])
     tip = found.get("height", 0)
     ripe = [u for u in found.get("unspents", []) if not u.get("coinbase") or tip - u.get("height", tip) + 1 >= RIPE]
-    coins = [{"txid": u["txid"], "vout": u["vout"], "value": _sats(u["amount"])} for u in ripe]
+    read = found.get("digiassets") == "read"
+    coins = [{"txid": u["txid"], "vout": u["vout"], "value": _sats(u["amount"]), **({"read": True} if read else {})}
+             for u in ripe]
     return coins, (bytes.fromhex(ripe[0]["scriptPubKey"]) if coins else b"")
 
 
@@ -297,27 +300,32 @@ def command_ddmint(ctx, amount, tier=None, chain="test"):
 
 
 #: Coins this small are left where they are by Gather (2026-11-08, security review): a DigiAsset rides on a dust-sized
-#: output, and this arcade does not read DigiAssets yet, so gathering one would spend the asset with it. Each is worth
-#: less than its own share of a gather's fee anyway.
+#: output, and gathering one would spend the asset with it. Since 2026-11-09 the arcade's guard reads DigiAssets and
+#: lists only coins that carry none, saying so (`read`): this applies only to a coin it did not say it read (an arcade
+#: from before then). Each is worth less than its own share of a gather's fee anyway.
 KEEP_SMALL = 10_000
+
+
+def _unread_small(coin: dict) -> bool:
+    return coin["value"] <= KEEP_SMALL and not coin.get("read")
 
 
 def gather(coins: list[dict], script: bytes, chain: str = TEST, fresh=None) -> dict:
     """The prepared gather: up to GATHER_MOST of the caller's smallest coins into one, back to their own address. With
     `fresh`, coins a gather still waiting for its block has spent are passed over, so it can be pressed again at once.
-    Coins of KEEP_SMALL or less are never taken (a DigiAsset may sit on one)."""
+    Coins of KEEP_SMALL or less are taken only once the arcade read them for DigiAssets (a DigiAsset may sit on one)."""
     chosen, waiting = [], 0
     for coin in sorted(coins, key=lambda c: c["value"]):
         if len(chosen) == GATHER_MOST:
             break
-        if coin["value"] <= KEEP_SMALL:
+        if _unread_small(coin):
             continue
         if fresh is not None and not fresh(coin):
             waiting += 1
             continue
         chosen.append(coin)
     if len(chosen) < 2:
-        if not waiting and any(c["value"] <= KEEP_SMALL for c in coins):
+        if not waiting and any(_unread_small(c) for c in coins):
             raise ValueError("nothing to gather: your other coins are 0.0001 DGB or less, and those are left alone "
                              "(a DigiAsset may sit on one)")
         raise ValueError("your DGB is in one coin already: nothing to gather" if not waiting else
@@ -326,7 +334,7 @@ def gather(coins: list[dict], script: bytes, chain: str = TEST, fresh=None) -> d
     fee = (10 + 148 * len(chosen) + 9 + len(script)) * GATHER_FEE_PER_BYTE
     if total - fee < DUST:
         raise ValueError("those coins are worth less than gathering them costs")
-    left = len([c for c in coins if c["value"] > KEEP_SMALL]) - len(chosen) - waiting
+    left = len([c for c in coins if not _unread_small(c)]) - len(chosen) - waiting
     return {"chain": chain, "version": 2, "inputs": [{"txid": c["txid"], "vout": c["vout"]} for c in chosen],
             "outputs": [(total - fee, script.hex())],
             "what": f"gather {len(chosen)} of your coins into one ({(total - fee) / COIN:,.8f} DGB) at your own "

@@ -347,3 +347,39 @@ def test_a_gather_leaves_dust_sized_coins_alone():
     assert {i["txid"] for i in made["inputs"]} == {f"{3:064x}", f"{4:064x}"}, "only the coins over 0.0001 DGB"
     with pytest.raises(ValueError, match="left alone"):
         pilot.gather(coins[:4], script, "dgbtest")
+    read = [{**c, "read": True} for c in coins]
+    assert len(pilot.gather(read, script, "dgbtest")["inputs"]) == 5, "coins the arcade read for DigiAssets all go"
+
+
+def test_a_gather_takes_small_coins_the_arcade_read_and_never_one_a_digiasset_sits_on(tmp_path, monkeypatch):
+    """2026-11-09, security review: the arcade's guard reads DigiAssets (arcade/digiassets.py) and lists the module
+    only coins none sits on, saying it read them, so Gather takes small coins again. A DigiAsset transfer's coin and
+    its change (the last output, where an asset left over goes) are never listed to it at all."""
+    from arcade import doginals, funding, modhost
+    _, pilot = _pilot()
+    pub, _ = _key()
+    p2pkh = "76a914" + "11" * 20 + "88ac"
+    transfer = "6a06" + b"DA\x03\x15\x00\x01".hex()      # "DA" v3 transfer: 1 to output 0, the rest to the last
+    asset, plain = "a5" * 32, [f"{n:064x}" for n in range(1, 5)]
+    values = dict(zip(plain, (600, 1_000, 10_000, 3 * 10 ** 7)))
+    txs = {asset: [(600, p2pkh), (0, transfer), (5 * 10 ** 7, p2pkh)], **{t: [(v, p2pkh)] for t, v in values.items()}}
+
+    class Node:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def call(self, method, txid, *_):
+            return {"txid": txid, "vout": [{"n": n, "value": v / 1e8, "scriptPubKey": {"hex": h}}
+                                           for n, (v, h) in enumerate(txs[txid])]}
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"dgbtest": doginals.Doginals(
+        tmp_path / "dgbtest.sqlite", rpc_factory=Node, digiassets=True, ords=False)})
+    unspents = [{"txid": t, "vout": n, "amount": v / 1e8, "coinbase": False, "height": 10, "scriptPubKey": p2pkh}
+                for t, outs in txs.items() for n, (v, h) in enumerate(outs) if v]
+    ctx = _ctx(pub, tmp_path, coins=unspents)
+    core = ctx.rpc
+    ctx.rpc = lambda net, method, *params: modhost.without_inscriptions(net, method, core(net, method, *params))
+    made = pilot.command_ddgather(ctx)["prepared"]
+    assert sorted(i["txid"] for i in made["inputs"]) == plain, "every small coin read clean; neither of the asset's"
