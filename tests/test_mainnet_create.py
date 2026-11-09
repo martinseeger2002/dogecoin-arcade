@@ -22,9 +22,8 @@ from test_web import app_state, client                          # noqa: F401,E40
 from test_account_real_coins import _fund, THEIRS_MAIN         # noqa: E402
 from test_account_mainnet import TEST                            # noqa: E402
 from test_me_page import _seat                                   # noqa: E402
-from test_funding import _pubkey                                 # noqa: E402
+from address_claim import file_address, keyed                     # noqa: E402
 
-from arcade.script import b58check_encode, hash160               # noqa: E402
 
 from arcade import fees                                          # noqa: E402
 
@@ -32,15 +31,13 @@ OPERATOR = THEIRS_MAIN       # stands in for the node's own mainnet address
 
 
 #: A mainnet address with its coin key, which a Class B payload needs.
-KEY = _pubkey(int("33" * 32, 16))
-MAIN = b58check_encode(56, hash160(KEY))
+MAIN, (_, KEY) = keyed("main", int("33" * 32, 16))
 
 
 def _open_both(app):
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
-    assert app.post("/account/address", json={
-        "address": MAIN, "chain": "main", "coin_pubkey": KEY.hex()}).status_code == 200
+    file_address(app, TEST)
+    assert file_address(app, MAIN, chain="main").status_code == 200
 
 
 def _operated(state, monkeypatch):

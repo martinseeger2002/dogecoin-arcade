@@ -64,6 +64,7 @@ from test_funding import _pubkey, _sign                     # noqa: E402
 from test_inscription_e2e import _put                       # noqa: E402
 from test_tokens_web import (RegtestContext, mine_and_index,  # noqa: E402
                              shown)
+from address_claim import file_address                      # noqa: E402
 
 from arcade import accounts as accountslib                  # noqa: E402
 from arcade import funding, inscribe, seed, utxos           # noqa: E402
@@ -216,8 +217,7 @@ def _arrive(*node, secret):
     pubkey = _pubkey(secret)
     address = b58check_encode(state.messaging.params.pubkeyhash_version,
                               hash160(pubkey))
-    told = client.post("/account/address",
-                       json={"address": address, "coin_pubkey": pubkey.hex()})
+    told = file_address(client, address, secret)
     assert told.status_code == 200, told.text
     who = Person(client=client, words=words,
                  login=login.verify_key.encode().hex(), tag="",

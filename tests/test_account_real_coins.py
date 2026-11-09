@@ -19,6 +19,7 @@ from test_web import app_state, client                          # noqa: F401,E40
 from test_me_page import _seat                                   # noqa: E402
 from test_funding import _pubkey                                 # noqa: E402
 from test_account_mainnet import MAIN, TEST                      # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade.script import b58check_encode, hash160               # noqa: E402
 
@@ -61,8 +62,8 @@ def _fund(app, state, address, value=50 * COIN):
 def _open_both(app):
     """A signed-in account with a wallet on each chain, as signup leaves it."""
     pubkey = _seat(app)
-    app.post("/account/address", json={"address": TEST})
-    app.post("/account/address", json={"address": MAIN, "chain": "main"})
+    file_address(app, TEST)
+    file_address(app, MAIN, chain="main")
     return pubkey
 
 

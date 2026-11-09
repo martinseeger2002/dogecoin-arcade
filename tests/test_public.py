@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
+from address_claim import TEST, file_address                      # noqa: E402
 
 from arcade.web import door                                      # noqa: E402
 
@@ -322,7 +323,7 @@ def test_every_public_page_links_only_where_a_stranger_may_go(public, page,
 
 
 #: Somebody's address, for an inscription that has to belong to someone.
-KEEPER = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+KEEPER = TEST
 
 
 def _an_interactive_inscription(state, txid: str) -> str:
@@ -657,9 +658,9 @@ def test_the_page_api_wallet_is_whoever_is_looking(client):
     from test_me_page import _seat
 
     app, state = client
-    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    viewer = TEST
     _seat(app)
-    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    file_address(app, viewer, headers=LOCAL)
     index = state.token_index(state.token_chain)
     txid, other = "ab" * 32, "cd" * 32
     with index.open() as db:
@@ -746,7 +747,7 @@ def test_an_arena_asking_about_an_account_s_piece_is_answered_here(client):
 
     app, state = client
     index = state.token_index(state.token_chain)
-    txid, holder = "fa" * 32, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    txid, holder = "fa" * 32, TEST
     meta = _json.dumps({"api": {"power": {"const": 7}}})
     with index.open() as db:
         db.conn.execute(
@@ -781,8 +782,7 @@ def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
         # of a table that never rendered checks nothing. KEEPER owns both
         # pieces below, so this makes them this account's -- the same call a
         # tab makes when it first tells the node where its money is.
-        assert app.post("/account/address", json={"address": KEEPER},
-                        headers=LOCAL).status_code == 200
+        assert file_address(app, KEEPER, headers=LOCAL).status_code == 200
     index = state.token_index(state.token_chain)
     creator = "nCreatorCCCCCCCCCCCCCCCCCCCCCCCCC"
     with index.open() as db:
@@ -933,7 +933,7 @@ JUDGED = ["Nude Yacht Club", "A description written for this token by its maker"
 
 #: Whose they are: one address, so the `who` filter resolves and the pieces
 #: have an owner.
-OWNER = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+OWNER = TEST
 MAKER = "nMakerCCCCCCCCCCCCCCCCCCCCCCCCCC"
 PIECE = ("b1" * 32, "b2" * 32)
 
@@ -1141,9 +1141,9 @@ def test_full_screen_carries_the_wallet_into_the_page(client):
     from test_me_page import _seat
 
     app, state = client
-    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    viewer = TEST
     _seat(app)
-    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    file_address(app, viewer, headers=LOCAL)
     index = state.token_index(state.token_chain)
     page_tx, pic_tx, file_tx = "a1" * 32, "b2" * 32, "c3" * 32
     with index.open() as db:
@@ -1202,9 +1202,9 @@ def test_a_page_asks_the_signed_in_reader_to_send(client):
     from test_me_page import _seat
 
     app, state = client
-    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    viewer = TEST
     _seat(app)
-    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    file_address(app, viewer, headers=LOCAL)
     index = state.token_index(state.token_chain)
     txid = "d4" * 32
     with index.open() as db:

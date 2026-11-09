@@ -10,10 +10,14 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from arcade import doginal_index as dx  # noqa: E402
 from arcade import mesh_web as M  # noqa: E402
+from arcade.script import b58check_decode  # noqa: E402
 from test_doginal_index import FUND, SIG, Chain, _envelope, _tx_to  # noqa: E402
+from address_claim import file_address, keyed  # noqa: E402
 
 TEXT = b"text/plain;charset=utf-8"
-A = b"\x76\xa9\x14" + b"\xaa" * 20 + b"\x88\xac"
+#: A's address as Pepecoin mainnet says it, from a key: filing it as an account's is proved (2026-11-09).
+A_ADDRESS, _ = keyed("main", 0xaa)
+A = b"\x76\xa9\x14" + b58check_decode(A_ADDRESS)[1] + b"\x88\xac"
 B = b"\x76\xa9\x14" + b"\xbb" * 20 + b"\x88\xac"
 
 
@@ -148,12 +152,12 @@ def test_only_the_names_holder_gets_a_draft_to_publish(client, tmp_path, monkeyp
     index.walker.owner_of = lambda spk: b58check_encode(56, spk[3:23]) if len(spk) == 25 else None
     index.__dict__.pop("_owners", None)
     monkeypatch.setattr(state, "ord_indexes", lambda: {"main": index})
-    a_address = b58check_encode(56, b"\xaa" * 20)
+    a_address = A_ADDRESS
     assert index.mesh("me-seeks.mesh")["holder"] == a_address
     stranger = app.get("/account/mesh/site", params={"name": "me-seeks.mesh"}).json()
     assert not stranger["mine"] and "not by your address on main" in stranger["why"]
     assert app.post("/account/mesh/draft", json={"name": "me-seeks.mesh", "pages": {"/": "# Mine?"}}).status_code == 403
-    said = app.post("/account/address", json={"address": a_address, "chain": "main"})
+    said = file_address(app, a_address, chain="main")
     assert said.status_code == 200, said.text
     site = app.get("/account/mesh/site", params={"name": "me-seeks.mesh"}).json()
     assert site["mine"] and site["page"]["pages"] == {"/": "# From A"}, "the holder's editor opens on the page now"

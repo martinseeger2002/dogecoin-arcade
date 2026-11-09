@@ -359,6 +359,33 @@ def test_arcadecore_has_the_account_tab_and_hides_what_the_account_hides(browser
         state.set_setting(modulelib.LOOK_SETTING, was)
 
 
+def test_the_wallet_proves_each_address_it_files_and_registers_its_segwit_address(browser, served, me):
+    """The node files no address without its key's proof (2026-11-09, security review). Sign-up and tellTheNode filed
+    the account's address on every chain with one (the `me` fixture), and picking Native SegWit in ArcadeCore's Receive
+    registers that address, signed by its own key, so the node watches it."""
+    base, state = served
+    assert all(me["addresses"].get(n) for n in ("regtest", "main", "dgbtest")), me["addresses"]
+    spot = f"segwit_watch:{me['pubkey']}:dgbtest"
+    state.set_setting(spot, "")
+    _lite(browser, base, "receive")
+    Select(browser.find_element(By.ID, "w-chain-receive")).select_by_value("dgbtest")
+    _until(browser, lambda: browser.find_element(By.ID, "w-kind-receive").is_displayed(), "the address type row")
+    Select(browser.find_element(By.ID, "w-kind-receive")).select_by_value("p2wpkh")
+    _until(browser, lambda: (state.setting(spot) or "").startswith("dgbt1q"), "the node registered the SegWit address")
+    _until(browser, lambda: browser.find_element(By.ID, "w-address").text == state.setting(spot),
+           "Receive shows the address the node now watches")
+    # The website's Wallet, with the same pick, registers it the same way.
+    registered = state.setting(spot)
+    state.set_setting(spot, "")
+    browser.get(f"{base}/me/wallet?coin=dgbtest")
+    _until(browser, lambda: state.setting(spot) == registered, "the website's Wallet registered the SegWit address")
+    # It registers the nested kind too (DigiByte has both); left out again, as the next test's arcade expects.
+    nested = f"segwit_watch:p2sh-p2wpkh:{me['pubkey']}:dgbtest"
+    _until(browser, lambda: (state.setting(nested) or "").startswith("y"), "and the nested one")
+    browser.get(f"{base}/join")                                 # a page of this arcade that registers nothing
+    state.set_setting(nested, "")
+
+
 def test_balances_count_every_address_type_and_the_pick_is_one_for_both_looks(browser, served, me):
     """Every address type an account holds coins on is counted in Balances (/account `kinds`), and the address type
     picked in ArcadeCore is the one the website's Wallet shows (one pick, kept under ArcadeCore's name for it)."""

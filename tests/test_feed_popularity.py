@@ -27,6 +27,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_account_feed import (arcade, _catch_up, _mined, _named,     # noqa: E402,F401
                                _posted, _sign_in)
 from test_funding import _pubkey, _sign                          # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import feedview                                     # noqa: E402
 from arcade.config import NETWORKS                              # noqa: E402
@@ -423,8 +424,7 @@ def pair(arcade):
                                   hash160(pubkey))
         browser = TestClient(app.app)       # a second machine, its own seat
         _sign_in(browser)
-        browser.post("/account/address", json={"address": address,
-                                               "coin_pubkey": pubkey.hex()})
+        file_address(browser, address, secret)
         rpc.call("sendtoaddress", address, 200.0)
         _mined(state, rpc)
         _named(browser, state, rpc, secret, pubkey, tag)

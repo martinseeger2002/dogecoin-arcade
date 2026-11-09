@@ -11,6 +11,7 @@ from test_web import app_state, client                          # noqa: F401,E40
 from test_me_page import _seat                                   # noqa: E402
 from test_funding import _pubkey                                 # noqa: E402
 from test_dogecoin_network import _with_doge                     # noqa: E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import doginals, funding                             # noqa: E402
 from arcade.script import b58check_encode, hash160               # noqa: E402
@@ -26,7 +27,7 @@ def _doge_account(app, state, monkeypatch, tmp_path, answers=None):
     """A signed-in account with a Dogecoin address holding a Doginal, another Doginal, and one clean coin."""
     doge = _with_doge(state, monkeypatch, ready=True)
     _seat(app)
-    said = app.post("/account/address", json={"address": ME, "chain": "doge"})
+    said = file_address(app, ME, int("31" * 32, 16), chain="doge")
     assert said.status_code == 200, said.text
     with state.token_index(doge).open() as db:
         for txid, value in ((T1, 100_000), (T2, 100_000), (T3, 300_000_000)):
@@ -537,7 +538,7 @@ def test_a_listing_holds_what_it_lists_until_it_is_unlisted_or_taken(client, mon
                           "get": {"network": "main", "kind": "coin", "amount": 100}}
     acct = state.messaging
     lister = b58check_encode(acct.params.pubkeyhash_version, hash160(_pubkey(int("31" * 32, 16))))
-    assert app.post("/account/address", json={"address": lister, "chain": acct.network}).status_code == 200
+    assert file_address(app, lister, int("31" * 32, 16), chain=acct.network).status_code == 200
     over = app.post("/account/orders/post", json={"orders": [order("ord-1", 10), order("ord-2", 6)]})
     # 2026-10-23: the rest of the book is filed, so it answers 200 and says what came off (a 409 told @apple a PEP
     # listing had failed, over an old frgy order of theirs); the tab forgets what came off.

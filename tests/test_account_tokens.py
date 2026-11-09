@@ -15,8 +15,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_me_page import _seat, public, EDGE            # noqa: F401,E402
+from address_claim import TEST, file_address                      # noqa: E402  (TEST: version 111, regtest)
 
-TEST = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"        # version 111, regtest
 SOMEBODY = "mpK9VHfd3ZkKZXMoWPy1kDf65RLzzbP1Bd"      # version 111, regtest
 
 ECOSYSTEM_MAIN = 1
@@ -54,7 +54,7 @@ def _balance(state, address, property_id, amount):
 def test_an_account_sees_what_it_holds(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state)
     _balance(state, TEST, pid, 5_00000000)
     said = app.get("/account/tokens").json()
@@ -68,7 +68,7 @@ def test_an_account_sees_what_it_holds(client):
 def test_it_does_not_see_a_zero_balance(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state, issuer=SOMEBODY)
     _balance(state, TEST, pid, 0)
     said = app.get("/account/tokens").json()
@@ -79,7 +79,7 @@ def test_it_does_not_see_a_zero_balance(client):
 def test_sending_more_than_you_hold_is_refused(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state)
     _balance(state, TEST, pid, 1_00000000)
     answer = app.post("/account/token/send",
@@ -92,7 +92,7 @@ def test_sending_more_than_you_hold_is_refused(client):
 def test_a_token_that_does_not_exist_is_refused(client):
     app, _ = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     answer = app.post("/account/token/send",
                       json={"property_id": 99999, "to": SOMEBODY,
                             "amount": "1"})
@@ -105,7 +105,7 @@ def test_a_token_that_does_not_exist_is_refused(client):
 def test_it_will_not_send_to_itself(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state)
     _balance(state, TEST, pid, 5_00000000)
     answer = app.post("/account/token/send",
@@ -170,7 +170,7 @@ def test_a_token_you_issue_is_listed_even_at_zero(client):
     any (tester-e5, 2026-09-26: "stuck at zero forever")."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state, property_id=101, name="Skull Points", divisible=False)
     _managed(state, pid)
     said = app.get("/account/tokens").json()
@@ -182,7 +182,7 @@ def test_a_token_you_issue_is_listed_even_at_zero(client):
 def test_only_the_issuer_manages_a_token(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state, property_id=102, issuer=SOMEBODY)
     _managed(state, pid)
     for action in ("grant", "revoke", "issuer"):
@@ -196,7 +196,7 @@ def test_only_the_issuer_manages_a_token(client):
 def test_a_fixed_supply_cannot_be_granted_or_revoked(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state, property_id=103)
     for action in ("grant", "revoke"):
         answer = app.post("/account/token/manage",
@@ -208,7 +208,7 @@ def test_a_fixed_supply_cannot_be_granted_or_revoked(client):
 def test_revoking_more_than_you_hold_and_handing_to_yourself_are_refused(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state, property_id=104)
     _managed(state, pid)
     _balance(state, TEST, pid, 1_00000000)
@@ -226,7 +226,7 @@ def test_revoking_more_than_you_hold_and_handing_to_yourself_are_refused(client)
 def test_the_issuer_sees_its_controls_on_the_token_page(client):
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     pid = _token(state, property_id=105, name="Skull Points")
     _managed(state, pid)
     page = app.get(f"/tokens/{pid}").text

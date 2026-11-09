@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
+from address_claim import TEST, file_address, keyed               # noqa: E402
 
 from arcade import approvals as A                                # noqa: E402
 from arcade import send_refs as R                                # noqa: E402
@@ -209,7 +210,7 @@ def _reader(app, state, address: str) -> dict:
     """Sign a fresh account in, give it `address`, open the page: its frame's headers."""
     from test_me_page import _seat
     _seat(app)
-    app.post("/account/address", json={"address": address}, headers=LOCAL)
+    file_address(app, address, headers=LOCAL)
     page = app.get(f"/inscriptions/{PAGE}/full").text
     ticket = re.search(rf"/content/{PAGE}\?v=([A-Za-z0-9_-]+)", page).group(1)
     return {"host": "pages.example", "cf-ray": "abc",
@@ -239,7 +240,7 @@ ASK = {"kind": "coins", "to": "@vex", "amount": "1000", "label": "ASHVALE", "ref
 
 def test_a_readers_repeat_is_the_same_question_and_refs_are_per_reader(public):
     app, state = public
-    first_reader = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    first_reader = _reader(app, state, TEST)
     one = app.post("/r/send", json=ASK, headers=first_reader)
     assert one.status_code == 202, one.text
     again = app.post("/r/send", json=ASK, headers=first_reader)
@@ -247,7 +248,7 @@ def test_a_readers_repeat_is_the_same_question_and_refs_are_per_reader(public):
     assert again.json()["repeat"] is True
     assert len(app.get("/account/pagesends").json()["requests"]) == 1, "asked once"
 
-    second_reader = _reader(app, state, _addr(11, state.token_chain))
+    second_reader = _reader(app, state, keyed(state.token_chain.network, 11, params=state.token_chain.params)[0])
     two = app.post("/r/send", json=ASK, headers=second_reader)
     assert two.status_code == 202 and two.json()["id"] != one.json()["id"], \
         "the same ref from another wallet is another request"
@@ -259,7 +260,7 @@ def test_a_readers_repeat_is_the_same_question_and_refs_are_per_reader(public):
 
 def test_a_repeat_after_the_reader_answered_shows_the_answer(public, monkeypatch):
     app, state = public
-    head = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    head = _reader(app, state, TEST)
     rid = app.post("/r/send", json=ASK, headers=head).json()["id"]
 
     class Rpc:
@@ -279,7 +280,7 @@ def test_a_repeat_after_the_reader_answered_shows_the_answer(public, monkeypatch
 
 def test_a_poll_after_a_restart_still_gets_the_last_answer(public):
     app, state = public
-    head = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    head = _reader(app, state, TEST)
     rid = app.post("/r/send", json=ASK, headers=head).json()["id"]
     assert app.post("/account/pagesends/answer",
                     json={"id": rid, "status": "denied"}).status_code == 200
@@ -314,7 +315,7 @@ def _ltc_test_ready(state, monkeypatch):
 def test_a_page_asks_for_coins_on_l_test_and_the_reader_is_shown_that_chain(public, monkeypatch):
     app, state = public
     t = _ltc_test_ready(state, monkeypatch)
-    head = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    head = _reader(app, state, TEST)
     to = b58check_encode(111, bytes([5]) * 20)                       # an L test address
     ask = {"kind": "coins", "to": to, "amount": "0.05", "chain": "ltctest", "ref": "plot-W12"}
     filed = app.post("/r/send", json=ask, headers=head)
@@ -350,7 +351,7 @@ def test_a_page_asks_for_coins_on_l_test_and_the_reader_is_shown_that_chain(publ
 def test_only_coins_go_to_another_chain_and_only_one_this_arcade_runs(public, monkeypatch):
     app, state = public
     _ltc_test_ready(state, monkeypatch)
-    head = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    head = _reader(app, state, TEST)
     token = app.post("/r/send", json={"kind": "token", "to": "@vex", "propertyid": 3, "amount": "1",
                                       "chain": "ltctest"}, headers=head)
     assert token.status_code == 400 and "only coins" in token.json()["error"]

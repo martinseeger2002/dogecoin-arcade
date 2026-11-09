@@ -43,6 +43,7 @@ from test_funding import _sign                                     # noqa: E402
 from test_me_page import _seat                                     # noqa: E402
 from test_restore_kit import CORE_SAID, PHRASE, descsum            # noqa: E402
 from test_trade import _trade                                      # noqa: E402
+from address_claim import file_address, register_segwit           # noqa: E402
 
 from arcade import funding, restore_kit, seed, utxos               # noqa: E402
 from arcade import node_trader as NT, trade as T                   # noqa: E402
@@ -256,17 +257,16 @@ def test_a_send_from_each_kind_is_built_by_the_wallet_checked_by_the_browser_and
     as_arcade = {name: _testnet(mine[name]["address"]) for name, _, _ in KINDS}
     payee = {name: _testnet(theirs[name]["address"]) for name, _, _ in KINDS}
 
-    # The account as sign-up leaves it, then the two SegWit kinds registered on the Wallet page (the nested one with
-    # its key, which its address hides).
-    pep_test = b58check_encode(NETWORKS["test"].pubkeyhash_version,
+    # The account as sign-up leaves it, then the two SegWit kinds registered on the Wallet page, each with its key's
+    # proof (the nested one's key is also what its address hides).
+    pep_test = b58check_encode(state.messaging.params.pubkeyhash_version,
                                hash160(bytes.fromhex(derived["wallets"]["dgbtest"][0]["coinKey"]["pubkey"])))
-    assert app.post("/account/address", json={"address": pep_test}).status_code == 200
-    r = app.post("/account/address", json={"address": as_arcade["legacy"], "chain": "dgbtest"})
+    assert file_address(app, pep_test, int(mine["legacy"]["key"], 16)).status_code == 200
+    r = file_address(app, as_arcade["legacy"], int(mine["legacy"]["key"], 16), chain="dgbtest")
     assert r.status_code == 200, r.text
-    r = app.post("/account/segwit/register", json={"chain": "dgbtest", "address": as_arcade["nativeSegwit"]})
+    r = register_segwit(app, as_arcade["nativeSegwit"], int(mine["nativeSegwit"]["key"], 16), chain="dgbtest")
     assert r.status_code == 200 and r.json()["kind"] == "p2wpkh", r.text
-    r = app.post("/account/segwit/register", json={"chain": "dgbtest", "address": as_arcade["p2shSegwit"],
-                                                  "pubkey": mine["p2shSegwit"]["pubkey"]})
+    r = register_segwit(app, as_arcade["p2shSegwit"], int(mine["p2shSegwit"]["key"], 16), chain="dgbtest")
     assert r.status_code == 200 and r.json()["kind"] == "p2sh-p2wpkh", r.text
 
     funded = {kind: _fund(dgb, as_arcade[kind], 5) for kind in as_arcade}

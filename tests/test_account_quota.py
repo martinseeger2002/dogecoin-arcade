@@ -30,10 +30,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                           # noqa: F401,E402
 from test_me_page import _seat                                   # noqa: E402
 from test_funding import _pubkey                                 # noqa: E402
-from test_account_mainnet import MAIN, TEST                      # noqa: E402
+from address_claim import file_address, keyed                     # noqa: E402
 
 from arcade import accounts as accountslib                       # noqa: E402
-from arcade.script import b58check_decode, b58check_encode, hash160  # noqa: E402
+from arcade.script import b58check_encode, hash160               # noqa: E402
 
 COIN = 100_000_000
 
@@ -44,15 +44,16 @@ THEIRS_MAIN = b58check_encode(56, hash160(_pubkey(int("33" * 32, 16))))
 THEIRS_TEST = b58check_encode(111, hash160(_pubkey(int("44" * 32, 16))))
 
 SECRET = int("51" * 32, 16)
+#: The account's address on each chain, from its coin key (which proves them its own, 2026-11-09).
+TEST, _ = keyed("regtest", SECRET)
+MAIN, _ = keyed("main", SECRET)
 
 
 def _open(app):
     """A signed-in account with an address on each chain, as signup leaves it."""
     pubkey = _seat(app)
-    app.post("/account/address", json={"address": TEST,
-                                       "coin_pubkey": _pubkey(SECRET).hex()})
-    app.post("/account/address", json={"address": MAIN, "chain": "main",
-                                       "coin_pubkey": _pubkey(SECRET).hex()})
+    file_address(app, TEST)
+    file_address(app, MAIN, chain="main")
     return pubkey
 
 
@@ -165,10 +166,9 @@ def test_one_accounts_hour_is_not_another_accounts(client):
     # A second account on the same node, who has done nothing at all: with a wallet of its own (2026-11-09: one
     # address is one account's, and /account/address refuses another account's).
     other = int("52" * 32, 16)
-    other_main = b58check_encode(b58check_decode(MAIN)[0], hash160(_pubkey(other)))
+    other_main, _ = keyed("main", other)
     _seat(app)
-    assert app.post("/account/address", json={"address": other_main, "chain": "main",
-                                              "coin_pubkey": _pubkey(other).hex()}).status_code == 200
+    assert file_address(app, other_main, chain="main").status_code == 200
     _coin(app, state, other_main, "main")
     assert _row(app, "send")["used"] == 0
     assert _send(app).status_code == 200, \

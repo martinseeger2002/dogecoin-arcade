@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client  # noqa: F401,E402
+from address_claim import file_address                            # noqa: E402
 
 from arcade import ddaddress as ddlib  # noqa: E402
 from arcade import taproot  # noqa: E402
@@ -240,10 +241,8 @@ def test_the_profile_carries_the_key_only_with_a_proof_that_checks(client, monke
     _seat(app)
     net = state.messaging.network
     home = b58check_encode(state.messaging.params.pubkeyhash_version, NAME_HASH)
-    assert app.post("/account/address", json={"address": home, "chain": net,
-                                               "coin_pubkey": NAME_KEY.hex()}).status_code == 200
-    app.post("/account/address", json={"address": b58check_encode(30, hash160(MAIN_KEY)), "chain": "dgb",
-                                       "coin_pubkey": MAIN_KEY.hex()})
+    assert file_address(app, home, NAME_SECRET, chain=net).status_code == 200
+    file_address(app, b58check_encode(30, hash160(MAIN_KEY)), MAIN_SECRET, chain="dgb")
     built = []
     real = webapp.envelopelib.build_key_announcement
 
@@ -274,8 +273,8 @@ def test_an_announcement_without_the_key_is_published_again(client, monkeypatch)
     net = state.messaging.network
     home = b58check_encode(state.messaging.params.pubkeyhash_version, NAME_HASH)
     dgb = b58check_encode(30, hash160(MAIN_KEY))
-    assert app.post("/account/address", json={"address": home, "chain": net}).status_code == 200
-    app.post("/account/address", json={"address": dgb, "chain": "dgb", "coin_pubkey": MAIN_KEY.hex()})
+    assert file_address(app, home, NAME_SECRET, chain=net).status_code == 200
+    file_address(app, dgb, MAIN_SECRET, chain="dgb")
     chains = json.dumps({"dgb": dgb})
     with state.store() as store:
         store.add_key_announcement("b1" * 32, home, b"\x01" * 32, "fp", 100, 1, stated=True, chain_addresses=chains)

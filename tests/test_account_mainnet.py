@@ -27,9 +27,9 @@ LOCAL = {"host": "127.0.0.1:8420"}
 
 #: A well-formed address on each chain, made with this repository's own
 #: encoder rather than typed: an address with a bad checksum is refused
-#: before any of the chain logic this file is about ever runs.
-MAIN = "PiNoqXu5dWsaEhiuoWCHwsZFB1e2CJBNmD"        # version 56
-TEST = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"        # version 111, regtest
+#: before any of the chain logic this file is about ever runs. Each from a
+#: key, which proves it is the account's (address_claim, 2026-11-09).
+from address_claim import MAIN, TEST, file_address                # noqa: E402,F401  (version 56; 111, regtest)
 
 
 def _chains(app):
@@ -52,8 +52,8 @@ def test_a_signed_out_browser_is_told_which_chains_there_are(client):
 def test_an_account_has_a_wallet_on_each_chain(client):
     app, _ = client
     pubkey = _seat(app)
-    app.post("/account/address", json={"address": TEST})
-    app.post("/account/address", json={"address": MAIN, "chain": "main"})
+    file_address(app, TEST)
+    file_address(app, MAIN, chain="main")
     chains = _chains(app)
     assert chains["main"]["address"] == MAIN
     assert chains["regtest"]["address"] == TEST
@@ -91,7 +91,7 @@ def test_a_chain_this_node_does_not_run_is_refused(client):
 def test_sending_on_a_chain_with_no_address_says_which(client):
     app, _ = client
     _seat(app)
-    app.post("/account/address", json={"address": TEST})
+    file_address(app, TEST)
     answer = app.post("/account/send",
                       json={"to": MAIN, "amount": "1", "chain": "main"})
     assert answer.status_code == 400
@@ -101,7 +101,7 @@ def test_sending_on_a_chain_with_no_address_says_which(client):
 def test_a_mainnet_send_will_not_take_a_testnet_address(client):
     app, _ = client
     _seat(app)
-    app.post("/account/address", json={"address": MAIN, "chain": "main"})
+    file_address(app, MAIN, chain="main")
     answer = app.post("/account/send",
                       json={"to": TEST, "amount": "1", "chain": "main"})
     assert answer.status_code == 400
@@ -136,7 +136,7 @@ def test_a_tag_is_paid_on_whichever_chain_it_is_asked_about(client):
     not published one, it says so rather than paying the wrong chain."""
     app, state = client
     _seat(app)
-    app.post("/account/address", json={"address": MAIN, "chain": "main"})
+    file_address(app, MAIN, chain="main")
     answer = app.post("/account/send",
                       json={"to": "@nobodyatall", "amount": "1",
                             "chain": "main"})
