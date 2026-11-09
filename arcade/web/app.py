@@ -3584,12 +3584,15 @@ def create_app(state: AppState) -> FastAPI:
             return ""
         if chain.network == state.messaging.network:
             return author
+        with state.store() as store:
+            said = store.key_for(author)
+        published = _published_on(said, chain)   # 2026-11-08: what they published for this chain comes first
+        if published:
+            return published
         if chain.is_ltc_test:                    # L test: the same key as their Pepecoin testnet one
             return _ltc_test_twin(author)
         if chain.is_addon and not _named_addon(chain) and not chain.is_mainnet:
             return _chain_twin(author, chain.params)
-        with state.store() as store:
-            said = store.key_for(author)
         if said is None or "other_address" not in said.keys():
             return ""
         other = str(said["other_address"] or "")
@@ -4475,17 +4478,29 @@ def create_app(state: AppState) -> FastAPI:
         wanted = (tag or "").strip().lstrip("@").lower()
         address, _claiming = _address_of_tag(wanted)
         profile = _profile_of(address)
+        try:
+            with state.store() as store:
+                said = store.key_for(address) if address else None
+        except Exception:
+            said = None
+
+        def _theirs(context) -> str:
+            """Their address on `context`: the tag's own on the messaging chain; what they published for it
+            (2026-11-08); else the published mainnet one, or their Dogecoin one (published, or their mainnet key's
+            twin) -- 2026-10-15 -- and the same key's twin on the other chains."""
+            if context.network == state.messaging.network:
+                return address
+            return _published_on(said, context) \
+                or (profile.get("doge", "") if context.is_doge
+                    else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc
+                    else _ltc_test_twin(address) if context.is_ltc_test
+                    else _chain_twin(profile.get("mainnet", "") if context.is_mainnet else address, context.params)
+                    if context.is_addon else profile.get("mainnet", ""))
+
         holdings: list[dict[str, Any]] = []
         coins: list[dict[str, Any]] = []
         for context in state.all_chains:
-            # Their address on each chain: the tag's own on the messaging chain, the published mainnet one, and their
-            # Dogecoin one (published, or their mainnet key's twin) -- 2026-10-15.
-            where = address if context.network == state.messaging.network \
-                else profile.get("doge", "") if context.is_doge \
-                else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc \
-                else _ltc_test_twin(address) if context.is_ltc_test \
-                else _chain_twin(profile.get("mainnet", "") if context.is_mainnet else address, context.params) \
-                if context.is_addon else profile.get("mainnet", "")
+            where = _theirs(context)
             row = {"chain": context, "coin": context.params.coin, "address": where, "balance": None}
             if where and context in state.token_chains:
                 try:
@@ -4495,12 +4510,7 @@ def create_app(state: AppState) -> FastAPI:
                     row["balance"] = None
             coins.append(row)
         for context in state.token_chains:
-            where = address if context.network == state.messaging.network \
-                else profile.get("doge", "") if context.is_doge \
-                else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc \
-                else _ltc_test_twin(address) if context.is_ltc_test \
-                else _chain_twin(profile.get("mainnet", "") if context.is_mainnet else address, context.params) \
-                if context.is_addon else profile.get("mainnet", "")
+            where = _theirs(context)
             if not where:
                 continue
             entry: dict[str, Any] = {"chain": context, "address": where,
@@ -29468,14 +29478,18 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError(f"nobody holds @{tag} on this chain")
         if chain.network == home.network:
             return found
+        with state.store() as store:
+            said = store.key_for(found)
+        # 2026-11-08: the address they published for this chain, when they did; the twins below otherwise.
+        published = _published_on(said, chain)
+        if published:
+            return published
         if chain.is_ltc_test:
             # L test to an @tag (2026-10-17): their Pepecoin testnet key's twin on Litecoin testnet.
             twin = _ltc_test_twin(found)
             if not twin:
                 raise ValueError(f"@{tag} has no address this node can pay in LTC TEST.")
             return twin
-        with state.store() as store:
-            said = store.key_for(found)
         other = str((said["other_address"] if said is not None
                      and "other_address" in said.keys() else "") or "")
         if chain.is_doge:
@@ -37992,6 +38006,69 @@ def _named_addon(chain) -> bool:
     return bool(getattr(chain, "is_doge", False) or getattr(chain, "is_litecoin", False))
 
 
+def _published_on(said, chain) -> str:
+    """The address a key announcement (a `key_announcement` row) published for `chain`, else "" (2026-11-08).
+
+    The twins above work an address out from the Pepecoin one, which is right only for a wallet that holds every
+    real chain on one key. An address the holder PUBLISHED for that chain (ANNOUNCE_TAG_CHAIN, 2026-10-18; for
+    Dogecoin its own section) is where they said they take payment, so it comes first -- and it is the only answer
+    for a holder who published a chain's address but no Pepecoin main one (an ArcadeCore node's own name).
+
+    Held to the chain's own P2PKH byte: what was published is what somebody said, and an address for another chain
+    under this one's name is no address to pay here."""
+    if said is None:
+        return ""
+    keys = said.keys()
+    address = ""
+    if getattr(chain, "is_doge", False) and "doge_address" in keys:
+        address = str(said["doge_address"] or "")
+    if not address and "chain_addresses" in keys:
+        try:
+            published = json.loads(said["chain_addresses"] or "{}")
+        except ValueError:
+            published = {}
+        address = published.get(chain.network) if isinstance(published, dict) else ""
+    if not address or not isinstance(address, str):
+        return ""
+    try:
+        version, payload = b58check_decode(address)
+    except Exception:
+        return ""
+    if version != chain.params.pubkeyhash_version or len(payload) != 20:
+        return ""
+    return address
+
+
+def _published_for_tag(state, wanted: str, chain) -> str:
+    """The address the holder of @wanted, on the chain names are claimed on, published for `chain`, else ""."""
+    for home in state.token_chains:
+        if home.network != state.messaging.network:
+            continue
+        try:
+            holder = state.token_index(home).address_of(wanted)
+            if not holder:
+                return ""
+            with state.store() as store:
+                return _published_on(store.key_for(holder), chain)
+        except Exception:
+            return ""
+    return ""
+
+
+def _twin_or_published(state, wanted: str, chain, twin_of) -> str:
+    """The node's send to an @name on a chain names are not claimed on: the twin of the claim it reads, as always;
+    when that finds nothing, the address the name's holder published for this chain (2026-11-08). A claim found
+    still wins, so nothing that was paid before is paid somewhere else now."""
+    try:
+        twin = twin_of()
+    except ValueError:
+        published = _published_for_tag(state, wanted, chain)
+        if published:
+            return published
+        raise
+    return twin or _published_for_tag(state, wanted, chain)
+
+
 def _tag_address(state, destination: str, *, mainnet) -> str:
     """An @tag turned into the address that holds it, or the text unchanged.
 
@@ -38011,28 +38088,34 @@ def _tag_address(state, destination: str, *, mainnet) -> str:
     if not taglib.looks_like_a_tag(destination):
         return destination
     wanted = taglib.normalise(destination)
+    # Off the chains names are claimed on, the twin of the claim read as always; when there is none, the address
+    # the name's holder published for that chain (2026-11-08, `_twin_or_published`).
     if getattr(mainnet, "is_ltc_test", False):
         # L test (2026-10-17): the holder's Pepecoin TESTNET key, Litecoin testnet's version byte.
-        twin = _ltc_test_twin(_tag_address(state, destination, mainnet=False))
+        twin = _twin_or_published(state, wanted, mainnet,
+                                  lambda: _ltc_test_twin(_tag_address(state, destination, mainnet=False)))
         if not twin:
             raise ValueError(f"@{wanted} has no address this node can pay in LTC TEST.")
         return twin
     if getattr(mainnet, "is_ltc", False):
         # Nor on Litecoin (2026-10-17): the same key, Litecoin's version byte (`_ltc_twin`).
-        twin = _ltc_twin(_tag_address(state, destination, mainnet=True))
+        twin = _twin_or_published(state, wanted, mainnet,
+                                  lambda: _ltc_twin(_tag_address(state, destination, mainnet=True)))
         if not twin:
             raise ValueError(f"@{wanted} has no address this node can pay in LTC.")
         return twin
     if getattr(mainnet, "is_addon", False) and not _named_addon(mainnet):
         # Any other add-on chain (2026-10-22): the holder's Pepecoin key, that chain's version byte.
-        twin = _chain_twin(_tag_address(state, destination, mainnet=bool(mainnet.is_mainnet)), mainnet.params)
+        twin = _twin_or_published(state, wanted, mainnet, lambda: _chain_twin(
+            _tag_address(state, destination, mainnet=bool(mainnet.is_mainnet)), mainnet.params))
         if not twin:
             raise ValueError(f"@{wanted} has no address this node can pay in {mainnet.params.coin}.")
         return twin
     if getattr(mainnet, "is_doge", False):
         # Tags are not claimed on Dogecoin: the holder's Pepecoin mainnet
         # address, as the same key on Dogecoin (`_doge_twin`).
-        twin = _doge_twin(_tag_address(state, destination, mainnet=True))
+        twin = _twin_or_published(state, wanted, mainnet,
+                                  lambda: _doge_twin(_tag_address(state, destination, mainnet=True)))
         if not twin:
             raise ValueError(f"@{wanted} has no address this node can pay in DOGE.")
         return twin
