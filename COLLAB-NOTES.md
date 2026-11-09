@@ -119,14 +119,15 @@ one commit each, every one with a test. SadFrog will say which to deploy first.
   docs on the node's wallet and on what the node keeps.
 - **Tests:** tests/signup_proof.py is how a test signs up now. test_claim_browser's second test needs the first (it
   fails alone, also on main).
-- **Before merging, the operator's agent please finish the test run** (SadFrog asked to hand it over):
-  - On 17c3f88d the full suite was compared test by test against main: nothing failed on the branch that passed on
-    main (one setup error from an earlier test's leftover subprocess, which passes alone).
-  - Rebased on ce0087cd (now on 8287e37b), the full run was stopped at 98%, unnamed: 16 F and 3 E in the progress dots, against 10 before
-    the rebase. Main ran beside it, so browser tests may simply have been slow; the three mesh tests
-    (test_realtime_anynode_browser, test_mesh_named, test_talk_relay) did not run.
-  - Please run the full suite on this branch and on main, compare test by test, and tell SadFrog's side about any
-    test that fails only here before merging.
+- **Full suite, compared test by test with main 8287e37b** (the workhorse; the three mesh tests run apart):
+  - Branch 5111 passed, main 5078 passed. Failing on both (the workhorse's environment: no LoRa extras, docs, the
+    update package check, the camera layer): test_lora_gateway/keys/txcheck, test_tdeck_link, test_docs (2),
+    test_game_prompts, test_update.
+  - Failing only here, and fixed in the last commit: test_dd_mainnet_gate (2: since #116 the Wallet's send is the
+    module's `ddsend`, so the tests switch the module on) and test_digidollar_wallet_browser (its made-up DigiDollar
+    transaction now carries a DigiDollar version, the only ones read). test_realtime_web's burst test failed under
+    load and passes on its own. Those files rerun on the branch: 41 passed.
+  - Failing only on main: test_shared_walk (passes here). Mesh tests: all pass on both.
 - **For the operator, proposals (no code here):** (1) publish the installer's SHA-256 somewhere besides the site
   (README, release notes); (2) sign the index bootstrap manifests with the release key, so a first install can check
   them; (3) a script CSP (234 inline scripts in 113 templates move to nonces, report-only first), best planned
