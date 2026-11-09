@@ -204,8 +204,7 @@
               <input type="hidden" name="back" value="{{ path }}?page={{ page }}">
               <input autocomplete="off" name="amount" inputmode="decimal"
                      placeholder="amount" style="flex:1 1 76px;min-width:0">
-              <select autocomplete="off" name="kind" style="flex:1 1 90px"
-                      onchange="var t=this.form.querySelector('[name=property_id]'); if(t) t.hidden = this.value !== 'token'">
+              <select autocomplete="off" name="kind" style="flex:1 1 90px" data-offer-kind>
                 <option value="coins">{{ coin_name }}</option>
                 {% if tokens %}<option value="token">a token</option>{% endif %}
               </select>
@@ -230,6 +229,12 @@
   <div class="panel empty"><p>Nothing of this collection is indexed yet.</p></div>
 {% endif %}
 <script nonce="{{ csp_nonce }}">
+// An offer in a token shows the token list (the script policy, 2026-11-09: a listener, not an inline onchange).
+document.addEventListener("change", function (e) {
+  var kind = e.target;
+  if (!kind.matches || !kind.matches("select[data-offer-kind]")) return;
+  var t = kind.form.querySelector("[name=property_id]"); if (t) t.hidden = kind.value !== "token";
+});
 (function () {
   var bar = document.getElementById("piece-sort").parentNode;
   var box = bar && bar.nextElementSibling, only = document.getElementById("only-sale"),
