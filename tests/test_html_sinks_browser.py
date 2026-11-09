@@ -130,3 +130,33 @@ def test_a_mintpad_preview_opened_on_its_own_cannot_reach_the_arcades_storage_an
     name = "Punks</title><script>localStorage.setItem('pwned','mintpad')</script>"
     browser.get(f"{base}/inscriptions/collection/preview?" + urlencode({"folder": str(build), "name": name}))
     assert _stored_by_the_preview(browser, base) is None
+
+
+# --- the trade card: a token's name is its issuer's words --------------------------------------------------------------
+
+def test_the_trade_card_shows_the_token_and_the_coin_by_name_as_words(served, browser):
+    from arcade.web.app import TEMPLATES
+
+    _, base, _ = served
+    FAKE["/sinks-test"] = f"""<!doctype html><meta charset="utf-8">
+{TEMPLATES.env.get_template("_exui.html").module.style()}
+<div class="ex-trade" id="card">
+  <div class="ex-modes"><button type="button" data-mode="limit">Set my price</button>
+    <button type="button" data-mode="best">Best price now</button></div>
+  <label><input type="radio" name="side" value="bid" checked>Buy</label>
+  <label><input type="radio" name="side" value="ask">Sell</label>
+  <input id="amount" value="5"><input id="price" value="2">
+  <div class="ex-quote"></div><button type="button" id="go"></button>
+</div>"""
+    browser.get(f"{base}/sinks-test")
+    browser.execute_script("""
+        window.card = exTrade(document.getElementById('card'), {sideName: 'side', buyValue: 'bid', amount: 'amount',
+            price: 'price', button: 'go', asks: [[2, 1]], bids: [], coin: arguments[0], token: arguments[0],
+            feePermille: 10});
+        window.card.setMode('best');      // 5 asked, 1 offered: "Only 1 <token> is offered"
+    """, SNEAKY)
+    assert SNEAKY in _text(browser, "#card .ex-quote"), "the names are shown, as the words they are"
+    _nothing_ran(browser, "#card")
+    browser.execute_script("window.card.setMode('limit')")    # the node fee's row names the coin
+    assert "Node fee" in _text(browser, "#card .ex-quote")
+    _nothing_ran(browser, "#card")
