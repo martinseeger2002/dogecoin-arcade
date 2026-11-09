@@ -1268,7 +1268,7 @@ def create_app(state: AppState) -> FastAPI:
     fundinglib.GUARDS = []
     fundinglib.GUARD_BY_NET = {}
     if getattr(state, "home", None) is not None:
-        from .. import doginals as _doginals, rpc as _rpclib
+        from .. import digiassets as _digiassets, doginals as _doginals, rpc as _rpclib
         from ..doginal_index import STARTS as _ORD_STARTS, TAPROOT as _ORD_TAPROOT
         _guards = []
 
@@ -1313,7 +1313,11 @@ def create_app(state: AppState) -> FastAPI:
             # Litecoin testnet neither (2026-11-05, tbuuol: no token protocols on LTC, tLTC and KOT): with no ord
             # index every small coin there waited "unknown" and the Wallet called it "held in Litecoin
             # inscriptions". A chain without an ord index (doginal_index.STARTS) has no guard.
-            if _lchain.network == "doge" or _lchain.params.tx_time or _lchain.network not in _ORD_STARTS:
+            # DigiByte and its testnet read DigiAssets too (2026-11-09, security review, arcade/digiassets.py): the
+            # testnet, with no ord index, gets a guard that reads DigiAssets alone.
+            _da = _lchain.network in _digiassets.CHAINS
+            if _lchain.network == "doge" or _lchain.params.tx_time or (_lchain.network not in _ORD_STARTS
+                                                                       and not _da):
                 continue
             # Litecoin (2026-10-17, SadFrog's side): the same guard, reading Doginals-format envelopes
             # (arcade/ltc_ord.py) through the Litecoin node. On regtest a node's wallet carried an
@@ -1325,7 +1329,8 @@ def create_app(state: AppState) -> FastAPI:
             # Luckycoin's 5 is Litecoin's legacy "3"): the guard is found by the address alone.
             _ltc = _doginals.Doginals(Path(state.home) / f"{_lchain.network}-inscriptions.sqlite",
                                       rpc_factory=_lchain.rpc, index=_ord_index_of(_lchain.network),
-                                      taproot=_lchain.network in _ORD_TAPROOT)
+                                      taproot=_lchain.network in _ORD_TAPROOT, digiassets=_da,
+                                      ords=_lchain.network in _ORD_STARTS)
             _ltc_versions = {_lchain.params.pubkeyhash_version}
             if _others.get(_lchain.params.scripthash_version, set()) <= {_lchain.network}:
                 _ltc_versions.add(_lchain.params.scripthash_version)

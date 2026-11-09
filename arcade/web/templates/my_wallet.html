@@ -1072,8 +1072,9 @@ function drawHead() {
   // Set aside for this account's offers and orders, on this arcade or another (2026-10-19): not leaving, not to spend.
   if (c.held) bits.push(["out", `${coinsOf(c.held)} held for your offers`]);
   // Coins carrying an inscription are held, not spendable (2026-10-15): said beside the number they are left out of.
+  // On DigiByte a DigiAsset's coin is held the same way (2026-11-09, arcade/digiassets.py).
   const inscWord = c.network === "doge" ? "Doginals" : c.network === "main" ? "Pepinals"
-    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : c.network === "dgb" ? "DigiByte ordinals" : c.network === "flop" ? "Flopinals" : "inscriptions";
+    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : c.network === "dgb" ? "DigiByte ordinals and DigiAssets" : c.network === "dgbtest" ? "DigiAssets" : c.network === "flop" ? "Flopinals" : "inscriptions";
   // An imported wallet's own (2026-10-22): its number is what it can send; what is held is said beside it.
   const held1 = w ? (w.status || {}) : c;
   if (held1.inscribed) bits.push(["out", `${coinsOf(held1.inscribed)} held in ${inscWord}`]);

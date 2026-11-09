@@ -11,6 +11,10 @@ a few raw transactions per coin, through the chain's own node. Optionally an ord
 A coin is kept OUT of an ordinary send when an inscription sits on it, or when it is small and could not be read. Every
 answer is kept (an unspent coin's never changes): one reading per transaction, ever. Sending an inscription ON PURPOSE
 spends its coin through doginal_send, not this filter.
+
+On DigiByte the guard reads DigiAssets too (2026-11-09, security review; arcade/digiassets.py): each output a DigiAsset
+transaction may pay an asset to is kept out of ordinary sends whatever its value, and a DigiAsset transaction that
+cannot be read exactly keeps every output it made out.
 """
 
 import json
@@ -21,6 +25,8 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+
+from . import digiassets as _digiassets
 
 # 2026-10-14: "if at some point, we can spin up our own. Wonkyord we will do that." ARCADE_DOGINALS=ord with
 # ARCADE_ORD_URL=<an ord-style server> adds its word to the chain's own reading. The default is the chain alone.
@@ -56,8 +62,15 @@ class Unknown(Exception):
 class Doginals:
     """What sits on each output of a transaction, read from the chain (and an ord-style server, when set), remembered."""
 
-    def __init__(self, path: Path, fetch=None, rpc_factory=None, index=None, taproot: bool = False):
+    def __init__(self, path: Path, fetch=None, rpc_factory=None, index=None, taproot: bool = False,
+                 digiassets: bool = False, ords: bool = True):
         self.path = Path(path)
+        # DigiByte (2026-11-09, security review): DigiAssets are read from each transaction too (`_add_digiassets`).
+        # Its answers are kept in a table of their own, `tx2da`: an answer kept before the guard read DigiAssets
+        # (`tx2`) is never taken as one that did. `ords` False: a chain with no ord index (DigiByte testnet), whose
+        # guard reads DigiAssets alone and traces nothing back.
+        self.digiassets, self.ords = digiassets, ords
+        self._table = "tx2da" if digiassets else "tx2"
         # A chain whose ords are mostly ord's own Taproot kind (doginal_index.TAPROOT: Litecoin, Bellscoin): their
         # content is read from the reveal's witness too (`content`, 2026-10-25).
         self.taproot = taproot
@@ -75,7 +88,8 @@ class Doginals:
         self._reading = threading.BoundedSemaphore(2)       # chain reads of content at once (`content`)
         with self._db() as db:
             # `tx2`: answers that include the chain's own reading. The old `tx` table held an outside index's word alone.
-            db.execute("CREATE TABLE IF NOT EXISTS tx2 (txid TEXT PRIMARY KEY, held TEXT NOT NULL, at REAL NOT NULL)")
+            db.execute(f"CREATE TABLE IF NOT EXISTS {self._table} (txid TEXT PRIMARY KEY, held TEXT NOT NULL, "
+                       "at REAL NOT NULL)")
             # Where an unfinished walk back got to, per output: it goes on from here (trace's `resume`).
             db.execute("CREATE TABLE IF NOT EXISTS walk (txid TEXT NOT NULL, vout INTEGER NOT NULL, state TEXT NOT NULL, "
                        "at REAL NOT NULL, PRIMARY KEY (txid, vout))")
@@ -108,7 +122,7 @@ class Doginals:
     def held(self, txid: str) -> dict[int, list[dict]]:
         """{vout: [{"id", "offset"}]} for one transaction; {} when nothing is inscribed on any of its outputs."""
         with self._lock, self._db() as db:
-            row = db.execute("SELECT held, at FROM tx2 WHERE txid=?", (txid,)).fetchone()
+            row = db.execute(f"SELECT held, at FROM {self._table} WHERE txid=?", (txid,)).fetchone()
         if row:
             kept = {int(k): v for k, v in json.loads(row[0]).items()}
             unsure = any(i.get("unknown") for on in kept.values() for i in on)
@@ -123,7 +137,7 @@ class Doginals:
                 if reach is None or all(i.get("h") is not None and reach <= int(i["h"]) for i in waits):
                     return kept
         try:
-            said = self.fetch(txid) or {}
+            said = (self.fetch(txid) or {}) if self.ords else {}    # an ord server is never asked about DigiAssets
         except Exception as exc:                            # noqa: BLE001
             raise Unknown(f"the inscription source did not answer for {txid}: {exc}") from exc
         if said.get("txid") not in (None, txid):
@@ -136,15 +150,17 @@ class Doginals:
                 continue
             held.setdefault(vout, []).append({"id": ins.get("inscription_id"), "offset": ins.get("sat_offset")})
         if self.rpc_factory is not None:
-            index = self._index_now()
+            index = self._index_now() if self.ords else None
             if index is not None:
                 self._add_indexed(index, txid, held)
-            else:
+            elif self.ords:
                 self._add_traced(txid, held)
+            if self.digiassets:
+                self._add_digiassets(txid, held)
         elif self.fetch == self._fetch and not (SOURCE == "ord" and ORD_URL):
             raise Unknown("this node reads no chain for inscriptions, and no ord-style server is set")
         with self._lock, self._db() as db:
-            db.execute("INSERT OR REPLACE INTO tx2 VALUES (?,?,?)", (txid, json.dumps(held), time.time()))
+            db.execute(f"INSERT OR REPLACE INTO {self._table} VALUES (?,?,?)", (txid, json.dumps(held), time.time()))
         return held
 
     def _index_now(self):
@@ -254,6 +270,18 @@ class Doginals:
         if trace_these:
             self._add_traced(txid, held, only=trace_these)
 
+    def _add_digiassets(self, txid: str, held: dict[int, list[dict]]) -> None:
+        """Add a mark on each output of `txid` a DigiAsset may sit on (arcade/digiassets.py), whatever its value:
+        {"id": None, "offset": None, "digiasset": why}. Read from the transaction's own bytes, so kept for good."""
+        try:
+            with self.rpc_factory() as rpc:
+                tx = rpc.call("getrawtransaction", txid, 1)
+            marks = _digiassets.asset_outputs_of(tx)
+        except Exception as exc:                            # noqa: BLE001 -- unread is not clean
+            raise Unknown(f"the node could not read {txid} for DigiAssets: {exc}") from exc
+        for n, why in marks.items():
+            held.setdefault(n, []).append({"id": None, "offset": None, "digiasset": why})
+
     def _add_traced(self, txid: str, held: dict[int, list[dict]], only: set[int] | None = None) -> None:
         """Add what the chain itself says sits on each small output of `txid` that nothing was named on yet: an
         inscription found by tracing the output's koinu back (`trace`), or -- when the trace could not finish -- a marker
@@ -290,7 +318,7 @@ class Doginals:
     def content(self, inscription: str, follow: bool = True) -> tuple[str, bytes]:
         """An inscription's content from the chain (`read`), kept on disk for good beside the answers. `follow`: an
         inscription that names a delegate gives the delegate's content (False: its caller already followed it)."""
-        if self.rpc_factory is None:
+        if self.rpc_factory is None or not self.ords:
             raise Unknown("this node reads no inscriptions from its chain")
         home = self.path.parent / "inscription-content"
         name = home / inscription
@@ -366,15 +394,15 @@ class Doginals:
         with self._lock, self._db() as db:
             for at in range(0, len(want), 500):
                 part = want[at:at + 500]
-                for txid, held in db.execute(f"SELECT txid, held FROM tx2 WHERE txid IN ({','.join('?' * len(part))})",
-                                             part):
+                for txid, held in db.execute(f"SELECT txid, held FROM {self._table} WHERE txid IN "
+                                             f"({','.join('?' * len(part))})", part):
                     out[txid] = {int(k): v for k, v in json.loads(held).items()}
         return out
 
     def kept(self, txid: str) -> dict[int, list[dict]] | None:
         """What is already known about a transaction, without asking anybody: None when it was never asked."""
         with self._lock, self._db() as db:
-            row = db.execute("SELECT held FROM tx2 WHERE txid=?", (txid,)).fetchone()
+            row = db.execute(f"SELECT held FROM {self._table} WHERE txid=?", (txid,)).fetchone()
         return {int(k): v for k, v in json.loads(row[0]).items()} if row else None
 
     def spendable_known(self, coins: list[dict]) -> list[dict]:
@@ -406,8 +434,8 @@ class Doginals:
                 (free if int(coin["value"]) > POSTAGE_MAX else unchecked).append(coin)
             elif not here:
                 free.append(coin)
-            elif any(i.get("id") for i in here):
-                inscribed.append(coin)
+            elif any(i.get("id") or i.get("digiasset") for i in here):
+                inscribed.append(coin)                      # a DigiAsset is held too (2026-11-09)
             else:
                 unchecked.append(coin)
         return free, inscribed, unchecked
@@ -452,14 +480,16 @@ class Doginals:
             return False
         if not inputs:
             return False
+        if self.digiassets and _digiassets.maybe_in_raw(bytes.fromhex(raw_hex)):
+            return False                                # may issue or move a DigiAsset: read like any other
         with self._lock, self._db() as db:
             for prev, vout, script in inputs:
                 if b"\x03ord" in script:
                     return False                        # a reveal: this transaction inscribes
-                row = db.execute("SELECT held FROM tx2 WHERE txid=?", (prev,)).fetchone()
+                row = db.execute(f"SELECT held FROM {self._table} WHERE txid=?", (prev,)).fetchone()
                 if row is None or str(vout) in json.loads(row[0]):
                     return False                        # not known clean: leave it to the reading
-            db.execute("INSERT OR IGNORE INTO tx2 VALUES (?,?,?)", (txid, "{}", time.time()))
+            db.execute(f"INSERT OR IGNORE INTO {self._table} VALUES (?,?,?)", (txid, "{}", time.time()))
         return True
 
 

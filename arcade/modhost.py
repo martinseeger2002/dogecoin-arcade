@@ -114,7 +114,9 @@ def without_inscriptions(chain: str, method: str, said):
     """A module's chain read, with what an ordinary send would not spend left out (SadFrog, 2026-11-05: "make module
     transactions inscription-aware"). On a chain with an inscription guard, `scantxoutset`'s coins are put through it:
     a coin carrying an inscription, or a small one the guard cannot read yet, is not listed, so a module building a
-    spend never picks it. A coin of no value (a DigiDollar's Taproot output) is not ordinals' and stays."""
+    spend never picks it. A coin of no value (a DigiDollar's Taproot output) is not ordinals' and stays. Where the
+    guard reads DigiAssets too (DigiByte, 2026-11-09, security review), the read says so, `"digiassets": "read"`: each
+    coin listed was read for them, so a module need not keep small coins back on their account (DigiDollar's Gather)."""
     guard = funding.guard_on(chain)
     if guard is None or method != "scantxoutset" or not isinstance(said, dict) \
             or not isinstance(said.get("unspents"), list):
@@ -123,7 +125,8 @@ def without_inscriptions(chain: str, method: str, said):
     ok = {(c["txid"], c["vout"]) for c in guard.spendable(valued)}
     kept = [u for u in said["unspents"] if not float(u.get("amount") or 0) > 0
             or (str(u.get("txid")), int(u.get("vout", -1))) in ok]
-    return {**said, "unspents": kept, "total_amount": round(sum(float(u.get("amount") or 0) for u in kept), 8)}
+    return {**said, "unspents": kept, "total_amount": round(sum(float(u.get("amount") or 0) for u in kept), 8),
+            **({"digiassets": "read"} if getattr(guard, "digiassets", False) else {})}
 
 
 def _refuse_inscribed(name: str, chain: str, inputs: list[dict]) -> None:
