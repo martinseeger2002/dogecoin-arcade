@@ -268,3 +268,30 @@ def test_a_count_says_what_a_block_took_away(feed_page):
             "a block that hides two cards and says one"
     finally:
         browser.quit()
+
+
+def test_reply_tip_and_delete_answer_their_listeners(feed_page):
+    """Reply and Tip open their forms in the card that was pressed, and the node's own Delete asks first: listeners in
+    the page's nonced script since the script policy (2026-11-09), where they were inline onclick and onsubmit."""
+    browser = browsers.launch()
+    try:
+        browser.set_window_size(1100, 900)
+        browser.get(f"{feed_page}/feed")
+        browser.execute_script("window.__stay = 1;")
+        for name in ("reply", "tip"):
+            form = browser.find_element(By.ID, f"{name}-{POST}")
+            assert not form.is_displayed(), name
+            browser.find_element(By.CSS_SELECTOR, f"button[data-toggle='{name}-{POST}']").click()
+            assert form.is_displayed(), f"{name} did not open"
+            browser.find_element(By.CSS_SELECTOR, f"button[data-toggle='{name}-{POST}']").click()
+            assert not form.is_displayed(), f"{name} did not fold again"
+
+        delete = f"form[action='/feed/{POST}/delete'] button[type=submit]"
+        browser.find_element(By.CSS_SELECTOR, delete).click()
+        alert = browser.switch_to.alert
+        assert alert.text == "Delete this? The words stay on the chain for ever — no arcade will show them."
+        alert.dismiss()
+        time.sleep(0.3)
+        assert browser.execute_script("return window.__stay") == 1, "No still deleted it"
+    finally:
+        browser.quit()
