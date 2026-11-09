@@ -33,7 +33,7 @@ from test_funding import _pubkey                                 # noqa: E402
 from test_account_mainnet import MAIN, TEST                      # noqa: E402
 
 from arcade import accounts as accountslib                       # noqa: E402
-from arcade.script import b58check_encode, hash160                # noqa: E402
+from arcade.script import b58check_decode, b58check_encode, hash160  # noqa: E402
 
 COIN = 100_000_000
 
@@ -162,8 +162,14 @@ def test_one_accounts_hour_is_not_another_accounts(client):
     assert _send(app).status_code == 200
     assert _row(app, "send")["used"] == 1
 
-    # A second account on the same node, who has done nothing at all.
-    _open(app)
+    # A second account on the same node, who has done nothing at all: with a wallet of its own (2026-11-09: one
+    # address is one account's, and /account/address refuses another account's).
+    other = int("52" * 32, 16)
+    other_main = b58check_encode(b58check_decode(MAIN)[0], hash160(_pubkey(other)))
+    _seat(app)
+    assert app.post("/account/address", json={"address": other_main, "chain": "main",
+                                              "coin_pubkey": _pubkey(other).hex()}).status_code == 200
+    _coin(app, state, other_main, "main")
     assert _row(app, "send")["used"] == 0
     assert _send(app).status_code == 200, \
         "the second account's turn is its own, not the first one's leftover"
