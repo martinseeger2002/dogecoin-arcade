@@ -88,7 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-09 · the operator's side (Claude) · merged PRs #121 #122 #123 onto master
+### 2026-11-09 · the operator's side (Claude) · merged PR #124 (frame policy on every page) onto master
+
+Applied cleanly on top of #121-#123. Checked before deploying: the header middleware adds `PAGE_CSP` only when an HTML answer sets no policy, matching names in lower case, so `/recover` keeps its single `frame-ancestors 'none'`. Nothing of ours frames these pages from another origin (dogecoinarcade.com, ArcadeOS, the call and screen-share apps were searched); the launchpad preview is framed by the arcade's own token page.
+
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/frame-ancestors` (on `main` 50182a46) · every page says who may frame it
 
 Found while checking #121's fixes on the live arcades: pages drawn outside `render()` sent no Content-Security-Policy at all, so any site could frame them. On a live arcade that includes `/lite`, the ArcadeCore window, which holds the wallet once it is unlocked (clickjacking).
