@@ -335,6 +335,36 @@
 })();
 </script>
 
+{% if not node_side %}
+{#- 2026-11-09, security review: unlocked words stayed open in a tab until sign-out, also on a computer somebody walked
+    away from. After these minutes with nothing done in any of this site's tabs, every tab locks the wallet (not a
+    sign-out); never during a send. Kept in this browser (wallet.js idleLockMinutes). #}
+<div class="panel" style="margin-top:14px" id="idlelock-pref">
+  <h2 style="margin-top:0">Lock the wallet</h2>
+  <p class="muted" style="margin-top:0">After this long with nothing done in any tab, your wallet locks: you stay signed
+    in, and the next spend asks for your password. Never in the middle of a send. Kept in this browser.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap" role="radiogroup" aria-label="Lock the wallet after">
+    {% for m in (0, 5, 15, 30, 60) %}<button type="button" class="btn small ghost" data-idle-set="{{ m }}"
+      role="radio">{{ 'Off' if m == 0 else m ~ ' min' }}</button>
+    {% endfor %}
+  </div>
+</div>
+<script type="module">
+  const w = await import("/wallet.js");
+  const bs = document.querySelectorAll("[data-idle-set]");
+  const paint = () => {
+    const now = w.idleLockMinutes();
+    bs.forEach((b) => {
+      const on = Number(b.dataset.idleSet) === now;
+      b.classList.toggle("on", on); b.classList.toggle("ghost", !on); b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  };
+  bs.forEach((b) => b.addEventListener("click", () => { w.setIdleLock(Number(b.dataset.idleSet)); paint(); }));
+  window.addEventListener("storage", (e) => { if (e.key === "arcade.idle-lock") paint(); });
+  paint();
+</script>
+{% endif %}
+
 {#- What ArcadeCore's menus open, on the account's own page too (2026-11-08): its Settings -> Theme… and Your tabs…, and
     Window -> Console and Build -> API keys, drawn from the window's own code (app.py /look, /console, /me/keys). -#}
 <div class="panel" style="margin-top:14px" id="core-tools">

@@ -713,10 +713,12 @@ async function seatWith(wallet, {join = true, challenge: asked = null, tell = tr
  */
 async function working(what) {
   document.body.dataset.working = "yes";
+  touchActive(true);                    // work in progress is something done: the idle lock waits (below)
   try {
     return await what();
   } finally {
     delete document.body.dataset.working;
+    touchActive(true);
   }
 }
 
@@ -2877,11 +2879,13 @@ if (TABS) {
     } else if (m.imports) {
       mergeImports(m.imports);
     } else if (m.locked) {
+      const had = m.idle && holdsWords();
       try { sessionStorage.removeItem(OPEN_WALLET); } catch (x) {}
       try { sessionStorage.removeItem(OPEN_IMPORTS); } catch (x) {}
       // Signed out: every wallet this tab had unlocked goes too, not only the current one (2026-11-08).
       if (m.all) { try { sessionStorage.removeItem(OPEN_WALLETS); } catch (x) {} }
       importKey = null;
+      if (had) afterIdleLock(m.idle);                  // locked after nothing was done (below)
     } else if (m.switched && m.from !== THIS_PAGE) {
       // Another tab switched accounts: this one is showing the old one. Not
       // this page, which may hold more than one copy of this module.
@@ -2905,6 +2909,8 @@ function fromAnotherTab(ms = 400) {
 
 export function remember(phrase) {
   try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {}
+  try { localStorage.removeItem(IDLE_LOCKED); } catch (e) {}
+  touchActive(true);
   keepOpen(phrase);
   // Tabs already open and locked open now too.
   try { if (TABS) TABS.postMessage({phrase}); } catch (e) {}
@@ -2926,6 +2932,7 @@ export async function signOut(chain, {everywhere = false} = {}) {
   } catch (e) { /* nothing unsaved is worth staying signed in for */ }
   try { (await import("/messaging.js")).wipeLocal && await (await import("/messaging.js")).wipeLocal(); } catch (e) {}
   forgetOpen({all: true});
+  try { localStorage.removeItem(IDLE_LOCKED); } catch (e) {}
   try { sessionStorage.removeItem(SHORT_PASSWORD); sessionStorage.removeItem(SHORT_DISMISSED); } catch (e) {}
   const ended = await fetch(everywhere ? "/auth/logout-everywhere" : "/auth/logout", {method: "POST"});
   // Refused (this browser's session had already run out): the plain sign-out still clears the cookie here.
@@ -2935,7 +2942,7 @@ export async function signOut(chain, {everywhere = false} = {}) {
 /** Lock the wallet open in this tab, in every tab. `all` (a sign-out, 2026-11-08, security review): every wallet
  *  unlocked in each tab goes too. Before, the tab kept the others' words (up to six, for switching accounts) after
  *  signing out, readable by anybody at that tab. */
-export function forgetOpen({all = false} = {}) {
+export function forgetOpen({all = false, idle = 0} = {}) {
   let phrase = null;
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
@@ -2948,8 +2955,181 @@ export function forgetOpen({all = false} = {}) {
     try { sessionStorage.setItem(OPEN_WALLETS,
             JSON.stringify(openWallets().filter((p) => p !== phrase))); } catch (e) {}
   }
-  try { if (TABS) TABS.postMessage({locked: true, all}); } catch (e) {}
+  try { if (TABS) TABS.postMessage({locked: true, all, idle}); } catch (e) {}
 }
+
+/* --- locked again after a while with nothing done (2026-11-09, security review) -----------------------------------
+ *
+ * The unlocked words stayed in each tab's sessionStorage until sign-out or the tab closed, so somebody who walked
+ * away from a shared computer left them open to the next person at it. Now, after `idleLockMinutes()` with nothing
+ * done in ANY of this site's tabs, every tab forgets them: forgetOpen({all: true}), the same as sign-out's, and not a
+ * sign-out -- the session stays, the pages stay, and the next spend asks for the password again.
+ *
+ * - "Nothing done" is one time in localStorage (IDLE_LAST), written by every tab on a key, a click, a touch, the wheel,
+ *   the mouse or a page gone to, so reading in one tab keeps the others open. Only a time is kept there, never
+ *   anything of the wallet. A page's own reloads and polling are not something done.
+ * - Never under work in progress: while a page signs or sends (document.body.dataset.working, set by working() above
+ *   and by messaging.js; an element marked data-working) or the one-spend-at-a-time lock is held or waited for
+ *   (spending(), navigator.locks: any tab of this site), that tab counts as busy and keeps the time fresh.
+ * - A machine that slept, or a tab whose timers were held: the first touch finds the time old and locks before it
+ *   counts, and a page opened then locks as it loads.
+ * - The choice is per browser, on /me ("Lock the wallet"): Off, 5, 15, 30 or 60 minutes.
+ *
+ * Default 15 minutes: long enough that reading the feed or writing a long post between two spends does not ask
+ * again, short enough that a computer left behind is not open for long. Off is there for somebody's own machine.
+ * Any positive number is read (a test sets a few seconds); the page offers only the five.
+ */
+const IDLE_SETTING = "arcade.idle-lock";        // minutes, or "off"
+const IDLE_LAST = "arcade.last-active";         // when something was last done in any tab (ms)
+const IDLE_LOCKED = "arcade.idle-locked";       // {minutes, at} of the last lock, for the note on the next page
+export const IDLE_CHOICES = [0, 5, 15, 30, 60];
+export const IDLE_DEFAULT = 15;
+
+/** Minutes with nothing done before every tab locks; 0 is Off. */
+export function idleLockMinutes() {
+  let said = null;
+  try { said = localStorage.getItem(IDLE_SETTING); } catch (e) {}
+  if (said === "off") return 0;
+  const n = Number(said);
+  return said && n > 0 ? n : IDLE_DEFAULT;
+}
+
+export function setIdleLock(minutes) {
+  const n = Number(minutes);
+  try { localStorage.setItem(IDLE_SETTING, n > 0 ? String(n) : "off"); } catch (e) {}
+  touchActive(true);                                  // counted from the choice, not from before it
+  idleSchedule();
+}
+
+let lastHere = 0;                                     // this tab's own, when storage is not there
+function lastActive() {
+  try { return Number(localStorage.getItem(IDLE_LAST) || 0) || lastHere; } catch (e) { return lastHere; }
+}
+function idleMs() { return idleLockMinutes() * 60000; }
+// At most every 5 s (or a tenth of a short test's minutes): a mouse moving writes no more than that.
+function touchGap() { const ms = idleMs(); return ms > 0 ? Math.min(5000, ms / 10) : 5000; }
+function touchActive(force = false) {
+  const now = Date.now();
+  if (!force && now - lastHere < touchGap()) return;
+  lastHere = now;
+  try { localStorage.setItem(IDLE_LAST, String(now)); } catch (e) {}
+}
+
+function holdsWords() {
+  try {
+    if (sessionStorage.getItem(OPEN_WALLET)) return true;
+    if (openWallets().length || Object.keys(openImportsAll()).length) return true;
+  } catch (e) {}
+  return !!importKey;
+}
+
+function busyHere() {
+  const b = typeof document !== "undefined" && document.body;
+  return !!(b && (b.dataset.working || b.querySelector("[data-working]")));
+}
+
+async function spendGoing() {
+  try {
+    const all = await navigator.locks.query();
+    return [...(all.held || []), ...(all.pending || [])].some((l) => l.name === "arcade-spend");
+  } catch (e) { return false; }
+}
+
+function showIdleNote(minutes) {
+  if (typeof document === "undefined") return;
+  const text = `Your wallet locked after ${minutes} minute${minutes == 1 ? "" : "s"} with nothing done. `
+    + "You are still signed in: unlock it to spend.";
+  const bar = document.getElementById("unlockbar"), said = document.getElementById("unlockbar-said");
+  if (bar && said) { said.textContent = text; bar.hidden = false; return; }
+  if (typeof window.arcadeToast === "function") window.arcadeToast(text);
+}
+
+/** Typed and not yet sent: a reload would lose it. */
+function typedHere() {
+  for (const f of document.querySelectorAll("textarea, input")) {
+    if (/^(hidden|checkbox|radio|button|submit|reset|file|range|color)$/.test(f.type)) continue;
+    if (f.value && f.value !== f.defaultValue) return true;
+  }
+  return false;
+}
+
+/** This tab held words and they are gone. A page that kept a wallet in a variable when it loaded (the Wallet page
+ *  does) could still sign with it, so the page is drawn again -- unless it is busy, or holds typed text: then it says
+ *  so, and tells the page (`arcade-wallet-locked`) to drop what it kept. */
+function afterIdleLock(minutes) {
+  try { localStorage.setItem(IDLE_LOCKED, JSON.stringify({minutes, at: Date.now()})); } catch (e) {}
+  if (typeof document === "undefined") return;
+  try { window.dispatchEvent(new CustomEvent("arcade-wallet-locked", {detail: {minutes}})); } catch (e) {}
+  if (!busyHere() && !typedHere()) { location.reload(); return; }
+  showIdleNote(minutes);
+}
+
+let idleChecking = false;
+/** Lock every tab when nothing was done for the chosen minutes. A timer's look needs words here to lock; a touch
+ *  after a long time away (`anyway`) locks the other tabs even when this one holds none. */
+async function idleCheck(anyway = false) {
+  const minutes = idleLockMinutes();
+  if (!(minutes > 0) || idleChecking) return;
+  if (busyHere()) { touchActive(true); return; }
+  if (Date.now() - lastActive() < minutes * 60000 || !(anyway || holdsWords())) return;
+  idleChecking = true;
+  try {
+    if (await spendGoing()) { touchActive(true); return; }
+    if (busyHere() || Date.now() - lastActive() < minutes * 60000) return;   // something started meanwhile
+    const had = holdsWords();
+    forgetOpen({all: true, idle: minutes});
+    if (had) afterIdleLock(minutes);
+  } finally { idleChecking = false; }
+}
+
+function onActivity() {
+  if (Date.now() - lastHere < touchGap()) return;     // touched a moment ago here: nothing to look at
+  const minutes = idleLockMinutes();
+  // Back after longer than the limit (a machine that slept, a tab whose timers were held): locked first, then
+  // counted -- otherwise the first touch would be the activity that kept it open.
+  if (minutes > 0 && Date.now() - lastActive() >= minutes * 60000 && !busyHere()) {
+    idleCheck(true).finally(() => touchActive(true));
+    return;
+  }
+  touchActive();
+}
+
+let idleTimer = null;
+function idleSchedule() {
+  clearTimeout(idleTimer);
+  const ms = idleMs();
+  // Every 15 s, or a quarter of a short test's minutes.
+  idleTimer = setTimeout(() => { idleCheck().catch(() => {}).finally(idleSchedule); },
+                         ms > 0 ? Math.max(250, Math.min(15000, ms / 4)) : 15000);
+}
+
+function startIdleLock() {
+  if (typeof window === "undefined" || typeof document === "undefined" || window.__arcadeIdleLock) return;
+  window.__arcadeIdleLock = true;                     // once a page, however many copies of this module it loaded
+  try { if (!localStorage.getItem(IDLE_LAST)) touchActive(true); } catch (e) { touchActive(true); }
+  for (const kind of ["pointerdown", "keydown", "wheel", "touchstart", "mousemove"]) {
+    window.addEventListener(kind, onActivity, {capture: true, passive: true});
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) onActivity(); });
+  // A choice made in another tab counts from now here too.
+  window.addEventListener("storage", (e) => { if (e.key === IDLE_SETTING) idleSchedule(); });
+  // Drawn again after a lock (here or in another tab): the unlock bar says why; a page without one, once.
+  let was = null;
+  try { was = JSON.parse(localStorage.getItem(IDLE_LOCKED) || "null"); } catch (e) {}
+  if (was && was.minutes && !holdsWords()) {
+    const show = () => {
+      if (document.getElementById("unlockbar") || Date.now() - Number(was.at || 0) < 60000) showIdleNote(was.minutes);
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", show); else show();
+  }
+  // A page somebody went to is something done (a link followed, an address typed); a page reloading itself (base.html
+  // on news, after an action) is not. Looked at as a touch is: after a long time away it locks first.
+  let how = "";
+  try { how = performance.getEntriesByType("navigation")[0].type; } catch (e) {}
+  if (how === "navigate") onActivity(); else idleCheck().catch(() => {});
+  idleSchedule();
+}
+startIdleLock();
 
 /** Switch this browser to another account signed in on it. Its wallet opens
  *  at once if it was unlocked in this tab before; otherwise it opens locked,
