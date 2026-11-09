@@ -476,7 +476,7 @@ def test_a_listing_keeps_its_coins_after_a_restart(shop):
         held.add((row["coin"]["txid"], int(row["coin"]["vout"])))
 
     fresh = TestClient(create_app(state))          # a restart: nothing in memory
-    _sign_in(fresh)
+    fresh.cookies.update(app.cookies)              # the same account, still signed in (sessions are on disk)
     assert fresh.post("/account/address", json={
         "address": mine, "coin_pubkey": pubkey.hex()}).status_code == 200
     # More than the one big coin holds, so a send that could reach the

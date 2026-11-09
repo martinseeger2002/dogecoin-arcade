@@ -12796,6 +12796,16 @@ def create_app(state: AppState) -> FastAPI:
     def _account_address(pubkey: str, chain) -> str:
         return str(state.setting(_address_key(pubkey, chain), "") or "")
 
+    def _address_held_by_another(pubkey: str, chain, address: str) -> bool:
+        """Whether an account other than `pubkey` has `address` as its address on `chain` (/account/address)."""
+        mine = _address_key(pubkey, chain)
+        prefix = mine[:-len(pubkey)]                         # "address:" or "address:<network>:"
+        for name, value in state.settings().items():
+            if (value == address and name != mine and name.startswith(prefix)
+                    and ":" not in name[len(prefix):]):
+                return True
+        return False
+
     def _account_doge_address(pubkey: str) -> str:
         """The account's Dogecoin address: the one its browser gave, else its Pepecoin mainnet key's twin (the same
         key -- coins.js derives both on coin type 3; _doge_twin). "" when this node runs no Dogecoin or knows neither."""
@@ -26908,6 +26918,11 @@ def create_app(state: AppState) -> FastAPI:
         complaint = _check_address(address, mainnet=chain)
         if complaint:
             return JSONResponse({"detail": complaint}, status_code=400)
+        # Never another account's (2026-11-09, security review): this route takes the address on the browser's word,
+        # so account A could file account B's address as its own, and then whatever this node keeps by address (a
+        # mintpad's announced listings, who a payment woke) was written and read as A's on B's address.
+        if _address_held_by_another(account.pubkey, chain, address):
+            return JSONResponse({"detail": "that address is another account's on this arcade"}, status_code=409)
         state.set_setting(_address_key(account.pubkey, chain), address)
         coin = str(said.get("coin_pubkey", "")).strip().lower()
         if coin:
@@ -28147,6 +28162,10 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": "this account already registered a different segwit "
                            "address on this chain"}, status_code=409)
+        # Never another account's (2026-11-09, security review), as /account/address.
+        if any(value == addr and name != key and name.startswith("segwit_watch:")
+               and name.endswith(f":{chain.network}") for name, value in state.settings().items()):
+            return JSONResponse({"detail": "that address is another account's on this arcade"}, status_code=409)
         if kind == "p2sh-p2wpkh" and not prior:
             from ..script import p2sh_p2wpkh_address
             try:
