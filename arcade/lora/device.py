@@ -5,12 +5,13 @@ stock Meshtastic radio as if it were an arcade T-Deck.
 """
 from __future__ import annotations
 
+import hashlib
 import queue
 import time
 from dataclasses import dataclass
 
 from . import frames as F
-from .device_keys import Account, b58decode_check
+from .device_keys import Account, b58check, b58decode_check, hash160
 from . import txcheck
 
 
@@ -171,8 +172,17 @@ class DeviceClient:
         return self._sign_and_send(network, offer, checked)
 
     def register(self, network: str) -> str:
-        """Tell the arcade this account's address on one chain (sign-up)."""
-        body = bytes([self._index(network)]) + self.account.coin_pubkey(network)
+        """Tell the arcade this account's address on one chain (sign-up), with the coin key's proof that it is this
+        account's: the arcade files no address without it (2026-11-09; its wallet_imports.proof_message, byte for
+        byte)."""
+        index = self._index(network)
+        chain, pub = self.chains[index], self.account.coin_pubkey(network)
+        address = b58check(chain.p2pkh or VERSIONS[network][0], hash160(pub))
+        text = (f"DogecoinArcade wallet import\n{self.account.login_pubkey.hex()}\n{network}\n{address}\n"
+                f"{pub.hex()}").encode()
+        digest = hashlib.sha256(hashlib.sha256(text).digest()).digest()
+        sig = self.account.sign_digest(network, digest)[:-1]          # DER, no sighash byte
+        body = bytes([index]) + pub + bytes([len(sig)]) + sig
         return F.Reader(self.request(F.ADDR, body, want=(F.ADDR_OK,)).body).str()
 
     # -- mail -------------------------------------------------------------------

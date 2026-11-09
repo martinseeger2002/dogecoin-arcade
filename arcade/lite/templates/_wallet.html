@@ -378,7 +378,8 @@ async function kindKeys(c, k) {
   try { localStorage.setItem(spot, mine.address); } catch (e) {}
   const r = await fetch("/account/segwit/register", {method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({address: mine.address, chain: c.network,
-                          pubkey: Array.from(mine.pubkey, (b) => b.toString(16).padStart(2, "0")).join("")})});
+                          pubkey: Array.from(mine.pubkey, (b) => b.toString(16).padStart(2, "0")).join(""),
+                          address_signature: await wallet.claimProof(open, c.network, mine)})});
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "the node would not watch that address");
   return {address: mine.address, keys: kinded};
 }

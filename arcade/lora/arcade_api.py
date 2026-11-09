@@ -106,9 +106,11 @@ class ArcadeSession:
         return self._call("POST", "/account/sign", json={
             "offer": offer, "signatures": [s.hex() for s in signatures], "pubkey": pubkey.hex()})
 
-    def register(self, network: str, address: str, coin_pubkey: bytes) -> dict:
+    def register(self, network: str, address: str, coin_pubkey: bytes, signature: bytes = b"") -> dict:
+        # `signature`: the coin key's proof the address is this account's, which the arcade asks (2026-11-09).
         return self._call("POST", "/account/address", json={
-            "chain": network, "address": address, "coin_pubkey": coin_pubkey.hex()})
+            "chain": network, "address": address, "coin_pubkey": coin_pubkey.hex(),
+            "address_signature": signature.hex()})
 
     def who(self, name: str) -> dict:
         return self._call("GET", f"/account/who/{name.lstrip('@')}")

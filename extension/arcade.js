@@ -60,13 +60,16 @@ export async function holdings(origin, account, mine) {
 }
 
 /** Tell the arcade this wallet's address on each chain it runs, where it knows another or none (wallet_js
- *  `tellTheNode`): its sends are built from, and its coins watched at, the address it was told. */
-export async function tellAddresses(origin, account, mine, rows) {
+ *  `tellTheNode`): its sends are built from, and its coins watched at, the address it was told. `prove(network)` is
+ *  the address key's signature that it is this account's (chains.claimProof), which the arcade asks of every address
+ *  it does not hold for the account yet (2026-11-09, security review). */
+export async function tellAddresses(origin, account, mine, rows, prove) {
   for (const row of rows) {
     const own = mine[row.network];
     if (!own || row.address === own.address) continue;
     await call(origin, "/account/address", {account, body: {address: own.address, chain: row.network,
-                                                            coin_pubkey: own.pubkey}});
+                                                            coin_pubkey: own.pubkey,
+                                                            address_signature: await prove(row.network)}});
   }
 }
 

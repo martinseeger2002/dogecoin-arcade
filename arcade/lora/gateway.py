@@ -464,6 +464,9 @@ class Gateway:
             return
         r = F.Reader(msg.body)
         chain, pubkey = self._chain(dev, r.u8()), r.take(33)
+        # Then the coin key's signature that the address is this account's (2026-11-09): the arcade files no
+        # address without it. A device from before sends none, and the arcade says why it refused.
+        signature = b"" if r.end() else r.take(r.u8())
         address = b58check(int(chain["version"]), hash160(pubkey))
         # Never overwrite what the arcade already watches for this account: a
         # T-Deck that derived a different address would make the account's
@@ -476,7 +479,7 @@ class Gateway:
             return self.error(node, msg.id, F.E_ARCADE,
                               f"This T-Deck's {chain['label']} address is not the one the arcade has; nothing changed")
         if not known:
-            dev.arcade.register(chain["network"], address, pubkey)
+            dev.arcade.register(chain["network"], address, pubkey, signature)
         self.reply(node, F.ADDR_OK, msg.id, F.Writer().str(address).done())
 
     def on_broadcast(self, node, msg):
