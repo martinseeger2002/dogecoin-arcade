@@ -355,6 +355,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/keys", "/api/v1/run",
                # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
                "/terms/accept",
+               # a browser's report of what the report-only script policy would stop: read short, summarised and
+               # rate limited, nothing kept whole (app.py CspReports, 2026-11-09, security review)
+               "/csp-report",
                # a DigiDollar send offered to the signed-in account's own wallet, signed in its browser (digidollar.py)
                "/account/digidollar/send",
                # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)
