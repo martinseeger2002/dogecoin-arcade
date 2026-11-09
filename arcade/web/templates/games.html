@@ -164,7 +164,7 @@
       {% endif %}
       {% if acts and it.mine %}
       <form method="post" action="/feed/{{ it.txid }}/delete" style="display:inline;margin-left:auto"
-            {% if viewer == 'wallet' %}onsubmit="return confirm('Remove this app from the Apps tab? The inscription stays on the chain and still plays from its own link, but no arcade lists this card any more.')"{% endif %}>
+            {% if viewer == 'wallet' %}data-ask="Remove this app from the Apps tab? The inscription stays on the chain and still plays from its own link, but no arcade lists this card any more."{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="back" value="/apps{{ '?sort=new' if sort == 'new' else '' }}">
         <button class="small ghost" type="submit" title="Take this card off the Apps tab">Remove</button></form>
@@ -212,6 +212,11 @@ document.addEventListener("click", function (e) {
   if (!b) return;
   var f = document.getElementById(b.dataset.toggle);
   if (f) f.hidden = !f.hidden;
+});
+// Remove asks first on the node's own page (the question is the form's data-ask).
+document.addEventListener("submit", function (e) {
+  var form = e.target;
+  if (form.matches && form.matches("form[data-ask]") && !confirm(form.dataset.ask)) e.preventDefault();
 });
 /* Starred apps first, as soon as a star changes (and for a visitor whose stars live in this browser). */
 (function () {
