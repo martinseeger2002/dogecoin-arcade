@@ -725,7 +725,7 @@ def test_the_live_preview_uses_the_servers_own_substitutions(client, tmp_path,
     assert "var PAD_SWAPS = [" in page
     assert "/inscriptions/collection/preview/set" in page
     assert "/inscriptions/collection/preview/piece" in page
-    assert "frame.srcdoc = html + PAD_NOTE" in page, "drawn in the browser"
+    assert "arcadePreview(frame, html + PAD_NOTE)" in page, "drawn in the browser"
     assert "nothing is on the chain yet" in page, "and it still says so"
 
 

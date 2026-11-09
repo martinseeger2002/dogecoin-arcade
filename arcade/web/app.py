@@ -513,6 +513,24 @@ def script_policy_forced() -> bool:
     return (os.environ.get(SCRIPT_POLICY_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+#: Where a draft is previewed (preview_frame; base.html `arcadePreview`).
+PREVIEW_FRAME_PATH = "/preview-frame"
+
+#: The preview frame: it draws a draft the page that framed it sends, in a frame of its own, and nothing else. The
+#: sender is checked twice: the frame's own parent, and this arcade's origin (the frame itself is an opaque origin, so
+#: its address says what that is).
+PREVIEW_FRAME_PAGE = (
+    "<!doctype html><meta charset=\"utf-8\"><title>Preview</title>"
+    "<style>html,body{margin:0;height:100%;background:transparent}"
+    "iframe{display:block;width:100%;height:100%;border:0}</style><body><script>"
+    "(function(){var home=new URL(location.href).origin;"
+    "addEventListener('message',function(e){"
+    "if(parent===window||e.source!==parent||e.origin!==home||!e.data||typeof e.data.arcadePreview!=='string')return;"
+    "var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts allow-pointer-lock');"
+    "f.title='preview';f.srcdoc=e.data.arcadePreview;document.body.replaceChildren(f);});})();"
+    "</script></body>")
+
+
 def script_policy_enforced(settings: dict) -> bool:
     """Whether pages are sent the enforced script policy: the environment's word, else the operator's switch."""
     return script_policy_forced() or bool(settings.get(SCRIPT_POLICY_SETTING))
@@ -10814,6 +10832,17 @@ def create_app(state: AppState) -> FastAPI:
                 return Response(status_code=413)
         CSP_REPORTS.note(body)
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+    @app.get(PREVIEW_FRAME_PATH, response_class=HTMLResponse)
+    def preview_frame():
+        """The frame a draft is previewed in (base.html `arcadePreview`; 2026-11-09, security review). A srcdoc frame
+        inherits its page's script policy, so a draft's own scripts would not run once that is enforced. This page
+        is sandboxed like inscribed content (contentlib.CONTENT_HEADERS: opaque origin, its own policy) and framed
+        only by this arcade's pages; it takes a draft only from the page that framed it, on this origin, and draws
+        it in a frame of its own, which keeps its sandbox and policy."""
+        csp = contentlib.CONTENT_HEADERS["Content-Security-Policy"] + "; frame-ancestors 'self'"
+        return HTMLResponse(PREVIEW_FRAME_PAGE, headers={**contentlib.CONTENT_HEADERS, "Content-Security-Policy": csp,
+                                                         "Cache-Control": "no-cache"})
 
     @app.get("/offline", response_class=HTMLResponse)
     def offline_page():

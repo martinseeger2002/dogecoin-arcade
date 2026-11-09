@@ -366,8 +366,11 @@ function drawPreview() {
   $("mp-addr").textContent = name + (at === "/" ? "" : at);
   const kind = kindOf(pages[at]), value = valueOf(pages[at]);
   if (kind === "html") {
-    $("mp-preview").innerHTML = `<iframe sandbox="allow-scripts" title="preview"></iframe>`;
-    $("mp-preview").querySelector("iframe").srcdoc = value;
+    // Through the preview frame (base.html arcadePreview), not srcdoc: a srcdoc frame would take this page's script
+    // policy, and the draft's own scripts would not run (2026-11-09, security review). Kept while the kind stays html.
+    if (!$("mp-preview").querySelector("iframe.draft"))
+      $("mp-preview").innerHTML = `<iframe class="draft" sandbox="allow-scripts" title="preview"></iframe>`;
+    arcadePreview($("mp-preview").querySelector("iframe.draft"), value);
   } else if (kind === "id") {
     $("mp-preview").innerHTML = /^[0-9a-f]{64}i\d{1,6}$/.test(value.trim().toLowerCase())
       ? `<iframe sandbox="allow-scripts" src="/content/${esc(value.trim().toLowerCase())}" title="preview"></iframe>`
@@ -559,8 +562,10 @@ function wsDraw() {
   const shown = refsIn(plan.html, (r) => { const f = fileFor(r); return f ? (isCSS(f) ? swapCSS(f) : asData(f)) : undefined; }).text;
   clearTimeout(wsTimer);
   wsTimer = setTimeout(() => {
-    $("ws-preview").innerHTML = `<iframe sandbox="allow-scripts" title="preview"></iframe>`;
-    $("ws-preview").querySelector("iframe").srcdoc = shown;
+    // The preview frame, not srcdoc (base.html arcadePreview, 2026-11-09, security review).
+    if (!$("ws-preview").querySelector("iframe"))
+      $("ws-preview").innerHTML = `<iframe sandbox="allow-scripts" title="preview"></iframe>`;
+    arcadePreview($("ws-preview").querySelector("iframe"), shown);
   }, 300);
   const max = Number((chainOf(ws && ws.chain) || {}).max_bytes || 400000);
   const pageBytes = new TextEncoder().encode(refsIn(plan.html, (r) => fileFor(r) ? PLACEHOLDER : undefined).text).length;

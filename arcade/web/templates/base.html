@@ -233,6 +233,23 @@ html.indesk body:not(.fullscreen){padding-top:0}
     arcade's own look (2026-11-08, SadFrog: "when you change the theme, thats it everything is styled differently").
     Carried in the page, as /lite/theme.css says it; a pick redraws it in place (_themes.html). #}
 <style id="arcade-theme">{{ (theme_css if theme_css is defined else '')|safe }}</style>
+<script nonce="{{ csp_nonce }}">
+/* A PREVIEW OF HTML BEING WRITTEN (a .mesh site, a website, a mintpad; 2026-11-09, security review). A srcdoc frame
+   takes the page's own script policy with it, so under the enforced policy nothing in a draft would run. The frame
+   opens /preview-frame instead, which is sandboxed like an inscription and has a policy of its own, and is handed the
+   draft by message; it draws each one again without a trip to the node. */
+window.arcadePreview = function (frame, html) {
+  frame.arcadeWant = html;
+  if (frame.arcadeReady) { frame.contentWindow.postMessage({arcadePreview: html}, '*'); return; }
+  if (frame.arcadeLoading) return;
+  frame.arcadeLoading = true;
+  frame.addEventListener('load', function () {
+    frame.arcadeReady = true;
+    frame.contentWindow.postMessage({arcadePreview: frame.arcadeWant}, '*');
+  }, {once: true});
+  frame.src = '/preview-frame';
+};
+</script>
 </head>
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
