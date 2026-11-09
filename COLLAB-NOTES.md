@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/innerhtml-audit` (on `main` 50182a46) · other people's words are set as text; the wizard previews are sandboxed
+
+A read-through of every innerHTML / insertAdjacentHTML / document.write in the served templates (392 lines), the
+`|safe` and `Markup()` sites, the raw HTML responses and how each kind of third-party page is hosted. One commit per
+area, each with its test:
+- **Wizard previews** (`202cd087`): `/tokens/launchpad/preview` and `/inscriptions/collection/preview` are built from
+  the query string and now carry `contentlib.CONTENT_HEADERS` (CSP sandbox), as the pages do once inscribed. The
+  mintpad preview still draws its build.
+- **Trade card** (`591fd5b3`, `_exui.html`): quote rows are elements; token and coin names are text.
+- **DogeFeedX** (`a7608f4e`): Network's peer and trusted-node rows are elements with text; Search's trend tags go
+  through the page's own `esc`.
+- **Picked files** (`b97310be`): the file name under the file box (Inscriptions, Messenger, an account's Inscribe tab)
+  is set as text, and so is the collection check's note.
+- **Waiting approvals under a piece** (`1dadd3a5`): that page's `esc` covers `& < > " '`.
+- **Address book** (`2f9083ef`): Remove asks its question from `data-ask` (`confirm(this.dataset.ask)`).
+- **Unchanged and checked:** /content, /site, /m/<module>/, media and inscription frames are all sandboxed by their
+  response's CSP; /browser and /meshweb escape what they draw.
+- **Tests:** `tests/test_html_sinks_browser.py` (9, Firefox); each fails on main's files. With test_nft_market,
+  test_collection_web, test_public, test_page_scripts, test_web, test_tokens_web, the pair/xchain web tests, the
+  dogefeedx tests, test_nfts_browser, test_messaging_browser, test_inscriptions, test_browser_approvals and the contacts
+  browser tests: 619 passed.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
 ### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
 
 Reported by the V1.0 session: at 11:41 Strawberry, asked for a copy, wrote 29.2 GB of `ord-doge.sqlite.snap.tmp` (the index is 33.7 GB, beside the old 27.9 GB snapshot and a 60 GB backfill). The disk reached 0 bytes free, arcade-web logged `disk I/O error` at 11:42:52, and the .tmp stayed behind holding the space (V1.0 removed it with the operator's OK; the Nov 7 snapshot is untouched).
