@@ -70,6 +70,8 @@ def parse_amount(text: str) -> int:
         value = Decimal(text)
     except InvalidOperation:
         raise WalletError(f"{text!r} is not a number") from None
+    if not value.is_finite():           # "Infinity" and "NaN" are Decimals too, and were a 500 (2026-11-09)
+        raise WalletError(f"{text!r} is not a number")
     if value <= 0:
         raise WalletError("the amount must be greater than zero")
     scaled = value * COIN

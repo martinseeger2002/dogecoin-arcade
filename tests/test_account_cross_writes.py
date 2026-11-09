@@ -12,7 +12,8 @@ about A's own things: a row of A's that names B's address or ids (A declines B's
 Those, and every route that answered 2xx while handed B's identifiers, are printed for review (pytest -s).
 
 The sweep found /account/address and /account/segwit/register taking B's address as A's (2026-11-09); the two tests
-at the end hold their fix.
+at the end hold their fix. It also fails on a 500: none of these bodies may crash a route (2026-11-09, security
+review; test_account_bad_bodies.py tries worse ones).
 """
 from __future__ import annotations
 
@@ -36,9 +37,11 @@ from arcade.script import b58check_encode, hash160               # noqa: E402
 WRITES = {"POST", "PUT", "PATCH", "DELETE"}
 LOCAL = {"host": "127.0.0.1:8420"}
 OUTSIDE = {"host": "arcade.example.com", "cf-connecting-ip": "198.51.100.9", "origin": "https://arcade.example.com"}
-#: What a route reads from its body, by name.
+#: What a route reads from its body, by name -- straight, or through app.py's `_said_int` / `_said_list` / `_said_hex`.
 FIELD = re.compile(r"\b(?:said|payload|body|data|asked)\.get\(\s*[\"']([A-Za-z_]\w*)[\"']"
-                   r"|\b(?:said|payload|body|data|asked)\[\s*[\"']([A-Za-z_]\w*)[\"']\s*\]")
+                   r"|\b(?:said|payload|body|data|asked)\[\s*[\"']([A-Za-z_]\w*)[\"']\s*\]"
+                   r"|\b_said_(?:int|list|hex)\(\s*\w+\s*,\s*[\"']([A-Za-z_]\w*)[\"']")
+NO_NODE = "no node available (test)"
 
 
 def _sign_in(client, headers) -> str:
@@ -99,6 +102,19 @@ def _bs(row: tuple, b_marks: tuple, a_marks: tuple) -> bool:
     return any(m.lower() in owner for m in b_marks) and not any(m.lower() in owner for m in a_marks)
 
 
+def no_node_is_503(app) -> None:
+    """The tests run with no node (conftest's `no_nodes`), so a well-shaped body that gets as far as asking one
+    raises the refusal unhandled. Here that is a 503 saying so, and a 500 left over is the route's own crash
+    (2026-11-09, security review)."""
+    from fastapi.responses import JSONResponse
+
+    async def absent(request, exc):
+        if str(exc) != NO_NODE:
+            raise exc
+        return JSONResponse({"detail": NO_NODE}, status_code=503)
+    app.add_exception_handler(RuntimeError, absent)
+
+
 def _routes(app) -> list[tuple[str, str, list[str]]]:
     """(method, path, the body fields the route's own code reads) for every write under /account."""
     from fastapi.routing import APIRoute
@@ -109,7 +125,7 @@ def _routes(app) -> list[tuple[str, str, list[str]]]:
                 source = inspect.getsource(route.endpoint)
             except (OSError, TypeError):
                 source = ""
-            fields = sorted({a or b for a, b in FIELD.findall(source)})
+            fields = sorted({"".join(m) for m in FIELD.findall(source)})
             for method in route.methods & WRITES:
                 found[(method, route.path)] = fields
     return [(m, p, f) for (m, p), f in sorted(found.items())]
@@ -123,6 +139,7 @@ def test_no_account_route_writes_another_accounts_things(app_state, where):
     state = app_state
     state.set_setting("public_hosts", ["arcade.example.com"])
     app = create_app(state)
+    no_node_is_503(app)
     b = TestClient(app, raise_server_exceptions=False)
     a = TestClient(app, raise_server_exceptions=False)
     asks = LOCAL if where == "here" else OUTSIDE
@@ -159,8 +176,8 @@ def test_no_account_route_writes_another_accounts_things(app_state, where):
         bodies += [{f: v, "chain": "test"} for f in fields for v in values]
         for body in bodies:
             r = a.request(method, url, headers=asks, json=body)
-            if r.status_code >= 500:
-                broke.append(f"{method} {path} {r.status_code}")
+            if r.status_code == 500:
+                broke.append(f"{method} {path} {body}"[:200])
             elif r.status_code < 400 and body:
                 accepted.setdefault(f"{method} {path}", set()).update(set(body) - {"chain"})
         after = _of(state.home, ids)
@@ -176,8 +193,11 @@ def test_no_account_route_writes_another_accounts_things(app_state, where):
     print("A's new rows naming B's address or ids:")
     for one in mentions:
         print("  ", one)
-    print("5xx:", sorted(set(broke)))
+    print("500:", sorted(set(broke)))
     assert not wrote, f"routes that changed account B's things when asked by account A: {wrote}"
+    # A body of B's identifiers is a bad body to most routes, and is answered as one (2026-11-09, security review:
+    # seven routes crashed on it, or asked the node with nothing to ask).
+    assert not broke, f"routes that crashed (500) on these bodies: {sorted(set(broke))[:20]}"
 
 
 def test_an_account_cannot_file_another_accounts_address_as_its_own(app_state):

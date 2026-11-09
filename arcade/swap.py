@@ -242,7 +242,11 @@ def leg_of(spec: dict, index: Any) -> I.Leg:
             raise SwapError(f"there is no inscription {key}")
         return I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(row["txid"]))
     if "token" in spec:
-        pid = int(spec["token"])
+        # A token number from a browser: a list or a word is refused, not a 500 (2026-11-09, security review).
+        try:
+            pid = int(spec["token"])
+        except (TypeError, ValueError, OverflowError):
+            raise SwapError(f"there is no token {spec['token']!r:.40}") from None
         prop = index.property(pid)
         if prop is None:
             raise SwapError(f"there is no token {pid}")

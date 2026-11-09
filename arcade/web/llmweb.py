@@ -562,7 +562,8 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
             from ..mesh.llmshare import grant_ok
             grant_ok({"address": address, "expires": expires, "sig": sig}, sid)
             books.keep_grant(account.pubkey, sid, address, expires, sig)
-        except (llmlib.LlmError, ValueError, TypeError) as exc:
+        # OverflowError: an expiry of Infinity, which JSON lets through (2026-11-09, security review).
+        except (llmlib.LlmError, ValueError, TypeError, OverflowError) as exc:
             return refuse(exc)
         return JSONResponse({"ok": True})
 
