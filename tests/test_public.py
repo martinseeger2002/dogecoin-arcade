@@ -1445,7 +1445,7 @@ def test_the_unlock_bar_shows_the_moment_the_page_draws():
     key = re.search(r'const OPEN_WALLET = "([^"]+)";', wallet).group(1)
     bar = base.index('<div id="unlockbar"')
     plain = base.index(f'sessionStorage.getItem("{key}")', bar)
-    module = base.index('<script type="module">', bar)
+    module = base.index('<script type="module" nonce="{{ csp_nonce }}">', bar)
     assert plain < module, "decided before the module, and with the same key wallet.js keeps the open wallet under"
     assert "bar.hidden = !!keys" in base[module:module + 400]
 

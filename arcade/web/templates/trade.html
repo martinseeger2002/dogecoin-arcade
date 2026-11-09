@@ -35,7 +35,7 @@
   {% if inputs %}<p class="muted" style="font-size:.82rem;margin:0">Signed by
     {% for a in inputs|unique %}{{ a|who(20) }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 document.querySelectorAll("[data-when]").forEach(function (e) {
   e.textContent = new Date(Number(e.dataset.when) * 1000).toLocaleString() + " · ";
 });

@@ -123,7 +123,7 @@
     has to be online to fill it, and nobody holds your tokens. You hold {{ held_base }} {{ bname }} and
     {{ held_quote }} {{ qname }}. Whatever is not matched in its block stands at your price, its tokens held back,
     until it fills or you cancel it.</p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   exTrade(document.getElementById("pair-form"), {hint: {asks: [{% for o in book.asks %}Number({{ o.each|tojson }}),{% endfor %}], bids: [{% for o in book.bids %}Number({{ o.each|tojson }}),{% endfor %}], last: {{ (day.last)|tojson }}},
     sideName: "side", buyValue: "buy",
     amount: "pair-amount", price: "pair-price", button: "pair-order",
@@ -146,7 +146,7 @@
     {% endfor %}
   </div>
   {% if viewer == 'account' %}
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   /* An account's pair order: built by /account/pair-order out of this account's own
      address, read back out of its bytes by wallet.checked, and signed in this tab. */
   import * as wallet from "/wallet.js";
@@ -211,7 +211,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 // Take an order from its row: the other side of it, at its price, in the card above.
 document.querySelectorAll("[data-ex-take]").forEach(function (b) {
   b.addEventListener("click", function () {

@@ -52,7 +52,7 @@
 #phrase{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 import * as signer from "/signin.js";
 const $ = (id) => document.getElementById(id);

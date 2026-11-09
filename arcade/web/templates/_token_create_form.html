@@ -105,7 +105,7 @@
   <button class="btn primary" id="create-yes">Yes, create it</button>
   <button class="btn" id="create-no">No</button>
 </div>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 
 const $ = (id) => document.getElementById(id);

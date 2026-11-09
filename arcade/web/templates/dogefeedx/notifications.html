@@ -216,7 +216,7 @@ html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; co
 html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
 html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   
@@ -240,7 +240,7 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
     <div id="note-list" data-wallet=""><p class="df-empty">Loading…</p></div>
   </main>
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var remote = [], bucket = '', seq = 0;
   var labels = {likes:'Like', comments:'Comment', reposts:'Repost', market_sale:'Market sale', market_purchase:'Market purchase', offer_received:'Offer received', offer_accepted:'Offer accepted', offer_denied:'Offer denied'};

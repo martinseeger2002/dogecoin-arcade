@@ -266,7 +266,7 @@ body.fullscreen #arc-bot { display: none !important; }
 .hs-sheet-no { width: 100%; min-height: 46px; margin-top: 8px; background: none; color: var(--fg); border: 0; box-shadow: none; }
 </style>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var TABS = {{ tabs|tojson }};
   var APPS = {{ apps|tojson }};

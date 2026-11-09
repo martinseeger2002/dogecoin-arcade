@@ -46,7 +46,7 @@
   </fieldset>
   <p id="k-said" hidden></p>
 </section>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const NAME = {{ me|tojson }};

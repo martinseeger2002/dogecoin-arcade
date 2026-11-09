@@ -19,7 +19,7 @@
 {%- endfor %}
 {#- The look (Themes on Your arcade, me.html; 2026-10-28: "lets try an ubuntu style one to add to the category"): Windows 98
     or Ubuntu, kept in this browser. Set before anything is drawn; the pages in the windows read it (base.html). -#}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.documentElement.setAttribute('data-skin', (function () {
   var v = ''; try { v = localStorage.getItem('arcade.deskview') || ''; } catch (e) {}
   if (!/^(1|w98|ubuntu|dogefeedx)$/.test(v)) v = '{{ desk_default }}' === 'w98' ? 'w98' : '{{ desk_default }}' === 'dogefeedx' ? 'dogefeedx' : 'ubuntu';
@@ -868,7 +868,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 [data-skin="dogefeedx"] .st-perm b { color: #fff6dd; }
 </style>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var TABS = {{ tabs|tojson }};
   var APPS = {{ apps|tojson }};

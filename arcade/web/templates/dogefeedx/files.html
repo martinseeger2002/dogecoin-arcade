@@ -38,7 +38,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
 .row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--df-line); }
 .more { margin-top:14px; background:#f3e3a5; color:#000; border:0; border-radius:999px; padding:8px 14px; font-weight:700; cursor:pointer; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 <div class="finder">
   <nav class="side">
     <h1>Files</h1>
@@ -56,7 +56,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
   </div>
 </div>
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var body = document.getElementById('files-body');
   var title = document.getElementById('files-title');

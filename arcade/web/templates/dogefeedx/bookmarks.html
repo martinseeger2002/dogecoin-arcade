@@ -209,7 +209,7 @@ html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, 
 html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
 html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   
@@ -222,7 +222,7 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
     <div id="marks" data-wallet=""><p class="df-empty">No bookmarks saved on this arcade.</p></div>
   </main>
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function paint() {

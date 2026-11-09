@@ -428,7 +428,7 @@ html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; co
 html.indesk body.df-dogefeed .df-signin-btn, html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; width: auto !important; }
 html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   
@@ -485,7 +485,7 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
   </aside>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   var box = document.getElementById('df-launches');

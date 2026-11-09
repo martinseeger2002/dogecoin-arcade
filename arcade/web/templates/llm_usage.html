@@ -80,7 +80,7 @@
 <details class="lu-panel"><summary style="cursor:pointer;font-weight:650">The series as a table</summary>
   <div class="lu-wrap" id="lu-series" style="margin-top:10px"></div></details>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }

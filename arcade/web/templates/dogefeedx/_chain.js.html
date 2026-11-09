@@ -13,7 +13,7 @@
 .dfx-chain-flop { background: #7c3aed; color: #fff; }
 .dfx-chain-unknown { background: #c8c8d0; color: #1b1b1b; }
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 /* Same rules as arcade/web/dogefeedx/chains.py. Non-EVM layer ones only. 0x is unknown.
    A stored xrp, xrpl, ripple, sol, or solana name is unknown and is not a pill. */
 var DFX_CHAIN_NAMES = {

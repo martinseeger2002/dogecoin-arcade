@@ -97,7 +97,7 @@
 </div>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 // A new arcade's ask, paid from the node's wallet in one click (2026-10-27, arcade/welcome.py). The row is a link
 // to Admin's Welcome panel; the button pays without leaving the page.
 document.addEventListener("click", function (e) {

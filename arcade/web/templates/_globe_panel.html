@@ -16,7 +16,7 @@
     <span class="muted" id="globe-said" style="margin-left:8px"></span></p>
   <p class="muted" id="globe-bands" style="margin:8px 0 0;font-size:.84rem"></p>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var view = null, dirty = false;

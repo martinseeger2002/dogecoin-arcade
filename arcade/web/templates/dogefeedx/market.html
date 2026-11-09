@@ -458,7 +458,7 @@ html.indesk body.df-dogefeed input {
   background: transparent !important; color: #fff6dd !important; border: 0 !important; box-shadow: none !important;
 }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -529,7 +529,7 @@ html.indesk body.df-dogefeed input {
 </div>
 
 {% include "dogefeedx/_chain.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   

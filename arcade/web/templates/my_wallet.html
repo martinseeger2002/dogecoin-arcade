@@ -350,7 +350,7 @@ a.wl-act:hover{text-decoration:none}
 <script src="/vendor/qrcode.js"></script>
 
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import {scanQR, parseQR} from "/qrscan.js";
 {# The operator's Wallet is this page with node_side on (2026-10-19): the node's wallets answer, node-wallet.js signs. #}
 import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
@@ -3011,7 +3011,7 @@ setInterval(() => {
 }, 20000);
 </script>
 {% if not node_side %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 wallet.keepCoinsSoon().catch(() => {});             // this browser's copy of the coin list, both ways (2026-10-25)
 async function drawEscrows() {

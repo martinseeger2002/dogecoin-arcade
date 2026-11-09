@@ -68,7 +68,7 @@
   </div>
   <p class="muted" style="margin:0 0 8px;font-size:.84rem">Linked arcades see the name chosen here. Nothing moves on
     chain: the node's coins stay with its own name, and yours stay in your wallet.</p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   document.querySelectorAll('input[name="arcade_name"]').forEach(function (r) {
     r.addEventListener('change', function () {
       var said = document.getElementById('arcadename-said');
@@ -92,7 +92,7 @@
     <label><input type="checkbox" id="owner-say" {{ "checked" if st.say }}> Tell linked arcades I own it</label>
     <span class="muted" id="owner-said"></span>
   </div>
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   const box = document.getElementById("ownerproof"), said = document.getElementById("owner-said");
   box.querySelectorAll("[data-when]").forEach((e) => { e.textContent = new Date(1000 * e.dataset.when).toLocaleDateString(); });
   const keep = (body) => fetch("/admin/api/owner", {method: "POST", credentials: "same-origin", body: JSON.stringify(body),
@@ -148,7 +148,7 @@
     <thead><tr><th>Arcade</th><th>Heard</th><th>Open</th></tr></thead>
     <tbody id="yourrows"><tr><td colspan="3" class="muted">Looking&hellip;</td></tr></tbody>
   </table></div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   fetch('/admin/api/your-nodes', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); })
     .then(function (got) {
       var body = document.getElementById('yourrows'); body.replaceChildren();
@@ -307,7 +307,7 @@
   <div style="overflow-x:auto"><table style="width:100%;font-size:.84rem;margin-top:6px">
     <tbody id="stratumminers"></tbody></table></div>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // Admin -> Mining (the Mining module, 2026-11-04): /admin/api/mining for the table and the stratum server.
   var $ = function (id) { return document.getElementById(id); }, data = null, drawn = false;
@@ -840,7 +840,7 @@
 <section class="panel"><h2>Settings</h2><div id="wim-settings"></div></section>
 </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var net = '', data = null;
@@ -1151,7 +1151,7 @@
 </section>
 </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var data = null, prices = [], kinds = [], models = [], chosen = [];
@@ -1684,7 +1684,7 @@
   <p class="muted" style="font-size:.82rem;margin:12px 0 0" id="lora-fw-src"></p>
 </section>
 </div>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const ago = (s) => s == null ? "never" : s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
@@ -1980,7 +1980,7 @@ if (location.hash === "#meshtastic") start();
     <tbody id="split-rows"></tbody>
   </table></div>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   function cell(tr, lines) {
@@ -2254,7 +2254,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
 .adminhead{position:relative}
 </style>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var LOCAL = {{ 'true' if local else 'false' }};
   var $ = function (id) { return document.getElementById(id); };
@@ -4312,7 +4312,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
 })();
 </script>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 // Node installs' notifications on every Admin tab (2026-11-04, chose "steps in the row" with "notifications
 // that follow you around Admin"): a note for each new one, and the bell keeps the list (/admin/api/cores/events).
 (function () {

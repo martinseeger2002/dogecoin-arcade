@@ -132,7 +132,7 @@
 .a-links{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
 @media (max-width:700px){.a-card{grid-template-columns:1fr}}
 </style>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
 const NODE = {{ 'true' if wallet == 'node' else 'false' }};
 const API = NODE ? "/node/wallet" : "/account";

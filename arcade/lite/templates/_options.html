@@ -51,7 +51,7 @@
     </div>
   </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   function tell(text, cls) { var p = $('o-said'); p.textContent = text; p.className = cls || ''; p.hidden = !text; }

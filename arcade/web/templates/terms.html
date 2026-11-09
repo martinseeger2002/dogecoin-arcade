@@ -81,7 +81,7 @@ main.left p{color:var(--muted);margin:0 0 16px}
         <button type="submit">Accept</button>
       </form>
       {# A home-screen or desktop link's page is after the # (#open=), which no server sees. #}
-      <script>document.querySelector('[name=back]').value += location.hash;</script>
+      <script nonce="{{ csp_nonce }}">document.querySelector('[name=back]').value += location.hash;</script>
       <a class="button leave" href="/terms/left">Leave</a>
     </div>
     {% endif %}

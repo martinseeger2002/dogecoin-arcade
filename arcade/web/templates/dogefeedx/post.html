@@ -536,7 +536,7 @@ a { color: inherit; text-decoration: none; }
 
 {% include "dogefeedx/_chain.js.html" %}
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   
@@ -736,7 +736,7 @@ a { color: inherit; text-decoration: none; }
 })();
 </script>
 {% include "dogefeedx/_arcade_act.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // Reply: on the chain through the arcade (dfxReact 'reply'), as the Feed's reply box does.
   var btn = document.getElementById('df-reply-btn');

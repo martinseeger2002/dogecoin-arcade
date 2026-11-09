@@ -14,7 +14,7 @@
   </div>
   <p class="msg err" id="block-trouble" hidden></p>
 </details>
-<script>
+<script nonce="{{ csp_nonce }}">
 // After the page: base.html defines window.arcadeBlocked below the body block.
 document.addEventListener('DOMContentLoaded', function () {
   var B = window.arcadeBlocked;

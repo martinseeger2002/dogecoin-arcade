@@ -16,7 +16,7 @@
         title="{{ title }}"></iframe>
 {#- No strip under the game (2026-10-27: "Remove this" -- the trusted strip of 2026-10-26, issue #7 (e)): the
     game fills the screen again. #}
-<script>
+<script nonce="{{ csp_nonce }}">
 {% include "_page_doors.js.html" %}
 </script>
 {% else %}
@@ -39,7 +39,7 @@ main { max-width: none !important; padding: 0 !important; margin: 0 !important; 
 .fullpic { display: grid; place-items: center; }
 .fullpic img { max-width: 100%; max-height: 100%; object-fit: contain; }
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   function top() { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); }
   window.addEventListener("load", top);

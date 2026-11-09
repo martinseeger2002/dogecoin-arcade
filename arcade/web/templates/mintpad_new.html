@@ -174,7 +174,7 @@
 .mpprev-ticker b{background:#7dffb0}
 </style>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const CHAIN = {network: "{{ chain.network }}",

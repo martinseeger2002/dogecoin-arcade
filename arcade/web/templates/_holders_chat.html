@@ -16,7 +16,7 @@
   </div>
   <p class="msg" id="hc-news" hidden style="margin:8px 0 0"></p>
 </div>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const ASSET = {{ ({"kind": hc_kind, "id": hc_id, "creator": hc_creator,

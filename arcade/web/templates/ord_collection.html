@@ -66,7 +66,7 @@
   {% if page < pages %}<a class="btn small ghost" href="?page={{ page + 1 }}">Next &#8594;</a>{% endif %}
 </div>
 {% elif number %}<p style="text-align:center"><a href="?">Show all</a></p>{% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 /* One piece at a time (2026-10-17): each frame starts when the one before it has drawn -- in page order, cover
    first -- so a page never asks the node for two dozen Doginals at once (each one it has not read yet is read off the
    chain), and the grid fills in from the top. A piece that stalls is passed after 15 s. */

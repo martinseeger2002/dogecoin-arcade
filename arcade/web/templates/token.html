@@ -223,7 +223,7 @@
   <p class="msg ok" id="iss-news" hidden></p>
 </div>
 <style>.issrow{margin-bottom:16px}.issrow input{min-width:0}</style>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};

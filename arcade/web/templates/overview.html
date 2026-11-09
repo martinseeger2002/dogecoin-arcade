@@ -158,7 +158,7 @@
     tell that any of them were meant for you.</span>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 function copyOf(id, ev){
   const t = document.getElementById(id).textContent.trim();
   navigator.clipboard.writeText(t).then(function(){

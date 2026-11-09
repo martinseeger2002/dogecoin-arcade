@@ -17,7 +17,7 @@
     </div>
   </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var KEPT = {{ 'true' if tab_owner else 'false' }}, LOCAL = 'lite_tabs_hidden';

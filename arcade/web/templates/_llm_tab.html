@@ -378,7 +378,7 @@
 {% endif %}
 </div>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const FOCUS = {{ (focus or none)|tojson }};          // {seller, kind, model} on a model's own page, null on the marketplace

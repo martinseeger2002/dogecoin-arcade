@@ -147,8 +147,8 @@ button.mecard{min-height:0;display:flex;align-items:center;gap:12px;width:100%;t
 .bookfoot{font-size:.8rem;text-align:center;margin:22px 0 0}
 </style>
 
-{% if node_side %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
-<script type="module">
+{% if node_side %}<script nonce="{{ csp_nonce }}">window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module" nonce="{{ csp_nonce }}">
 {# The operator's Address book is this page over the node's contacts (2026-10-19; node-mail.js). #}
 import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
 import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";

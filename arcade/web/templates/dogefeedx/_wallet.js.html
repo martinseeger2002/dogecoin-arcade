@@ -1,4 +1,4 @@
-<script>
+<script nonce="{{ csp_nonce }}">
 function dfxWalletKey() { return 'dogefeedx.wallet'; }
 function dfxReadWallet() {
   try { return localStorage.getItem(dfxWalletKey()) || ''; } catch (e) { return ''; }

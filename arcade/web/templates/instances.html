@@ -55,7 +55,7 @@
 .inst .dom{font-weight:650;font-size:1.05rem}
 .inst .kv .v{word-break:break-all;text-align:right;max-width:70%}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 // The check happens HERE, in the visitor's browser, never on this node: the node
 // does not fetch web addresses that strangers wrote onto the chain.
 document.querySelectorAll('.inst').forEach(function (card) {

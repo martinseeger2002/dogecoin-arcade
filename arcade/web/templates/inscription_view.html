@@ -91,7 +91,7 @@
     </div>
   </dialog>
   {% endif %}
-  <script>
+  <script nonce="{{ csp_nonce }}">
   {% if not public %}
   // The page in the frame can file a request at any moment; the person looking
   // at it should see that without reloading. Polled while this page is open:
@@ -218,7 +218,7 @@
   <h2>In games</h2>
   <div class="panel" id="game-state-list"></div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function(){
   fetch('/r/state/{{ row.txid }}', {cache: 'no-store'}).then(function(r){ return r.json(); })
     .then(function(j){
@@ -312,7 +312,7 @@
     price to you.{% else %}Accepting signs this piece at the price in the offer and sends
     the buyer the answer; their wallet signs the payment, and nothing moves unless both
     halves do.{% endif %}</p>
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   /* The piece page from the side that holds the piece. On the other side of
      this page an offer is one transaction and one signature; here an answer
      is two signatures over a leg and one over the letter that carries it, and
@@ -424,7 +424,7 @@
   <p class="muted" style="font-size:.82rem;margin:8px 0 0">The holder named this price.
     Offer it and the piece is yours when they accept; they are told about it.</p>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var b = document.getElementById('offer-the-price');
   if (!b) return;
@@ -468,7 +468,7 @@
     {%- else %}One transaction: the seller already signed the piece over at this
       price, and your key signs the coins in this tab. Both move in the same
       block or neither does.{% endif %}</p>
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   /* Filling somebody's listing. The seller's half is in the node's book;
      `wallet.offerBuy` asks for the transaction around it and `wallet.buy`
      checks it with `coins.verifyOffer` before this key signs anything, so the
@@ -566,7 +566,7 @@
   </table>
   <p class="msg" id="fill-news" hidden></p>
   {% include "_offer_complete.html" %}
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   // Withdraw a pre-signed offer: spend the coins it was signed over, back to you.
   import * as wallet from "/wallet.js";
   const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
@@ -664,7 +664,7 @@
         token{{ '' if tokens|length == 1 else 's' }}{% endif %}.
     {%- else %}This account holds nothing on {{ chain.label|lower }} to offer
       with.{% endif %}</p>
-    <script type="module">
+    <script type="module" nonce="{{ csp_nonce }}">
     /* An offer, from the account's side of it.
 
        Nothing is spent until `wallet.checked` has read this node's
@@ -810,7 +810,7 @@
       {%- if tokens %} and {{ tokens|length }}
         token{{ '' if tokens|length == 1 else 's' }}{% endif %}.
     {%- else %}This wallet holds nothing on {{ chain.label|lower }} to offer with.{% endif %}</p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   function offerToken(sel){
     document.getElementById('offer-token-wrap').hidden = sel.value !== 'token';
   }

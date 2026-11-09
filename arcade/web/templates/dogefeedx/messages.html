@@ -254,9 +254,9 @@ html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, 
   </main>
 </div>
 {% if chain %}
-{% if not public %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+{% if not public %}<script nonce="{{ csp_nonce }}">window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
 {% include "dogefeedx/_chain.js.html" %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "{{ '/wallet.js' if public else '/node-wallet.js' }}";
 import * as mail from "{{ '/messaging.js' if public else '/node-mail.js' }}";
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};

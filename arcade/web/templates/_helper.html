@@ -52,7 +52,7 @@
 </svg>
 {%- endmacro %}
 <template id="arc-bot-face">{{ robot() }}</template>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // Not over a game in full screen, not where a password or recovery words are typed (a chat box there is a box a phrase
   // could be pasted into), and not when the person turned it off on their own page.

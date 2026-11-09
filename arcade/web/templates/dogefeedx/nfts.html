@@ -342,7 +342,7 @@ html.indesk body.df-dogefeed .df-hero h2 { color: #fff6dd !important; }
 html.indesk body.df-dogefeed .df-hero p { color: rgba(255,255,255,.7) !important; }
 html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; color: #000 !important; width: auto !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   
@@ -373,7 +373,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
 </div>
 
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   

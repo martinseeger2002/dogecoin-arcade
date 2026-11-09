@@ -75,7 +75,7 @@
     {{ 'NFT' if a.kind == 'nft' else 'asset' }} on testnet. It counts within seconds, as soon as the deposit is
     in the mempool, and trades with any order at your price. You can close the page; <em>Your orders</em> says where it is.</p>
   <p class="msg err" id="x-trouble" hidden></p><p class="msg ok" id="x-news" hidden></p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   exTrade(document.getElementById("x-form"), {hint: {asks: [{% for o in book.sells %}Number({{ o.each|tojson }}),{% endfor %}], bids: [{% for o in book.buys %}Number({{ o.each|tojson }}),{% endfor %}], last: {{ (stats.last)|tojson }}},
     sideName: "side", buyValue: "buy",
     amount: "x-amount", price: "x-price", button: "x-order",
@@ -170,7 +170,7 @@
 </div>
 
 {% if viewer == 'account' and live %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 /* An account's cross-chain order: the node writes it down and builds its deposit (a sell
    from this account's testnet address, a buy from its mainnet one); this tab signs it,
    and a sheet says where it goes from there. */
@@ -248,7 +248,7 @@ document.querySelectorAll("[data-x-cancel]").forEach((b) => b.onclick = async ()
 </script>
 {% endif %}
 {% if live and viewer != 'nobody' %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // Take an order from its row: the other side of it, at its price, in the card above.
 document.querySelectorAll(".x-take").forEach(function (b) {
   b.onclick = function () {

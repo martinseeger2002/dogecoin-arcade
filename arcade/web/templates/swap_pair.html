@@ -167,7 +167,7 @@
         <input name="amount" autocomplete="off"><input name="price" autocomplete="off"><button type="submit">go</button>
       </form>
       {% endfor %}
-      <script>
+      <script nonce="{{ csp_nonce }}">
       (function () {
         var root = document.getElementById("ex-trade"); if (!root) return;
         var $ = function (id) { return document.getElementById(id); };
@@ -331,7 +331,7 @@
             <td class="muted" style="text-align:right"><a class="tl" href="/exchange/swap-trade/{{ t.id }}"><span data-when-short="{{ t.when }}"></span></a></td></tr>
         {% endfor %}
       </table>
-      <script>document.querySelectorAll("[data-when-short]").forEach(function (e) {
+      <script nonce="{{ csp_nonce }}">document.querySelectorAll("[data-when-short]").forEach(function (e) {
         var d = new Date(Number(e.dataset.whenShort) * 1000);
         e.textContent = d.toLocaleDateString(undefined, {month: "short", day: "numeric"}) + " " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); });</script>
       {% else %}<p class="muted" style="margin:0">No swap has settled on this market yet.</p>{% endif %}
@@ -343,7 +343,7 @@
 {# Giving a Doginal needs Dogecoin besides it: the lock's fee and the reserve that moves it out again (2026-10-15:
    "Those buttons should be grayed out unless they have a balance of Dogecoin on top of their asset"). #}
 <p class="ex-note dg-need" id="dg-need" hidden></p>
-<script>
+<script nonce="{{ csp_nonce }}">
 (async () => {
   try {
     const said = await (await fetch("/account?chains=doge", {cache: "no-store"})).json();

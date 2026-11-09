@@ -28,7 +28,7 @@
   <h3>Welcomers</h3>
   <div id="welcomeboard" class="muted">Looking&hellip;</div>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var said = null, sheetShown = false, mineTimer = null;

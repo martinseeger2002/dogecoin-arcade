@@ -20,7 +20,7 @@
    * The prompt is NOT ticked by default (SadFrog, 2026-10-27): it stays on the chain for ever, and people may not
      expect what they typed to become public. Ticked, each piece carries its own prompt.
    * Every byte is paid for on the chain, so the preview shows the JSON exactly as it will go up. #}
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
   /** A model's file name read as a name: "qwen_image_2.1_int8.safetensors" -> "qwen image 2.1 int8". */
