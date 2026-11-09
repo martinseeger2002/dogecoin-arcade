@@ -102,7 +102,9 @@
     var box = document.getElementById('asked'), dialog = document.getElementById('ask'),
         frame = document.getElementById('ask-frame'), note = document.getElementById('ask-note'),
         seen = {}, showing = null, closer = null, first = true;
-    function esc(t){ return String(t).replace(/</g, '&lt;'); }
+    // Every character that means something in markup, quotes included (2026-11-09, security review): a label is what
+    // the asking page called itself, and an id sits in an attribute.
+    function esc(t){ return String(t).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
     function open(id){
       showing = id; seen[id] = true; note.textContent = '';
       frame.src = '/approvals/' + encodeURIComponent(id) + '?embed=1';
