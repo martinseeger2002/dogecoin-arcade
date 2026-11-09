@@ -465,6 +465,9 @@ def _session_cookie_headers(token: str, secure: bool) -> list[tuple[bytes, bytes
     return [h for h in shaped.raw_headers if h[0] == b"set-cookie"]
 
 
+#: A page's own policy: only this arcade may frame it, no plugins, and no <base> pointing its addresses elsewhere.
+PAGE_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+
 #: Paths whose answers are one account's (or the operator's) own: never kept by a browser or a cache in between.
 PRIVATE_PATHS = ("/account", "/auth", "/signin", "/signup", "/admin", "/api/v1", "/me")
 
@@ -496,6 +499,12 @@ class _SafeHeaders:
                     add.append((b"strict-transport-security", b"max-age=15552000"))
                 if private:
                     add.append((b"cache-control", b"private, no-store"))
+                # A page with no policy of its own gets render()'s (2026-11-09, checking the review's fixes live):
+                # /lite, /me and / are drawn outside render() and said nothing, so another site could frame the
+                # ArcadeCore window and its wallet. A page that says its own policy (content, modules, /recover) keeps it.
+                kind = next((v for k, v in headers if k.lower() == b"content-type"), b"")
+                if kind.lower().startswith(b"text/html"):
+                    add.append((b"content-security-policy", PAGE_CSP.encode()))
                 message = {**message, "headers": headers + [(k, v) for k, v in add if k not in have]}
             await send(message)
 
@@ -1485,7 +1494,7 @@ def create_app(state: AppState) -> FastAPI:
         # without allow-forms nothing inside it can submit -- but a rule that
         # holds on its own is better than one that holds because of another.
         # No plugin objects, and no <base> pointing the page's own relative addresses elsewhere (2026-11-08).
-        response.headers["Content-Security-Policy"] = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+        response.headers["Content-Security-Policy"] = PAGE_CSP
         return response
 
     @app.exception_handler(HTTPException)
