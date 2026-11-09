@@ -160,7 +160,14 @@ window.exTrade = window.exTrade || function (root, o) {
     }
     return {took: took, cost: cost, left: left, n: n, worst: worst};
   }
-  function line(a, b, cls) { return "<div" + (cls ? " class=\"" + cls + "\"" : "") + "><span>" + a + "</span><b>" + b + "</b></div>"; }
+  // Built as elements, words as text (2026-11-09, security review): a row names the token and the coin, and a token's
+  // name is whatever its issuer put on the chain.
+  function line(a, b, cls) {
+    var d = document.createElement("div"), s = document.createElement("span"), w = document.createElement("b");
+    if (cls) d.className = cls;
+    s.textContent = a; w.textContent = b; d.append(s, w);
+    return d;
+  }
   function update() {
     modes.forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.mode === mode)); });
     var qty = num(amount.value), rows = [], word = buying() ? "Buy" : "Sell";
@@ -190,7 +197,7 @@ window.exTrade = window.exTrade || function (root, o) {
     if (total) total.textContent = qty && each ? fmt(sum) : "0";
     if (o.feePermille && qty && each) rows.push(line("Node fee (" + (o.feePermille / 10) + "%)", fmt(sum * o.feePermille / 1000) + " " + o.coin));
     if (qty && each) rows.push(line("Network fee", "shown before you sign"));
-    quote.innerHTML = rows.join("");
+    quote.replaceChildren.apply(quote, rows);
     // A single piece is offered for, not bought, unless the price takes a sale
     // standing in the book (2026-10-09: "it should say make offer not buy").
     if (o.piece) button.textContent = !each ? "Enter your price"
