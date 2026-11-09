@@ -38,7 +38,13 @@ FAKE: dict = {}
 
 @pytest.fixture(scope="module")
 def served(tmp_path_factory):
-    from arcade.web.app import create_app
+    import os
+    from arcade.web.app import SCRIPT_POLICY_ENV, create_app
+
+    # These tests drive the pages' own functions from outside (a stand-in page's inline script, window.eval): they
+    # check escaping, not the script policy, which would rightly stop that harness. So they run with it report-only,
+    # even in a suite run that enforces it (ARCADE_ENFORCE_SCRIPT_POLICY=1); tests/test_script_policy*.py cover it.
+    held = os.environ.pop(SCRIPT_POLICY_ENV, None)
 
     home = tmp_path_factory.mktemp("sinks")
     state = make_state(home, "node")
@@ -58,6 +64,8 @@ def served(tmp_path_factory):
     server = Server(app, port)
     yield state, f"http://127.0.0.1:{port}", home
     server.stop()
+    if held is not None:
+        os.environ[SCRIPT_POLICY_ENV] = held
 
 
 @pytest.fixture(scope="module")
