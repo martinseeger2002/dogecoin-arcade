@@ -88,6 +88,25 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/wallet-idle-lock` (on `main` 50182a46) · idle wallet lock; sealed-wallet lookups limited per name
+
+Two follow-ups from the security review, one commit each, each with its tests. Not deployed.
+- **The wallet locks itself after a while with nothing done** (wallet.js, "locked again after a while"): one
+  `arcade.last-active` time in localStorage, shared by every tab; after the minutes chosen on /me ("Lock the wallet":
+  Off, 5, 15, 30, 60; default 15) every tab forgets the words (`forgetOpen({all: true})`, not a sign-out). Never during
+  a send: `document.body.dataset.working`, any `[data-working]`, or the `arcade-spend` lock in any tab keeps it open.
+  Tabs that held words are drawn again unless busy or holding typed text (they get `arcade-wallet-locked`; the Wallet
+  page drops its kept `keys`). base.html loads wallet.js on every signed-in page. A page that keeps an unlocked wallet
+  in a variable should listen for `arcade-wallet-locked` too.
+  Tests: tests/test_idle_lock_browser.py (4), test_me_page.
+- **/signin/<name> is limited per name too**: at most 30 different visitors a name an hour
+  (`accounts.VAULT_VISITORS`), on top of the per-visitor 20 in 5 minutes; a visitor already counted is let in again, so
+  a second device or a retry is not held up. `/signin/<name>/imported` shares the count. Both 429s say how long
+  (`wait`, Retry-After). The attempt table keeps an hour now. Tests: test_signin_hardening (3 new).
+- **Still open:** one fetched copy is enough to guess a weak password offline; the real fix is a server-side pepper or
+  an OPAQUE-style login (not built). The mesh port's pass-through (`wsock._proxy`) keeps a caller's own
+  `Cf-Connecting-Ip`, so on a node whose mesh port is open without an edge the per-visitor count can be dodged there;
+  the per-name count still holds.
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/digiassets-guard` (on `main` 50182a46) · the inscription guard reads DigiAssets; Gather's 0.0001 DGB rule narrowed
 
 Security review: DigiAssets ride on DigiByte coins and the guard could not read them, so Gather kept back every coin of
