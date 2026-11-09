@@ -243,6 +243,22 @@ export const ADDRESS_KINDS = {
 };
 export const addressKinds = (network) => ADDRESS_KINDS[network] || [];
 
+/* The same address on two chains (2026-11-09, security review): Dogecoin and DigiByte both take this account's key
+ * from coin type 3 (coins.COIN_TYPE) and both write a legacy key-hash address with version byte 30, so the account's
+ * legacy "D..." address is the very same string on both. Coins sent on the other chain still reach this key, but on
+ * that chain, where this wallet is not looking for them. Receive says so beside such an address. The SegWit and P2SH
+ * kinds differ between the two (their own bytes and prefixes) and get nothing; so does every other chain, whose legacy
+ * byte no other chain with the same coin type shares (test_same_address_note). */
+export const SAME_LEGACY_ADDRESS = {doge: "dgb", dgb: "doge"};
+export const SAME_ADDRESS_NOTE = "This address is the same on Dogecoin and DigiByte. Check the chain before sending.";
+/** The note for `address` shown to receive on `network`, or "" where it is not the same string on another chain. */
+export function sameAddressNote(network, address) {
+  if (!SAME_LEGACY_ADDRESS[network] || !address) return "";
+  let raw;
+  try { raw = coins.unbase58(String(address)); } catch (e) { return ""; }          // bech32 (dgb1...) is not base58
+  return raw.length === 25 && raw[0] === 30 ? SAME_ADDRESS_NOTE : "";
+}
+
 /** That kind's key and address on `network`, from the wallet's words. */
 async function kindKey(wallet, network, kind) {
   const base = keysOn(wallet, network);
