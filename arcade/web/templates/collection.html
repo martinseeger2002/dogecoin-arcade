@@ -62,8 +62,7 @@
     </div>
     {% if row.held and row.content_type.startswith('image/') %}
       <a class="media" href="/content/{{ row.txid }}?download=1"
-         onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
-                  '/content/{{ row.txid }}?download=1'); return false">
+         data-view="/content/{{ row.txid }}" data-view-name="#{{ row.number }}">
         <img src="/content/{{ row.txid }}" alt="{{ row.edition }}" loading="lazy"
              style="max-width:100%;border-radius:8px;margin:8px 0"></a>
     {% endif %}
@@ -133,4 +132,14 @@
 </div>
 {% endif %}
 {% if account_view %}{% include "_buy_listing.html" %}{% endif %}
+<script nonce="{{ csp_nonce }}">
+// A picture opens in the viewer, not as a download (the script policy, 2026-11-09: a listener, not an inline
+// onclick). The link's own href is the download the viewer offers.
+document.addEventListener('click', function (e) {
+  var a = e.target.closest && e.target.closest('a.media[data-view]');
+  if (!a) return;
+  e.preventDefault();
+  arcadeOpenImage(a.dataset.view, a.dataset.viewName, a.getAttribute('href'));
+});
+</script>
 {% endblock %}

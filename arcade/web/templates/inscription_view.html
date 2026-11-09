@@ -26,9 +26,17 @@
      an SVG's -- so it needs no sandbox; tap opens the viewer, with its zoom. #}
   <div class="inscription-picture">
     <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
-         onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
-                                  '/content/{{ row.txid }}?download=1')">
+         data-view="/content/{{ row.txid }}" data-view-name="#{{ row.number }}"
+         data-view-save="/content/{{ row.txid }}?download=1">
   </div>
+  <script nonce="{{ csp_nonce }}">
+  // Tap opens the viewer (the script policy, 2026-11-09: a listener, not an inline onclick). On the document, so a
+  // picture the page's in-place refresh puts back still opens.
+  document.addEventListener('click', function (e) {
+    var img = e.target.closest && e.target.closest('.inscription-picture img[data-view]');
+    if (img) arcadeOpenImage(img.dataset.view, img.dataset.viewName, img.dataset.viewSave);
+  });
+  </script>
 {% elif renders %}
   {# Sandboxed, and deliberately not `allow-same-origin`: with it, inscribed
      code would share this wallet's origin and could read every page in it.
@@ -787,7 +795,7 @@
       <input autocomplete="off" name="amount" inputmode="decimal" placeholder="amount"
              value="{{ offer_amount or '' }}"></div>
     <div style="flex:0 0 150px">
-      <select autocomplete="off" name="kind" id="offer-kind" onchange="offerToken(this)">
+      <select autocomplete="off" name="kind" id="offer-kind">
         <option value="coins">{{ chain.label }} coins &mdash; {{ "%.4f"|format(coins) }}</option>
         {% if tokens %}
         <option value="token" {{ 'selected' if offer_kind == 'token' }}>a token</option>
@@ -814,6 +822,10 @@
   function offerToken(sel){
     document.getElementById('offer-token-wrap').hidden = sel.value !== 'token';
   }
+  // On the document, not the select, so a form the page's in-place refresh puts back still answers.
+  document.addEventListener('change', function (e) {
+    if (e.target.matches && e.target.matches('select#offer-kind[name=kind]')) offerToken(e.target);
+  });
   </script>
   {% endif %}
 </div>

@@ -19,8 +19,7 @@
   {% if row.held and row.content_type.startswith('image/') %}
     <a class="media" href="/content/{{ row.txid }}?download=1"
        title="{{ row.txid }} — click to open"
-       onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
-                '/content/{{ row.txid }}?download=1'); return false">
+       data-view="/content/{{ row.txid }}" data-view-name="#{{ row.number }}">
       <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
            loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
   {% endif %}
@@ -158,7 +157,7 @@
       <div class="field">
         <label for="file">The file</label>
         <input autocomplete="off" type="file" name="attachment" id="file"
-               onchange="priceInscription(this)">
+               data-price>
         <p class="muted" id="priced" hidden style="margin:8px 0 0"></p>
       </div>
       <div class="field">
@@ -223,5 +222,16 @@ function priceInscription(input){
   // The name as text (2026-11-09, security review): a file can be called anything, markup included.
   note.querySelector('strong').textContent = file.name;
 }
+// Attached here, not written into the markup (the script policy, 2026-11-09): the file is priced as it is chosen,
+// and a picture opens in the viewer, the link's own href being the download the viewer offers.
+document.addEventListener('change', function (e) {
+  if (e.target.matches && e.target.matches('input[data-price]')) priceInscription(e.target);
+});
+document.addEventListener('click', function (e) {
+  var a = e.target.closest && e.target.closest('a.media[data-view]');
+  if (!a) return;
+  e.preventDefault();
+  arcadeOpenImage(a.dataset.view, a.dataset.viewName, a.getAttribute('href'));
+});
 </script>
 {% endblock %}
