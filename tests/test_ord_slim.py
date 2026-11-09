@@ -445,3 +445,34 @@ def test_a_reset_for_new_rules_is_all_or_nothing(tmp_path):
     assert fresh.meta("rules") == ord_rules.RULES and fresh.meta("layout") == dx.LAYOUT
     assert fresh.q("SELECT COUNT(*) FROM block")[0][0] == 0, "cut again from the start"
     assert {"seen", "pending"} <= {r[0] for r in fresh.q("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def test_a_snapshot_is_made_only_with_room_for_it_and_a_failed_one_leaves_nothing(tmp_path, monkeypatch):
+    """2026-11-09, Strawberry: asked for a copy, it wrote 29 GB of its 33.7 GB doge index beside the old snapshot, the
+    disk reached 0 bytes free, arcade-web wrote "disk I/O error", and the .tmp stayed behind holding the space."""
+    from arcade import ord_snapshot
+    chain = Chain()
+    chain.add([])
+    index = _walker(tmp_path, chain)
+    index.walker.step(chain, dx.BASE, budget=60)
+    snaps = index.snapshots
+    size = (tmp_path / "walk.sqlite").stat().st_size
+    tmp = snaps.snap_path.with_name(snaps.snap_path.name + ".tmp")
+
+    monkeypatch.setattr(ord_snapshot, "_free", lambda folder: size + ord_snapshot.SNAP_SPARE - 1)
+    assert not snaps.room() and not snaps.want_made(), "no room: not even started"
+    with pytest.raises(OSError):
+        snaps.make()
+    assert not tmp.exists() and not snaps.snap_path.exists() and snaps.made is None
+
+    monkeypatch.setattr(ord_snapshot, "_free", lambda folder: size + ord_snapshot.SNAP_SPARE)
+    assert snaps.room() and snaps.want_made()
+
+    def full(*a, **k):                                   # the disk fills part-way through the copy
+        tmp.write_bytes(b"x" * 4096)
+        raise sqlite3.OperationalError("database or disk is full")
+    monkeypatch.setattr(ord_snapshot, "_sha", full)
+    with pytest.raises(sqlite3.OperationalError):
+        snaps.make()
+    assert not tmp.exists(), "a copy that did not finish is removed at once"
+    assert not snaps.snap_path.exists() and snaps.made is None

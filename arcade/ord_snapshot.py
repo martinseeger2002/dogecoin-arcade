@@ -57,10 +57,20 @@ WORK_META = ("lanes", "lease", "said_upto")
 #: A snapshot nobody has fetched from for this long is let go of: it is made again when someone asks (the operator
 #: 2026-10-20, slimming: a whole second copy of the index kept on disk for nobody).
 SNAP_IDLE = 2 * 3600
+#: Free disk a snapshot leaves behind it, past the copy itself (2026-11-09: Strawberry's 33.7 GB doge index was copied
+#: beside the old 27.9 GB snapshot and its backfill; the disk reached 0 bytes free at 11:41 and arcade-web wrote
+#: "disk I/O error"). The copy is at most the index file's size, so it is made only when that and this much are free.
+SNAP_SPARE = 2 * 1024 ** 3
 
 
 class SnapshotError(ValueError):
     pass
+
+
+def _free(folder) -> int:
+    """Free bytes on the disk under `folder` (one place, so a test can say how much)."""
+    st = os.statvfs(folder)
+    return st.f_bavail * st.f_frsize
 
 
 def _sha(b: bytes) -> str:
@@ -187,25 +197,35 @@ class Snapshots:
             tmp.unlink()
         except FileNotFoundError:
             pass
-        with store._lock:
-            store._db.execute("VACUUM INTO ?", (str(tmp),))
-        db = sqlite3.connect(tmp, isolation_level=None)
+        if not self.room():
+            raise OSError("ord snapshot: not enough free disk for a copy of the index")
         try:
-            for table in WORK:
-                db.execute(f"DELETE FROM {table}")
-            db.execute(f"DELETE FROM meta WHERE k IN ({','.join('?' * len(WORK_META))})", WORK_META)
-            height = json.loads((db.execute("SELECT v FROM meta WHERE k='walk_next'").fetchone() or ["0"])[0])
-            db.execute("VACUUM")
-        finally:
-            db.close()
-        hashes, size = [], 0
-        with open(tmp, "rb") as f:
-            while True:
-                piece = f.read(PIECE)
-                if not piece:
-                    break
-                hashes.append(_sha(piece))
-                size += len(piece)
+            with store._lock:
+                store._db.execute("VACUUM INTO ?", (str(tmp),))
+            db = sqlite3.connect(tmp, isolation_level=None)
+            try:
+                for table in WORK:
+                    db.execute(f"DELETE FROM {table}")
+                db.execute(f"DELETE FROM meta WHERE k IN ({','.join('?' * len(WORK_META))})", WORK_META)
+                height = json.loads((db.execute("SELECT v FROM meta WHERE k='walk_next'").fetchone() or ["0"])[0])
+                db.execute("VACUUM")
+            finally:
+                db.close()
+            hashes, size = [], 0
+            with open(tmp, "rb") as f:
+                while True:
+                    piece = f.read(PIECE)
+                    if not piece:
+                        break
+                    hashes.append(_sha(piece))
+                    size += len(piece)
+        except BaseException:
+            # A copy that did not finish (the disk filled, most likely) goes at once, not left to hold the space.
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            raise
         from . import ord_rules
         from .doginal_index import LAYOUT
         manifest = {"net": self.index.net, "base": self.index.base, "rules": self.index.rules, "layout": LAYOUT,
@@ -225,6 +245,12 @@ class Snapshots:
             return False
         if self.index.walker.next_height() <= self.index.base:
             return False
+        if not self.room():
+            if time.time() - getattr(self, "_roomless_said", 0) > 3600:
+                self._roomless_said = time.time()
+                log.warning("ord index %s: not enough free disk to make a snapshot (it needs the index's size and %d GB)",
+                            self.index.net, SNAP_SPARE // 1024 ** 3)
+            return False
         if self.made is None:
             return True
         # Never while somebody is still fetching it (2026-10-22: the copy was made again at 17:29 under a new id, and
@@ -232,6 +258,14 @@ class Snapshots:
         if time.time() - self.served_at < SNAP_SERVING:
             return False
         return time.time() - self.made["manifest"]["at"] > SNAP_EVERY
+
+    def room(self) -> bool:
+        """Is there free disk for a copy of the index, and SNAP_SPARE past it."""
+        try:
+            need = os.path.getsize(self.index.store.path) + SNAP_SPARE
+            return _free(self.snap_path.parent) >= need
+        except OSError:
+            return False
 
     # --- what this arcade offers -----------------------------------------------------------------------------------
 

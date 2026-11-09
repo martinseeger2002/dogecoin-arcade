@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
+
+Reported by the V1.0 session: at 11:41 Strawberry, asked for a copy, wrote 29.2 GB of `ord-doge.sqlite.snap.tmp` (the index is 33.7 GB, beside the old 27.9 GB snapshot and a 60 GB backfill). The disk reached 0 bytes free, arcade-web logged `disk I/O error` at 11:42:52, and the .tmp stayed behind holding the space (V1.0 removed it with the operator's OK; the Nov 7 snapshot is untouched).
+- **Fix (`arcade/ord_snapshot.py`):** `Snapshots.room()` asks for the index file's size plus `SNAP_SPARE` (2 GB) free on the snapshot's disk. `want_made()` says no without it (a warning at most once an hour), `make()` refuses without it, and `make()` removes its .tmp on any failure.
+- **Test:** `test_a_snapshot_is_made_only_with_room_for_it_and_a_failed_one_leaves_nothing` (tests/test_ord_slim.py).
+- Strawberry has 51 GB free now, so it can still make a doge copy (it needs ~35.7 GB); as the backfill grows it will stop offering a new one instead of filling the disk.
+
 ### 2026-11-09 · the operator's side (Claude) · Doginal index words go out in frames that fit the link
 
 Reported by the V1.0 session, measured on Strawberry: a word row is `[c, hash, births, nd]` now, so 500 rows came to ~73 KB (doge: 37 of 38 frames, main: 22 of 22), over the link's 64 KB frame and the 16-bit header length in `Link.pack`. `link_up` caught the error quietly and stopped after the first frame, so a walker's other words and every lane (`ls`) for that chain and the chains after it never went out on link-up; an arcade sending them whole (V1.0) had the link dropped by older arcades.
