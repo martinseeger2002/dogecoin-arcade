@@ -158,7 +158,9 @@ _MODULES = (
     Module("mesh", "core", "Mesh link", "The link to other arcades: who they are, what they share, and the "
            "tunnel.",
            routes=("/mesh", "/instances", "/account/mesh", "/account/arcades", "/admin/api/mesh",
-                   "/admin/api/arcades", "/admin/api/tunnel"),
+                   "/admin/api/arcades", "/admin/api/tunnel",
+                   # the nodes globe (PR #97, arcade/globe.py): the arcades of the mesh on a globe, city or country only
+                   "/globe", "/globe.json", "/admin/api/globe"),
            jobs=("mesh",)),
     # --- everything else: on in the full edition, off in Lite until switched on -------------------------------------
     # Messages is part of the core (2026-11-04, SadFrog: "Messages should be a part of the core"): always on, in every

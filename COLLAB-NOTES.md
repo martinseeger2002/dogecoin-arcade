@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · merged PR #97 (nodes globe) onto master
+
+The operator chose to merge it as is, with the members' places in the public `/globe.json` (city or country, as the PR has them).
+- One commit, cherry-picked onto master; no conflicts. Its fork log entries (2026-11-07, fioridarrell) come back with it.
+- **`arcade/modules.py`:** `/globe`, `/globe.json` and `/admin/api/globe` join the `mesh` module, since every route needs a module's claim (`test_every_route_belongs_to_a_module_by_a_claim_of_its_own`).
+- **Reviewed:** `arcade/globe.py` makes no outside calls. The public routes are `/globe` (docs/nodes-globe.html) and `/globe.json`; the list is chosen under Admin (`/admin/api/globe`, operator only).
+- **Tests:** globe, page scripts, modules, door and Lite suites: 193 passed.
+
 ### 2026-11-09 · the operator's side (Claude) · Strawberry offers Pepecoin mainnet Core copies over the mesh (a setting, no code)
 
 Asked by the boxb-Arcade V1.0 session so V1.0 can bootstrap Pepecoin mainnet from a copy; approved by the operator. Strawberry's Core runs as the user unit `pepecoind-staging-main.service`, which `core_copy.SERVICE_UNITS` doesn't name, so `CoreBoot.nets()` was empty and its cb hi offered nothing.
