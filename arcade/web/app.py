@@ -465,6 +465,12 @@ def _session_cookie_headers(token: str, secure: bool) -> list[tuple[bytes, bytes
     return [h for h in shaped.raw_headers if h[0] == b"set-cookie"]
 
 
+def _preview_headers() -> dict:
+    """A wizard's preview: sandboxed like the inscribed page (contentlib.CONTENT_HEADERS), never kept, and framed only by
+    this arcade's own pages (the token page shows it in a frame; 2026-11-09, security review)."""
+    csp = contentlib.CONTENT_HEADERS["Content-Security-Policy"] + "; frame-ancestors 'self'"
+    return {**contentlib.CONTENT_HEADERS, "Content-Security-Policy": csp, "Cache-Control": "no-store"}
+
 #: A page's own policy: only this arcade may frame it, no plugins, and no <base> pointing its addresses elsewhere.
 PAGE_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
 
@@ -6731,7 +6737,7 @@ def create_app(state: AppState) -> FastAPI:
         # Served sandboxed, as the inscribed page will be (2026-11-09, security review): the collection's name and the
         # creator are written into the page as they are, and "Open full size" shows it in a tab of its own.
         return HTMLResponse(_as_preview(_pad_page(creator, collection), folder),
-                            headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"})
+                            headers=_preview_headers())
 
     @app.get("/inscriptions/collection/preview/set")
     def preview_set(folder: str = "", limit: int = 100, offset: int = 0):
@@ -10367,7 +10373,7 @@ def create_app(state: AppState) -> FastAPI:
                  "</script>")
         # Sandboxed like the page once inscribed (2026-11-09, security review): its words come from the query string,
         # a token's on-chain icon among them, and the preview also opens in a tab of its own.
-        return HTMLResponse(page, headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"})
+        return HTMLResponse(page, headers=_preview_headers())
 
     @app.post("/tokens/{property_id}/launchpad", response_class=HTMLResponse)
     def make_launchpad(request: Request, property_id: int, lot: str = Form(""),
