@@ -166,7 +166,8 @@ def test_somebody_added_later_reads_what_was_said_and_everybody_sees_them(world)
             lines = _do(third, op="read", id=made["id"])["value"]
             time.sleep(2)
         # What was said before, then the one line that told the group (2026-11-08: no more letters to who was in).
-        assert [l["text"] for l in lines] == ["before carol", "@alicegroup added @carolgroup"], lines
+        # (In one block with the same time, the two lines may come back in either order.)
+        assert sorted(l["text"] for l in lines) == ["@alicegroup added @carolgroup", "before carol"], lines
         _app(b, base)
         seen(b)                                                      # who was already in learns of her from that line
     finally:
