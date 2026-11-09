@@ -174,3 +174,73 @@ def test_the_network_app_shows_what_peers_say_about_themselves_as_words(served, 
     assert _text(browser, ".dfx-peer-tag") == "@" + SNEAKY
     assert _text(browser, ".dfx-node-id") == SNEAKY + "..."
     _nothing_ran(browser, "body")
+
+
+# --- a picked file: its name can be anything -----------------------------------------------------------------------------
+
+def _pick(browser, selector, files):
+    """Choose files in an <input type=file> as a person does: [(name, text)], then the change event."""
+    browser.execute_script("""
+        const input = document.querySelector(arguments[0]), dt = new DataTransfer();
+        for (const [name, text] of arguments[1])
+          dt.items.add(new File([text], name, {type: name.endsWith('.png') ? 'image/png' : 'text/plain'}));
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+    """, selector, files)
+
+
+def test_the_inscribe_form_names_the_picked_file_as_words(served, browser):
+    _, base, _ = served
+    browser.get(f"{base}/inscriptions")
+    _pick(browser, "#file", [[SNEAKY + ".txt", "hello"]])
+    _until(browser, "return !document.getElementById('priced').hidden", "the price of the file")
+    assert _text(browser, "#priced strong") == SNEAKY + ".txt"
+    _nothing_ran(browser, "#priced")
+
+
+def _function(template, name):
+    """One top-level function of a template's script, as written: `function name(...){` to its closing brace."""
+    text = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates" / template).read_text()
+    start = text.index(f"function {name}(")
+    return text[start:text.index("\n}\n", start) + 2]
+
+
+def test_the_messenger_names_the_attached_file_as_words(served, browser):
+    _, base, _ = served
+    # The note sits under a conversation's compose box, which needs a node and a conversation; the page's own two
+    # functions are run instead on a page that has base.html's helpers, with the note's elements put in.
+    browser.get(f"{base}/messages/more")
+    browser.execute_script("""
+        document.body.insertAdjacentHTML('beforeend',
+          '<p id="picked" hidden><span id="picked-text"></span></p><span id="clip"></span>');
+        window.eval(arguments[0] + arguments[1]);
+        drawPicked(new File(['hello'], arguments[2], {type: 'text/plain'}));
+    """, _function("messages.html", "estimateFile"), _function("messages.html", "drawPicked"), SNEAKY + ".txt")
+    assert _text(browser, "#picked-text strong") == SNEAKY + ".txt"
+    _nothing_ran(browser, "#picked")
+
+
+def _signed_up(browser, state, base):
+    browser.get(f"{base}/join")
+    made = browser.execute_async_script("""
+        const done = arguments[arguments.length - 1];
+        import('/wallet.js').then((w) => w.signUp(arguments[0], 'a long enough password',
+                                                   {network: 'regtest', version: arguments[1]}))
+          .then((r) => done({tag: r.tag}), (e) => done({error: String(e.message || e)}));
+    """, f"sinks{_free_port() % 100000}", state.messaging.params.pubkeyhash_version)
+    assert "error" not in made, made
+    browser.get(f"{base}/me/nfts")
+
+
+def test_an_accounts_inscribe_tab_names_the_picked_file_and_a_broken_json_as_words(served, browser):
+    state, base, _ = served
+    _signed_up(browser, state, base)
+    _pick(browser, "#file", [[SNEAKY + ".txt", "hello"]])
+    _until(browser, "return !document.getElementById('picked-file').hidden", "the picked file's note")
+    assert _text(browser, "#picked-text strong") == SNEAKY + ".txt"
+    _nothing_ran(browser, "#picked-file")
+    # A folder whose _metadata.json does not parse: some browsers quote the start of the file in their message.
+    _pick(browser, "#build", [["1.png", "PNG"], ["_metadata.json", SNEAKY]])
+    _until(browser, "return !document.getElementById('json-check').hidden", "the JSON check")
+    assert "does not parse" in _text(browser, "#json-says")
+    _nothing_ran(browser, "#json-check")

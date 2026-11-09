@@ -474,7 +474,8 @@ function drawPicked(file){
   var mins = Math.round(e.blocks * 35 / 60);
   note.hidden = false;
   note.className = 'muted picked' + (e.chunks > 40 ? ' costly' : '');
-  document.getElementById('picked-text').innerHTML = '<strong>' + file.name + '</strong> — ' +
+  var said = document.getElementById('picked-text');
+  said.innerHTML = '<strong></strong> — ' +
     arcadeSize(file.size) + ', sent as <strong>' +
     e.chunks.toLocaleString() + '</strong> transaction' + (e.chunks === 1 ? '' : 's') +
     ' costing about <strong>' + arcadeCoins(arcadeFileCost(file.size).coins) +
@@ -482,6 +483,8 @@ function drawPicked(file){
     'filling at least ' +
     e.blocks.toLocaleString() + ' block' +
     (e.blocks === 1 ? '' : 's') + (mins >= 1 ? ' (~' + mins + ' min)' : '') + '.';
+  // The name as text (2026-11-09, security review): a file can be called anything, markup included.
+  said.querySelector('strong').textContent = file.name;
   document.getElementById('clip').textContent = '📎•';
 }
 
