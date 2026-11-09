@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · the operator's side (Claude) · merged PRs #115 #116 #117 #118 #119 #120 onto master
+
+Cherry-picked in order: #115 (the base of the rest), #116, #119 (holds #116), #117, #118, #120.
+- **#117 against #116** (`arcade/lite/templates/_wallet.html`), keeping both sides:
+  - from #116: the From row and Wallets dialog, Scan QR, and Send's sent-list (`reviewed`/`SENT`);
+  - from #117: the Send list (`w-what`), token and DRC-20 sends, and Assets in `_assets.html`.
+  - The old Assets code #116 still carried is dropped.
+  - An asset send now also notes itself in the sent-list; a DRC-20's fee is its three transactions' fees added up.
+- **#118 against #119** (`lite.html`): both `liteWindow.open` (#119's Pay link into Send) and #118's `dialog`.
+- **COLLAB-NOTES:** the branches carried the public copies ("the operator's side") of the #108–#112 and #113/#114 merge entries. Git attached the bodies to those copies, so each body is back under its own entry and the copies are gone.
+- **Reviewed:**
+  - #115/#118 door additions: GET pages drawing what `/lite` already serves; their actions go through routes that do their own checks.
+  - #120's proof: a tagged sha256 signed with BIP-340, never a sighash. A bad proof is refused, and a key that isn't the published dgb address is left out. The announcement already publishes that address's hash, so nothing new about the account is shown.
+
 ### 2026-11-08 · the operator's side (Claude) · group adds write only to the newcomers, and one "added" line tells the rest
 
 Reported by the Arcade V1.0 session, approved by the operator. `addToGroup` re-sent the key to EVERY member, one transaction each, stopping at the first failure. @apple's add of @arcade_v1 to a 19-member Riffs group ran out of coins after 18 re-invites: the newcomer's letter and the self copy never went, and @apple's browser listed @arcade_v1 anyway.
@@ -120,6 +134,11 @@ Reported by the Arcade V1.0 session, approved by the operator. In `arcade/mesh/i
 - **Test:** `tests/test_mesh_introduce.py::test_a_lost_hi_expires_so_the_higher_ids_own_hi_is_answered` loses the lower id's hi, shows the higher id's hi is still refused while that ask is fresh, then ages it and gets a link. It fails without the fix. 155 mesh/udp/punch tests pass.
 
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
+
+291 tests passed on them (API keys, Lite, DigiDollar, Doginals wallet, ord guards, modules).
+- **#113:** `Command.writes` defaults to False, so a command added without saying so would be open to read-only keys. Today all 24 unmarked commands only read. `tests/test_apikeys.py::test_every_console_command_says_whether_a_read_only_key_may_run_it` now lists them by name: a new command fails it until it takes `writes=True` or joins `READS_ONLY`.
+- **#114:** the Wallet's guard calls name their chain. With master's `guard_for`, Dogecoin keeps `GUARD` first, and another chain's "D" address with no guard of its own is refused as not checked.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-account-frame` (on `team/core-wallet-parity`) · The Account tab held a window holding a window
 
 SadFrog: "clicking the account tab made a recursive call it seemed".
@@ -342,13 +361,12 @@ chain shows only the test-coin key (coin type 1, from the name's claim), never t
 - **For the operator:** please merge into `main`. Nothing to set on a node, and nothing to rescan: no announcement
   carries the section before this, and accounts republish by themselves once their arcade runs it.
 
-### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
-
-291 tests passed on them (API keys, Lite, DigiDollar, Doginals wallet, ord guards, modules).
-- **#113:** `Command.writes` defaults to False, so a command added without saying so would be open to read-only keys. Today all 24 unmarked commands only read. `tests/test_apikeys.py::test_every_console_command_says_whether_a_read_only_key_may_run_it` now lists them by name: a new command fails it until it takes `writes=True` or joins `READS_ONLY`.
-- **#114:** the Wallet's guard calls name their chain. With master's `guard_for`, Dogecoin keeps `GUARD` first, and another chain's "D" address with no guard of its own is refused as not checked.
-
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #108 #109 #110 #111 #112 onto master
+
+All five applied cleanly; 277 tests passed on them (modules, Lite, DigiDollar, Explore, ord index, page doors).
+PR #107 (Litecoin ordinals on mainnet, Taproot on LTC and DGB) is held for the operator. It undoes tbuuol's 2026-11-05 ask to keep LTC, tLTC and KOT free of token protocols. Its Litecoin collection sites stay behind `known_collections_import`, which is off.
+PR #97 (nodes globe) is still held.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/lite-assets` (on `main` 45b0e26b) · ArcadeCore: an Assets tab, and Send for an ord or an arcade NFT
 
 SadFrog: "where are our ordinals and nft and other assets shown on the arcade core with ordinals enabled? that should
@@ -369,12 +387,6 @@ appear in the send tab correct? I do not currently see away to see our held asse
   and payee, and back to coins. With the Lite, ord, DigiDollar and safety suites: 500 passed. The DigiByte Core
   regtest tests (`test_digidollar_regtest`, `test_ddpad_regtest`) ran on a test node with DigiByte Core 9.26.7: 3 passed.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
-
-### 2026-11-08 · the operator's side (Claude) · merged PRs #108 #109 #110 #111 #112 onto master
-
-All five applied cleanly; 277 tests passed on them (modules, Lite, DigiDollar, Explore, ord index, page doors).
-PR #107 (Litecoin ordinals on mainnet, Taproot on LTC and DGB) is held for the operator. It undoes tbuuol's 2026-11-05 ask to keep LTC, tLTC and KOT free of token protocols. Its Litecoin collection sites stay behind `known_collections_import`, which is off.
-PR #97 (nodes globe) is still held.
 
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/explore-tile-notes` (on `main` 8e4430f8) · Explore: a tile it cannot show says so, not `{"error":"no such inscription"}`
