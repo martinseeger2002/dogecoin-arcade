@@ -121,6 +121,12 @@ def observe(rpc: Any, lock: dict | None, my_addresses: set[str],
         # Shown only: who spent a lock is the branch its input script took (trade.next_step, htlc.spend_branch).
         seen.spent_by_me = any(a in my_addresses for o in spender["vout"]
                                for a in o["scriptPubKey"].get("addresses", []))
+    elif not seen.confirmations:
+        # In no block of the chain, not in the mempool, and spent by nothing there either: a lock whose block was
+        # reorged away while its coins went elsewhere (2026-11-09, security review). The Core still finds it, in the
+        # stale block (txindex), and says 0 confirmations -- which read as a lock in the mempool, so a swap at zero
+        # confirmations locked its own side against a lock that no longer exists. It is not there.
+        return None
     return seen
 
 
