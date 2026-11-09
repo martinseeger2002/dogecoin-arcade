@@ -15,7 +15,7 @@
   <aside class="threads">
     <div class="threads-head">
       <strong>Conversations</strong>
-      <button type="button" class="ghost small" onclick="document.getElementById('newconv').hidden=false">New</button>
+      <button type="button" class="ghost small" id="newconv-open">New</button>
     </div>
 
     <form method="post" action="/messages/start" id="newconv" class="newconv" {% if not request.query_params.get('new') %}hidden{% endif %}>
@@ -27,7 +27,7 @@
       <input autocomplete="off" name="name" placeholder="e.g. a test machine">
       <div class="row" style="margin-top:9px">
         <button type="submit" class="small">Start</button>
-        <button type="button" class="ghost small" onclick="document.getElementById('newconv').hidden=true">Cancel</button>
+        <button type="button" class="ghost small" id="newconv-cancel">Cancel</button>
       </div>
       <p class="muted" style="font-size:.78rem;margin:9px 0 0">
         Ask them for the code shown on their Overview page. Nothing needs to be
@@ -108,8 +108,7 @@
                    opens it instead. #}
                 <a class="media" href="{{ m.file.url }}?download=1"
                    title="{{ m.file.name }} — click to open"
-                   onclick="arcadeOpenImage('{{ m.file.url }}', '{{ m.file.name }}',
-                            '{{ m.file.url }}?download=1'); return false">
+                   data-open-image="{{ m.file.url }}" data-name="{{ m.file.name }}">
                   <img src="{{ m.file.url }}" alt="{{ m.file.name }}" loading="lazy"></a>
               {% elif m.file.kind == 'audio' %}
                 <audio class="media" controls preload="none"
@@ -170,7 +169,7 @@
             from the first transaction.</div>
           {% endif %}
           <form method="post" action="/messages/{{ peer.hex }}/resume"
-                style="margin-top:9px" onsubmit="return startSending(this)">
+                style="margin-top:9px" data-send-once>
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <button type="submit" class="small">Finish sending</button>
           </form>
@@ -254,7 +253,7 @@
         </div>
         {% endif %}
         <form method="post" action="/messages/{{ peer.hex }}/send" style="margin-top:10px"
-              onsubmit="return startSending(this)">
+              data-send-once>
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <input type="hidden" name="body" value="{{ draft }}">
           <input type="hidden" name="confirmed" value="yes">
@@ -271,15 +270,13 @@
     {% endif %}
 
     <form method="post" action="/messages/{{ peer.hex }}/send" class="composer"
-          enctype="multipart/form-data" onsubmit="return startSending(this)"
+          enctype="multipart/form-data" data-send-once
           {% if prepared %}data-awaiting-confirm="yes"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <textarea autocomplete="off" name="body" rows="1" placeholder="Write a message…"
-                oninput="grow(this)"
-                onkeydown="sendOnEnter(event, this)">{{ draft or '' }}</textarea>
+                id="composer-body">{{ draft or '' }}</textarea>
       <label class="attach" title="Send a file">
-        <input type="file" name="attachment" id="attachment"
-               onchange="showPick(this)" hidden>
+        <input type="file" name="attachment" id="attachment" hidden>
         <span id="clip">📎</span>
       </label>
       {# A pending confirmation must be the only way to act on this content. The
@@ -301,7 +298,7 @@
     <p class="muted composer-note" id="picked" hidden>
       <span id="picked-text"></span>
       <span id="picked-sizes" class="sizes" hidden></span>
-      <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
+      <button type="button" class="ghost small" id="picked-clear">Remove</button>
     </p>
     {% if is_new_contact %}
     <p class="muted composer-note">
@@ -414,7 +411,7 @@ function sendOnEnter(event, box){
   // to be pressed twice.
   var form = box.form;
   // Do NOT call startSending here. requestSubmit fires the form's own submit event,
-  // and that runs onsubmit="return startSending(this)" -- so calling it first set
+  // and that runs the form's startSending listener (below) -- so calling it first set
   // form.dataset.sending, the handler's second call saw it already set, returned
   // false, and CANCELLED the submission. Enter painted "Sending..." over a form
   // that never posted; the button worked because a click goes through onsubmit
@@ -490,6 +487,37 @@ function drawPicked(file){
 
   var b = document.getElementById('bubbles');
   if (b) b.scrollTop = b.scrollHeight;
+
+// The page's controls, attached here rather than written into the markup as on...= handlers, so the script policy
+// (2026-11-09) can stop every inline handler. Each does what its handler did.
+(function () {
+  var newconv = document.getElementById('newconv');
+  document.getElementById('newconv-open').addEventListener('click', function () { newconv.hidden = false; });
+  document.getElementById('newconv-cancel').addEventListener('click', function () { newconv.hidden = true; });
+  // One submission only: a form whose send is under way stays put.
+  document.querySelectorAll('form[data-send-once]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (!startSending(form)) event.preventDefault();
+    });
+  });
+  var box = document.getElementById('composer-body');
+  if (box) {
+    box.addEventListener('input', function () { grow(box); });
+    box.addEventListener('keydown', function (event) { sendOnEnter(event, box); });
+  }
+  var attachment = document.getElementById('attachment');
+  if (attachment) attachment.addEventListener('change', function () { showPick(attachment); });
+  var unpick = document.getElementById('picked-clear');
+  if (unpick) unpick.addEventListener('click', function () { clearPick(); });
+  // A picture opens over the page; the link stays a download for no script, the middle click and the menu.
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest && event.target.closest('a[data-open-image]');
+    if (!link) return;
+    event.preventDefault();
+    var src = link.getAttribute('data-open-image');
+    arcadeOpenImage(src, link.getAttribute('data-name'), src + '?download=1');
+  });
+})();
 
 // Watch a send running in the background. The request returned the moment the
 // send started, so nothing here holds a connection open -- this asks what is
