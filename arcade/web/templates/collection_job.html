@@ -65,7 +65,7 @@
     {% endif %}
     {% if not running %}
       <form method="post" action="/inscriptions/collection/{{ job.id }}/delete"
-            onsubmit="return confirm('Forget this run? What is on the chain stays there.')">
+            data-ask="Forget this run? What is on the chain stays there.">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <button type="submit" class="ghost">Remove</button>
       </form>
@@ -109,6 +109,11 @@
 </div>
 
 <script nonce="{{ csp_nonce }}">
+// Remove asks first (the script policy, 2026-11-09: the question is the form's data-ask, not an inline onsubmit).
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (form.matches && form.matches('form[data-ask]') && !confirm(form.dataset.ask)) e.preventDefault();
+});
 (function(){
   var status = "{{ job.status }}";
   if (status !== 'running' && status !== 'pausing') return;

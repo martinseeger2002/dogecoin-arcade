@@ -43,18 +43,18 @@
         <td style="text-align:right">
           {% if not w.active and c.can_switch and c.named %}
           <form method="post" action="/backup/{{ c.which }}/wallet/switch" style="display:inline"
-                onsubmit="return confirm('Switch to {{ w.name or 'default' }}? The node puts the wallet in use aside and loads this one, with no restart.')">
+                data-ask="Switch to {{ w.name or 'default' }}? The node puts the wallet in use aside and loads this one, with no restart.">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <input type="hidden" name="name" value="{{ w.name }}">
             <button class="ghost small" type="submit">Use this one</button></form>
           {% elif not w.active and c.can_switch %}
           <form method="post" action="/backup/{{ c.which }}/wallet/switch" style="display:inline"
-                onsubmit="return confirm('Switch to {{ w.name }}? The node restarts, and {{ c.label|lower }} will use that wallet from then on.')">
+                data-ask="Switch to {{ w.name }}? The node restarts, and {{ c.label|lower }} will use that wallet from then on.">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <input type="hidden" name="name" value="{{ w.name }}">
             <button class="ghost small" type="submit">Use this one</button></form>
           <form method="post" action="/backup/{{ c.which }}/wallet/remove" style="display:inline"
-                onsubmit="return confirm('Remove {{ w.name }} from the list? The file is moved aside, not deleted.')">
+                data-ask="Remove {{ w.name }} from the list? The file is moved aside, not deleted.">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <input type="hidden" name="name" value="{{ w.name }}">
             <button class="ghost small" type="submit">Remove</button></form>
@@ -65,7 +65,7 @@
     </table>
     {% if c.can_switch %}
     <form method="post" action="/backup/{{ c.which }}/wallet/new" style="margin-top:12px"
-          onsubmit="return confirm('Start using a new empty wallet? Your current one is kept and you can switch back.')">
+          data-ask="Start using a new empty wallet? Your current one is kept and you can switch back.">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="row">
         <div style="flex:1"><input autocomplete="off" name="name" placeholder="Name for a new wallet, e.g. savings"></div>
@@ -160,7 +160,7 @@
           one key across, import the key above instead.
         </div>
         <form method="post" action="/backup/{{ c.which }}/restore" style="margin-top:14px"
-              onsubmit="return confirm('Replace the {{ c.label|lower }} wallet now? The node will restart.')">
+              data-ask="Replace the {{ c.label|lower }} wallet now? The node will restart.">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <div class="field"><label>Path to the wallet.dat you want to use</label>
             <input autocomplete="off" name="source" class="mono" spellcheck="false"
@@ -177,4 +177,12 @@
   {% endif %}
 </div>
 {% endfor %}
+<script nonce="{{ csp_nonce }}">
+// The forms that switch, remove, start or replace a wallet ask first: the question is the form's data-ask,
+// and No leaves the page as it was (the script policy, 2026-11-09: no inline onsubmit).
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (form.matches && form.matches('form[data-ask]') && !confirm(form.dataset.ask)) e.preventDefault();
+});
+</script>
 {% endblock %}

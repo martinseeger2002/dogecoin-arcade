@@ -248,13 +248,13 @@
       <summary class="muted" style="cursor:pointer;font-size:.84rem">Addresses and key</summary>
       <dl class="addrs" style="margin-top:8px">
         <dt><span class="tag testnet">test</span></dt>
-        <dd>{% if p['testnet_address'] %}<code class="addr" onclick="copyAddr(this)"
+        <dd>{% if p['testnet_address'] %}<code class="addr" data-copy
               title="Click to copy">{{ p['testnet_address'] }}</code>{% else %}<span class="muted">—</span>{% endif %}</dd>
         <dt><span class="tag mainnet">main</span></dt>
-        <dd>{% if p['mainnet_address'] %}<code class="addr" onclick="copyAddr(this)"
+        <dd>{% if p['mainnet_address'] %}<code class="addr" data-copy
               title="Click to copy">{{ p['mainnet_address'] }}</code>{% else %}<span class="muted">—</span>{% endif %}</dd>
         <dt class="muted" style="font-size:.8rem">key</dt>
-        <dd>{% if p['hex'] %}<code class="addr" onclick="copyAddr(this)"
+        <dd>{% if p['hex'] %}<code class="addr" data-copy
               title="Click to copy" style="font-size:.72rem">{{ p['hex'] }}</code>
             {% else %}<span class="muted">not published</span>{% endif %}</dd>
       </dl>
@@ -266,10 +266,7 @@
       {% endif %}
       <a class="ghost btn" href="/contacts?edit={{ p['id'] }}">Notes</a>
       <form method="post" action="/contacts/{{ p['id'] }}/delete" style="margin-left:auto"
-            {# The question as data, read as text (2026-11-09, security review): a name inside the handler's own
-                JavaScript is HTML-escaped and then un-escaped by the browser before it runs. #}
-            data-ask="Remove {{ (handle and '@' ~ handle) or p['name'] }} from the address book? Messages already received are kept."
-            onsubmit="return confirm(this.dataset.ask)">
+            data-ask="Remove {{ (handle and '@' ~ handle) or p['name']|e }} from the address book? Messages already received are kept.">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <button class="ghost" type="submit">Remove</button></form>
     </div>
@@ -318,6 +315,16 @@ function copyAddr(el){
     setTimeout(function(){ el.classList.remove('copied'); }, 1200);
   });
 }
+// Attached here, not written into the markup (the script policy, 2026-11-09): an address copies on a click, and
+// Remove asks first -- the question is the form's data-ask, escaped as the page wrote it.
+document.addEventListener('click', function(e){
+  var el = e.target.closest && e.target.closest('code.addr[data-copy]');
+  if (el) copyAddr(el);
+});
+document.addEventListener('submit', function(e){
+  var form = e.target;
+  if (form.matches && form.matches('form[data-ask]') && !confirm(form.dataset.ask)) e.preventDefault();
+});
 </script>
 {% include "_blocked.html" %}
 {% endblock %}
