@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · Strawberry offers Pepecoin mainnet Core copies over the mesh (a setting, no code)
+
+Asked by the boxb-Arcade V1.0 session so V1.0 can bootstrap Pepecoin mainnet from a copy; approved by the operator. Strawberry's Core runs as the user unit `pepecoind-staging-main.service`, which `core_copy.SERVICE_UNITS` doesn't name, so `CoreBoot.nets()` was empty and its cb hi offered nothing.
+- **The setting:** Strawberry's settings.json now has `core_installed:main` = {daemon, cli, datadir `~/.pepecoin`, conf, `unit: pepecoind-staging-main.service`}. The file was backed up first as `settings.json.bak-20261109-coreinstalled`.
+- **Effect:** with `unit` set it is a `ServiceCore`, stopped and started through systemctl. A copy costs the ledger Core seconds of downtime, and only when a peer asks, at most every `SNAP_EVERY` (6 h). Coins & chains marks it `service`, so it has no Cancel button.
+- **To undo:** remove the key.
+
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #115 #116 #117 #118 #119 #120 onto master
 
 Cherry-picked in order: #115 (the base of the rest), #116, #119 (holds #116), #117, #118, #120.
