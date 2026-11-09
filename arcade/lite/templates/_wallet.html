@@ -330,11 +330,21 @@ function ddHoldings(c) {
     try { j = await r.json(); } catch (e) { /* said below */ }
     if (!r.ok) throw Object.assign(new Error(j.detail || "The arcade did not answer."), {unlock: !!j.unlock});
     const said = {digidollars: Number(j.cents || 0) / 100, address: j.address || "", since: j.since, whole: j.whole,
+                  from_block: j.from_block, earlier: j.earlier,
                   coins: (j.coins || []).map((x) => ({txid: x.txid, vout: x.vout, dollars: Number(x.cents) / 100,
                                                       height: x.height}))};
     ddHeld[c.network] = {at: Date.now(), said};
     return said;
   });
+}
+/** What a DigiDollar history covers, as the full Wallet says it (my_wallet.html ddHistory; 2026-11-09, security
+ * review): complete, or from which block on, and whether what came before is still being read. */
+function ddHistory(got) {
+  if (got.whole) return " History complete.";
+  const from = Number(got.from_block || Number(got.since || 0) + 1).toLocaleString();
+  if (got.earlier === "lender") return ` History from block ${from}; what came before is being read through the arcade this one borrows DigiByte from.`;
+  if (got.earlier) return ` History from block ${from}; what came before is still being read.`;
+  return ` History from block ${from} on; what this address got before then is not read on this arcade.`;
 }
 async function ddAddressOf(to, c) {
   const r = await fetch(`/lite/api/ddaddress?to=${encodeURIComponent(to)}&chain=${encodeURIComponent(c.base)}`,
@@ -459,7 +469,7 @@ async function history(older = false) {
     }
     if (!tb.rows.length) cell(tb.insertRow(), "No DigiDollars here yet.", "muted");
     $("w-since").textContent = `${dollars(h.digidollars)} in all, at ${h.address || "your DigiDollar address"}.`
-      + (h.whole === false ? ` Still reading what came before block ${Number(h.since || 0).toLocaleString()}.` : "");
+      + ddHistory(h);
     return;
   }
   // An imported wallet's own history: the node answers only this account's own addresses (plan item 18).

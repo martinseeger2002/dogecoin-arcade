@@ -25970,10 +25970,16 @@ def create_app(state: AppState) -> FastAPI:
 
     _dd_seeding: set[str] = set()
 
+    def _dd_earlier(chain) -> str:
+        """Where the DigiDollar coins an address got before it was watched are read from: "core", this arcade's own
+        Core's coin set, or "" when they are not read here (a borrowed DigiByte has no coin set of its own). Said with
+        the history (2026-11-09, security review), so the Wallet tells "still reading" from "counted from block N"."""
+        return "" if getattr(chain, "borrowed", False) else "core"
+
     def _dd_seed(chain, dd_address: str, upto: int) -> None:
         """The DigiDollar coins an address got before it was watched, read once from this arcade's own Core's coin set
         (minutes on a big chain), in the background. A borrowed Core has none to read: watched from then on only."""
-        if getattr(chain, "borrowed", False) or dd_address in _dd_seeding:
+        if not _dd_earlier(chain) or dd_address in _dd_seeding:
             return
         _dd_seeding.add(dd_address)
 
@@ -26011,9 +26017,12 @@ def create_app(state: AppState) -> FastAPI:
             held = digidollib.coins(db, dd)
         if not row["seeded"]:
             _dd_seed(ch, dd, row["since"])
+        # The history's reach (2026-11-09, security review): `from_block`, the first block it covers (0: all of it), and
+        # `earlier`, where what came before is read from ("" when not here). `whole` stays for older pages.
         return JSONResponse({"chain": ch.network, "address": dd, "cents": sum(c["cents"] for c in held),
                              "coins": held, "since": row["since"],
-                             "whole": bool(row["seeded"]),
+                             "whole": bool(row["seeded"]), "from_block": digidollib.from_block(row),
+                             "earlier": "" if row["seeded"] else _dd_earlier(ch),
                              "borrowed": bool(getattr(ch, "borrowed", False))}, headers={"Cache-Control": "no-store"})
 
     @app.post("/account/digidollar/send")
