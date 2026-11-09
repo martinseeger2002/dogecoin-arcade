@@ -88,6 +88,25 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/name-chain-addresses` (on `main` 8287e37b) · an @name is paid at the address it published for that chain
+
+SadFrog: mainnets "should be published or at least resolvable". Mainnet names still resolve: 137 of the 141 names on our
+node carry a Pepecoin main address, and that code is unchanged since 2026-10-23. Off Pepecoin, though, every chain was
+worked out from that one address (`_ltc_twin`, `_chain_twin`, `_doge_twin`). The per-chain addresses an announcement
+publishes (`chain_addresses`, ANNOUNCE_TAG_CHAIN, since 2026-10-18) were stored but never read for a send. So a name
+that published LTC/DGB/BEL/LKY addresses but no Pepecoin main one (our ArcadeCore node's) could be paid by name on none.
+- **`web/app.py`:** `_published_on(row, chain)` is the address published for that chain (Dogecoin's own section first),
+  held to the chain's P2PKH byte, so an address published for another chain under this one's name is ignored. It
+  comes first in `_where_to_pay` (account sends and a profile's Pay), `_pays_at` (feed tips) and `/u/<tag>/wallet`. The
+  twin is the fallback, as before.
+- **The node's own send** (`_tag_address`) still pays the twin of the claim it reads on the chain being paid. Only when
+  there is none does it pay the address the name-chain holder published (`_twin_or_published`), so nothing that was
+  paid before is paid somewhere else now.
+- **Not a protocol change:** nothing new is published; the arcade only reads what announcements already carry.
+- **Tests:** `tests/test_name_chain_addresses.py` (7). With Profile Pay, Bells/Luckycoin, Litecoin, L test, Dogecoin,
+  chain wallets and feed: 135 passed; `test_web`, Dogecoin network, feed, Profile Pay in Firefox and Lite: 405 more.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
+
 ### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
 
 After #97 went live, Strawberry answered `/globe` with 404 ("the nodes globe is not in this copy"). `globe.page_path()` looked only for `docs/nodes-globe.html` next to the code, and an installed arcade runs from the venv's site-packages, which has no `docs/`. The tests run from a checkout, so they never saw it.
