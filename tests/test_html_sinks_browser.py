@@ -244,3 +244,21 @@ def test_an_accounts_inscribe_tab_names_the_picked_file_and_a_broken_json_as_wor
     _until(browser, "return !document.getElementById('json-check').hidden", "the JSON check")
     assert "does not parse" in _text(browser, "#json-says")
     _nothing_ran(browser, "#json-check")
+
+
+# --- what a page in the sandbox asked for, under it ----------------------------------------------------------------------
+
+def test_an_approval_waiting_under_a_piece_is_listed_as_words(served, browser):
+    from test_trade_browser import _inscribe
+
+    state, base, _ = served
+    piece = "ab" * 32
+    _inscribe(state, piece, 1, "n" + "G" * 33, "text/plain", b"a piece")
+    FAKE["/approvals/waiting"] = {"waiting": 1,
+                                  "requests": [{"id": 'x" data-pwned="1', "summary": SNEAKY, "label": SNEAKY}]}
+    browser.get(f"{base}/inscriptions/{piece}/view")
+    _until(browser, "const a = document.getElementById('asked'); return a && !a.hidden", "the waiting approval")
+    assert SNEAKY in _text(browser, "#asked")
+    assert browser.execute_script("return document.querySelectorAll('#asked [data-pwned]').length") == 0, \
+        "an id stays inside its attribute"
+    _nothing_ran(browser, "#asked")
