@@ -474,6 +474,86 @@ def _preview_headers() -> dict:
 #: A page's own policy: only this arcade may frame it, no plugins, and no <base> pointing its addresses elsewhere.
 PAGE_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
 
+#: Where a browser tells us what the report-only script policy would have stopped (csp_report).
+CSP_REPORT_PATH = "/csp-report"
+
+
+class CspReports:
+    """What browsers say the report-only script policy would have stopped (page_script_policy, 2026-11-09, security
+    review), kept small. A report is anybody's words, so only a summary is read from it, each part cut short and with
+    no query string (a page's address may carry a viewer ticket): the page, the rule, what was blocked and where. One
+    log line per new kind, at most PER_MINUTE lines a minute from every asker together, at most KINDS kinds remembered
+    (forgotten after an hour once full); nothing else of a report is kept."""
+
+    KINDS = 500
+    PER_MINUTE = 30
+    MOST_BYTES = 16_000
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.kinds: dict[tuple, int] = {}
+        self.since = time.time()
+        self.minute, self.logged, self.dropped = 0, 0, 0
+
+    @staticmethod
+    def _where(url) -> str:
+        """An address without its query or fragment: 'inline' and 'eval' as they are."""
+        text = str(url or "")[:400]
+        if "/" not in text:
+            return text[:40]
+        parts = urllib.parse.urlsplit(text)
+        return (f"{parts.scheme}://{parts.netloc}" if parts.netloc else "") + parts.path[:120]
+
+    @classmethod
+    def summary(cls, body: bytes) -> tuple | None:
+        """(page path, rule, blocked, file:line) of one report, report-uri's shape or the Reporting API's; else None."""
+        try:
+            said = json.loads(body.decode("utf-8", "replace"))
+        except ValueError:
+            return None
+        if isinstance(said, list):                                     # the Reporting API: a list of {type, body}
+            said = next((r.get("body") for r in said if isinstance(r, dict) and isinstance(r.get("body"), dict)), None)
+        elif isinstance(said, dict):
+            said = said.get("csp-report")
+        if not isinstance(said, dict):
+            return None
+        pick = lambda *names: next((said[n] for n in names if said.get(n) not in (None, "")), "")  # noqa: E731
+        page = urllib.parse.urlsplit(str(pick("document-uri", "documentURL"))[:400]).path[:120] or "?"
+        rule = str(pick("effective-directive", "effectiveDirective", "violated-directive"))[:40] or "?"
+        line = pick("line-number", "lineNumber")
+        place = cls._where(pick("source-file", "sourceFile")) + (f":{int(line)}" if isinstance(line, int) else "")
+        said = (page, rule.split(" ")[0], cls._where(pick("blocked-uri", "blockedURL")) or "?", place)
+        return tuple(re.sub(r"[^\x21-\x7e]", "?", part) for part in said)   # one log line, never one it forges
+
+    def note(self, body: bytes, now: float | None = None) -> bool:
+        """Count one report; True when it was logged (a new kind, within the minute's lines)."""
+        said = self.summary(body)
+        if said is None:
+            return False
+        now = time.time() if now is None else now
+        with self.lock:
+            if len(self.kinds) >= self.KINDS and now - self.since > 3600:
+                self.kinds, self.since = {}, now
+            if said in self.kinds:
+                self.kinds[said] += 1
+                return False
+            if len(self.kinds) >= self.KINDS:
+                self.dropped += 1
+                return False
+            self.kinds[said] = 1
+            if int(now // 60) != self.minute:
+                self.minute, self.logged = int(now // 60), 0
+            if self.logged >= self.PER_MINUTE:
+                self.dropped += 1
+                return False
+            self.logged += 1
+        log.warning("script policy (report-only) would stop: page %s, %s, blocked %s at %s", *said)
+        return True
+
+
+CSP_REPORTS = CspReports()
+
+
 #: Paths whose answers are one account's (or the operator's) own: never kept by a browser or a cache in between.
 PRIVATE_PATHS = ("/account", "/auth", "/signin", "/signup", "/admin", "/api/v1", "/me")
 
@@ -10606,6 +10686,25 @@ def create_app(state: AppState) -> FastAPI:
         return Response(body, media_type="text/javascript", headers={
             # Never cached: a new worker has to be seen the moment the site changes.
             "Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+    @app.post(CSP_REPORT_PATH, include_in_schema=False)
+    async def csp_report(request: Request):
+        """A browser saying what the report-only script policy would have stopped on one of this arcade's pages
+        (page_script_policy, 2026-11-09, security review). Public, as every visitor's browser sends them; read up to
+        CspReports.MOST_BYTES and summarised, never kept whole (CspReports)."""
+        try:
+            said = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            said = 0
+        if said > CspReports.MOST_BYTES:
+            return Response(status_code=413)
+        body = b""
+        async for piece in request.stream():
+            body += piece
+            if len(body) > CspReports.MOST_BYTES:
+                return Response(status_code=413)
+        CSP_REPORTS.note(body)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     @app.get("/offline", response_class=HTMLResponse)
     def offline_page():
