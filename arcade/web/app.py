@@ -25969,23 +25969,49 @@ def create_app(state: AppState) -> FastAPI:
         return address, pub
 
     _dd_seeding: set[str] = set()
+    #: A borrowed DigiByte's sharer, asked for an address's earlier DigiDollars: address -> when it may be asked again,
+    #: and "none:<net>" -> until when its sharer is taken to read none (coinscan's ASK_AGAIN and NONE_AGAIN).
+    _dd_ask_again: dict[str, float] = {}
 
     def _dd_earlier(chain) -> str:
         """Where the DigiDollar coins an address got before it was watched are read from: "core", this arcade's own
-        Core's coin set, or "" when they are not read here (a borrowed DigiByte has no coin set of its own). Said with
-        the history (2026-11-09, security review), so the Wallet tells "still reading" from "counted from block N"."""
-        return "" if getattr(chain, "borrowed", False) else "core"
+        Core's coin set; "lender", the coin set of the arcade DigiByte is borrowed from (2026-11-09, security review:
+        a borrowed DigiByte's history stayed not whole for good); or "" when they are not read here (the operator said
+        no to asking the sharer, `ask_coinscan` false, or the sharer reads none). Said with the history, so the Wallet
+        tells "still reading" from "counted from block N"."""
+        if not getattr(chain, "borrowed", False):
+            return "core"
+        if state.setting("ask_coinscan", True) is False:
+            return ""
+        return "" if time.time() < _dd_ask_again.get(f"none:{chain.network}", 0.0) else "lender"
 
     def _dd_seed(chain, dd_address: str, upto: int) -> None:
         """The DigiDollar coins an address got before it was watched, read once from this arcade's own Core's coin set
-        (minutes on a big chain), in the background. A borrowed Core has none to read: watched from then on only."""
-        if not _dd_earlier(chain) or dd_address in _dd_seeding:
+        (minutes on a big chain), in the background. On a borrowed DigiByte, from its sharer's coin-set read
+        (digidollar.seed_from_lender), asked no more than once every coinscan.ASK_AGAIN seconds per address."""
+        from .. import coinscan as coinscanlib
+        earlier = _dd_earlier(chain)
+        if not earlier or dd_address in _dd_seeding:
             return
+        if earlier == "lender":
+            if time.time() < _dd_ask_again.get(dd_address, 0.0):
+                return
+            _dd_ask_again[dd_address] = time.time() + coinscanlib.ASK_AGAIN
         _dd_seeding.add(dd_address)
 
         def run():
             try:
-                digidollib.seed_from_core(state.token_index(chain), chain.rpc(), chain.network, dd_address, upto)
+                if earlier == "core":
+                    digidollib.seed_from_core(state.token_index(chain), chain.rpc(), chain.network, dd_address, upto)
+                else:
+                    with chain.rpc() as rpc:
+                        if digidollib.seed_from_lender(state.token_index(chain), rpc, chain.network, dd_address,
+                                                       upto) is not None:
+                            _dd_ask_again.pop(dd_address, None)
+            except coinscanlib.NotLent as exc:
+                _dd_ask_again[f"none:{chain.network}"] = time.time() + coinscanlib.NONE_AGAIN
+                log.info("digidollar %s: the sharer reads no coin set for this arcade (%s); asked again later",
+                         chain.network, exc)
             except Exception as exc:                        # noqa: BLE001 -- asked again on the next visit
                 log.info("digidollar %s: could not read the coin set: %s", chain.network, exc)
             finally:
