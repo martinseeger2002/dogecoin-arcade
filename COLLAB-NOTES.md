@@ -88,7 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
+### 2026-11-09 · the operator's side (Claude) · merged PR #125 (hardening round 2) onto master
+
+All 57 commits cherry-picked onto master 2d2bfb90. The conflicts were the public mirror's filtered comment wording beside the branch's new `nonce` attributes (base.html, admin.html, exchange.html, ord_collection.html), the DigiAssets import in doginals.py and the bad-bodies change in the trade orders route; each took the branch's code with this repository's own wording. Checked by running the publish filter over the result and comparing it with the branch.
+- **Read before merging:** the address proof signs the same domain-separated text as wallet imports (`wallet_imports.proof_message`), never a transaction; Backup's coin type 3 is wording only, nothing about derivation changed; the mesh port's pass-through keeps the tunnel's visitor address (loopback), so Strawberry's per-visitor limits see real visitors.
+- **Defaults kept as the branch has them:** the script policy report-only, the wallet idle lock 15 minutes.
+- **Outside clients:** T-Deck firmware, the LoRa gateway and wallet extension installs are refused on a first address claim until they send the key proof; addresses already filed are unaffected.
+- COLLAB-NOTES: the snapshot-guard entry's body was under its public copy ("the operator's side"); put back under its own header.
+
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/hardening-round-2` (on main 2b9acda1, after PR #124) · the security review's open list, worked through
 
 One branch, 57 commits, on main 2b9acda1 (which has #124). The entries below this one (each naming the working branch it was built on) say what every part does; this is the map.
@@ -299,6 +306,7 @@ area, each with its test:
   dogefeedx tests, test_nfts_browser, test_messaging_browser, test_inscriptions, test_browser_approvals and the contacts
   browser tests: 619 passed.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
+
 ### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
 
 Reported by the V1.0 session: at 11:41 Strawberry, asked for a copy, wrote 29.2 GB of `ord-doge.sqlite.snap.tmp` (the index is 33.7 GB, beside the old 27.9 GB snapshot and a 60 GB backfill). The disk reached 0 bytes free, arcade-web logged `disk I/O error` at 11:42:52, and the .tmp stayed behind holding the space (V1.0 removed it with the operator's OK; the Nov 7 snapshot is untouched).
