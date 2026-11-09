@@ -220,12 +220,20 @@ def test_mail_too_long():
 def test_register_makes_the_devices_own_address(pair):
     gw, dev = pair
     seen = {}
-    FakeArcade.register = lambda self, net, addr, pub: seen.update(net=net, addr=addr, pub=pub) or {}
+    FakeArcade.register = lambda self, net, addr, pub, sig=b"": seen.update(net=net, addr=addr, pub=pub, sig=sig) or {}
     orig = FakeArcade.account
     FakeArcade.account = lambda self: {**orig(self), "chains": [dict(c, version=113 if c["network"] == "test" else 56) for c in orig(self)["chains"]]}
     try:
         dev.login()
         assert dev.register("test") == ME == seen["addr"]
+        # with the coin key's proof the arcade asks before it files an address (2026-11-09): this account's, here
+        from arcade import wallet_imports
+        from arcade.config import NETWORKS
+        wallet_imports.check_proof(NETWORKS["test"], ACCT.login_pubkey.hex(), "test", ME, seen["pub"].hex(), "p2pkh",
+                                   seen["sig"].hex())
+        with pytest.raises(wallet_imports.ImportRefused):
+            wallet_imports.check_proof(NETWORKS["test"], ROBIN.login_pubkey.hex(), "test", ME, seen["pub"].hex(),
+                                       "p2pkh", seen["sig"].hex())
     finally:
         FakeArcade.account = orig
 
@@ -233,7 +241,7 @@ def test_register_makes_the_devices_own_address(pair):
 def test_register_never_overwrites_a_different_address(pair):
     gw, dev = pair
     posted = []
-    FakeArcade.register = lambda self, net, addr, pub: posted.append(addr) or {}
+    FakeArcade.register = lambda self, net, addr, pub, sig=b"": posted.append(addr) or {}
     orig = FakeArcade.account
     def acct(self):
         a = orig(self)

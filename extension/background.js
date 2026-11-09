@@ -52,7 +52,8 @@ async function link(text) {
   const {seed: s, account: key} = await opened();
   await arcade.signIn(origin, key);
   const mine = await chains.addresses(s);
-  await arcade.tellAddresses(origin, key, mine, await arcade.holdings(origin, key, mine));
+  await arcade.tellAddresses(origin, key, mine, await arcade.holdings(origin, key, mine),
+                             (network) => chains.claimProof(s, key.pubkey, network));
   const list = (await arcades()).filter((o) => o !== origin);
   await chrome.storage.local.set({arcades: [...list, origin]});
   return origin;

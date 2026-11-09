@@ -494,11 +494,13 @@ async function kindAddress(c, k) {
   if (open && open.seed) {
     const mine = wallet.keysOn(await wallet.asKind(open, c.network, k.id), c.network);
     try { localStorage.setItem(kindSpot(c, k), mine.address); } catch (e) {}
-    return {address: mine.address, pubkey: [...mine.pubkey].map((b) => b.toString(16).padStart(2, "0")).join("")};
+    // its key signs it over to this account, which a first registration needs (2026-11-09, security review)
+    return {address: mine.address, pubkey: [...mine.pubkey].map((b) => b.toString(16).padStart(2, "0")).join(""),
+            signature: await wallet.claimProof(open, c.network, mine)};
   }
   let seen = "";
   try { seen = localStorage.getItem(kindSpot(c, k)) || ""; } catch (e) {}
-  return {address: seen, pubkey: ""};
+  return {address: seen, pubkey: "", signature: ""};
 }
 async function loadKind(c, k) {
   const spot = `${c.network}:${k.id}`;
@@ -512,7 +514,7 @@ async function loadKind(c, k) {
     // the node watches it once told (one address of each kind per account and chain)
     await fetch("/account/segwit/register", {method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({address: seen.address, chain: c.network,
-                            ...(derived.pubkey ? {pubkey: derived.pubkey} : {})})});
+                            ...(derived.pubkey ? {pubkey: derived.pubkey, address_signature: derived.signature} : {})})});
     const r = await fetch(`/account/segwit/balance?network=${encodeURIComponent(c.network)}`
                           + `&address=${encodeURIComponent(seen.address)}`, {cache: "no-store"});
     const b = await r.json();

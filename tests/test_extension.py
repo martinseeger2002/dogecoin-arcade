@@ -132,6 +132,22 @@ def test_the_extensions_coin_code_is_the_arcades_own_file():
         assert (ROOT / "extension" / "vendor" / rel).read_bytes() == (ROOT / "arcade" / "web" / "vendor" / rel).read_bytes(), rel
 
 
+def test_the_wallets_address_proof_is_the_one_the_arcade_asks_before_it_files_an_address():
+    """An arcade files an address for an account only with its key's proof (2026-11-09, security review): the
+    extension's tellAddresses signs it (chains.claimProof), and the arcade's own check says yes to it and no to it
+    for another account."""
+    from arcade import wallet_imports
+    account, other = "ab" * 32, "cd" * 32
+    got = node("claim.mjs", {"phrase": PHRASES[0], "account": account, "networks": ["doge", "ltc", "test"]})
+    for network, mine in got.items():
+        params = config.NETWORKS[network]
+        wallet_imports.check_proof(params, account, network, mine["address"], mine["pubkey"], "p2pkh", mine["signature"])
+        with pytest.raises(wallet_imports.ImportRefused):
+            wallet_imports.check_proof(params, other, network, mine["address"], mine["pubkey"], "p2pkh",
+                                       mine["signature"])
+    assert "address_signature: await prove(row.network)" in (ROOT / "extension" / "arcade.js").read_text()
+
+
 # --- messages: each chain's Core words, and a verifier for outside sites -------------------------------------------
 
 #: A throwaway key (sha256 of a sentence) and the signature each chain's own Core made with it, 2026-11-03:

@@ -47,6 +47,14 @@ export async function keysOn(seed, network) {
   return {network, key, pubkey, version: c.pubkeyhash, address: await coins.address(pubkey, c.pubkeyhash)};
 }
 
+/** The proof an arcade asks before it files this wallet's address on `network` for `account` (an account key's hex,
+ *  2026-11-09, security review): the address's own key signs that it is this account's, the bytes the arcade's own
+ *  wallet signs (coins.importProof; the arcade checks it with wallet_imports.check_proof). The hex signature. */
+export async function claimProof(seed, account, network) {
+  const k = await keysOn(seed, network);
+  return coins.hex(await coins.signHash(k.key, await coins.importProof(account, network, k.address, k.pubkey)));
+}
+
 /** Every chain's address, public only: {network: {address, pubkey}}. */
 export async function addresses(seed) {
   const out = {};

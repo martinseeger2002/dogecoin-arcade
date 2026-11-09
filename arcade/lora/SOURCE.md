@@ -9,3 +9,9 @@ To take a newer gateway: copy `gateway/arcade_lora/*.py` over these files and th
 `tests/test_lora_*.py` (imports `arcade_lora` -> `arcade.lora`), run them, and say so in COLLAB-NOTES.
 
 Needs the `[lora]` extra (meshtastic, coincurve); Admin -> Meshtastic installs it at the node machine.
+
+Changed here since that commit (2026-11-09, security review): the arcade files no address without its coin key's proof
+that it is the account's (`wallet_imports.check_proof`). So ADDR carries, after the coin key, one length byte and that
+key's DER signature over `wallet_imports.proof_message(account login key, network, address, coin key)` hashed twice
+with SHA-256 (`device.py` `register`); `gateway.py` passes it on, and a device that sends none is refused by the
+arcade for that reason. The upstream gateway and the C++ T-Deck client need the same change.

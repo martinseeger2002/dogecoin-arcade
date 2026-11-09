@@ -287,6 +287,15 @@ export async function asKind(wallet, network, kindId) {
   return {...wallet, on: {...wallet.on, [network]: await kindKey(wallet, network, kind)}};
 }
 
+/** The proof a first claim of an address carries (2026-11-09, security review): that address's own key signs that it
+ *  is this account's, on this chain -- the bytes a sign-up and an imported wallet sign (coins.importProof,
+ *  wallet_imports.check_proof). `keys` is {key, pubkey, address}; the hex signature. The node files no address
+ *  without it (/account/address, /account/segwit/register, /signup's other chains). */
+export async function claimProof(wallet, network, keys) {
+  const proof = await coins.importProof(wallet.pubkey, network, keys.address, keys.pubkey);
+  return hex(await coins.signHash(keys.key, proof));
+}
+
 /** Register any address this node does not know yet. Signed-in only. */
 export async function tellTheNode(wallet) {
   // Addresses only: the full /account reads balances this never looks at (2026-11-05, a 12-18 s unlock).
@@ -297,7 +306,8 @@ export async function tellTheNode(wallet) {
     await fetch("/account/address", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({address: keys.address, chain: chain.network,
-                            coin_pubkey: coinsHex(keys.pubkey)}),
+                            coin_pubkey: coinsHex(keys.pubkey),
+                            address_signature: await claimProof(wallet, chain.network, keys)}),
     });
   }
 }
@@ -363,6 +373,7 @@ async function _signUp(tag, password, {network, version}) {
     if (!keys) continue;
     alsoOn[`address_${chain.network}`] = keys.address;
     alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
+    alsoOn[`address_signature_${chain.network}`] = await claimProof(wallet, chain.network, keys);
   }
   const proved = await signupProof(wallet, network);
   const answer = await fetch("/signup", {
@@ -443,6 +454,7 @@ async function fileHere(wallet, tag, blob, running, network) {
     if (!keys) continue;
     alsoOn[`address_${chain.network}`] = keys.address;
     alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
+    alsoOn[`address_signature_${chain.network}`] = await claimProof(wallet, chain.network, keys);
   }
   const proved = await signupProof(wallet, network);
   return fetch("/signup", {
