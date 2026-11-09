@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/dd-history-from` (on `main` 50182a46) · DigiDollar history from block N, read whole through a lender
+
+Security review: on an arcade that borrows DigiByte, an account's DigiDollar history said `whole: false` for good (it
+was read whole only from the arcade's own Core), which read like missing coins.
+- **d43d8a9e** `/account/digidollar` adds `from_block` (first block covered; 0 = all of it) and `earlier` ("core",
+  "lender", or "" when not read here); `whole` stays. Both wallets say "History complete." or "History from block N
+  ..." (`ddHistory` in my_wallet.html and lite/_wallet.html, one wording).
+- **3ec92c45** `coinscan.Lender` also reads a DigiDollar address on DigiByte (its Taproot script);
+  `digidollar.seed_from_lender` checks each coin's "DD" record in its proved block and `gettxout`, then marks it whole.
+  Asked at most every 5 min per address; `ask_coinscan` false is kept. An older sharer skips DD addresses: those stay
+  "from block N" until it runs this code.
+- **Tests:** test_dd_history_from.py (4) and test_dd_seed_from_lender.py (7), failing before; with coinscan, coreshare,
+  DigiDollar, ddpad, the DigiDollar and Lite-parity browser tests: 98 passed.
+- **For the operator:** please merge into `main`. Nothing to set on a node; lenders need the update to answer.
 ### 2026-11-09 · SadFrog's side (Claude) · branches `team/csp-handlers-a`, `team/csp-handlers-b`, `team/csp-enforce` (each on `team/script-csp` 85eebfbc) · script policy, phase 2: handlers moved, enforcement switch (off by default)
 
 Phase 1 measured; phase 2 makes `script-src 'self' 'nonce-…'` enforceable. Nothing is enforced until the operator turns it on.
