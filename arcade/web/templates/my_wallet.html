@@ -1246,7 +1246,17 @@ async function ddActivity(c) {
   }
   if (!coins.length) box.append(el("div", "wl-empty", "No DigiDollars here yet."));
   box.append(el("p", "wl-since", `${dollars(got.cents)} in all, at ${got.address || "your DigiDollar address"}.`
-    + (got.whole === false ? ` Still reading what came before block ${Number(got.since || 0).toLocaleString()}.` : "")));
+    + ddHistory(got)));
+}
+
+/** What a DigiDollar history covers (2026-11-09, security review: "whole: false" alone read like missing coins):
+ * complete, or from which block on, and whether what came before is still being read (/account/digidollar). */
+function ddHistory(got) {
+  if (got.whole) return " History complete.";
+  const from = Number(got.from_block || Number(got.since || 0) + 1).toLocaleString();
+  if (got.earlier === "lender") return ` History from block ${from}; what came before is being read through the arcade this one borrows DigiByte from.`;
+  if (got.earlier) return ` History from block ${from}; what came before is still being read.`;
+  return ` History from block ${from} on; what this address got before then is not read on this arcade.`;
 }
 
 function waiting() {

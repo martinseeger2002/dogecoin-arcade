@@ -104,6 +104,14 @@ def watched_row(db, dd_address: str) -> dict | None:
     return {"since": int(row[0]), "seeded": bool(row[1])} if row else None
 
 
+def from_block(row: dict) -> int:
+    """The first block whose DigiDollar payments to the address this arcade has read: 0 once the coins it got before it
+    was watched are read too (its history is complete), else the block after `since`, the index's height when it was
+    first watched (on_block reads every block after it). (2026-11-09, security review: `whole: false` alone read like
+    missing coins; the Wallet now says which blocks its history covers.)"""
+    return 0 if row.get("seeded") else int(row.get("since") or 0) + 1
+
+
 def on_block(state, height: int, block: dict[str, Any], net: str, watched: set[str]) -> dict[str, int]:
     """What this block pays the watched DigiDollar addresses, then what it spends of theirs (payments first, as
     utxos.on_block, for a coin made and spent in one block). Journalled through `state`."""

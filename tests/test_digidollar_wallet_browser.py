@@ -315,7 +315,8 @@ def test_the_lite_wallet_reads_the_same_digidollars_as_the_full_wallet(browser, 
     browser.execute_script("document.querySelector('[data-tab=\"transactions\"]').click()")
     held = _wait(browser, "const t = document.getElementById('w-history').textContent; return t.includes('$10.75') && t")
     assert "$25.00" in held and "block 9" in held, held
-    assert "$35.75 in all" in browser.execute_script("return document.getElementById('w-since').textContent")
+    since = browser.execute_script("return document.getElementById('w-since').textContent")
+    assert "$35.75 in all" in since and "History complete." in since, since      # read whole (2026-11-09)
 
     # With the wallet shut in this browser, the same balance: the arcade reads with the key the account gave it when
     # its wallet opened here (2026-11-08, SadFrog: "i cannot see my digidollar and digidollar test balances - it says
