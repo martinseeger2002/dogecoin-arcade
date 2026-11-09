@@ -52,6 +52,13 @@
   <div class="msg err" id="words-trouble" hidden style="margin-top:10px"></div>
   <div id="words-shown" hidden style="margin-top:12px">
     <ol class="words phrase" id="words-list" style="margin:0;padding:12px 12px 12px 2.6em;columns:2;column-gap:2.6em;font-size:1rem"></ol>
+    {# 2026-11-09 (security review): a standard wallet restoring these words looks on the coin's registered number and
+       finds nothing; arcade/restore_kit.py and the recovery page say the same. #}
+    <p class="muted" id="coin-type-note" style="margin:8px 0 0;font-size:.86rem">These words use <b>coin type 3</b> for
+      every coin (<code>m/44'/3'/&hellip;</code>, and <code>m/49'/3'</code> and <code>m/84'/3'</code> for SegWit
+      addresses; test chains use coin type 1). A wallet that expects a coin's registered number (DigiByte 20,
+      Litecoin 2) shows an empty wallet until it is pointed at coin type 3. Your coins are not lost: the
+      <a href="/recover" download="recover-coins.html">recovery page</a> lists each chain's path and keys.</p>
     {# 2026-10-17 (SadFrog's side): the Litecoin key on its own, for other Litecoin wallets. #}
     <div id="ltc-key-box" style="margin-top:12px">
       <p style="margin:0 0 4px"><b>Your Litecoin key, for other Litecoin wallets</b></p>
