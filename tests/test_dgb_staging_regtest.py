@@ -15,7 +15,8 @@ the three address kinds, BIP143 signing, descriptors -- so each answer here is t
   a fresh Core descriptor wallet, see the same addresses and the funded balance, and spend it: the twelve words
   recover outside the arcade.
 * **Reorgs.** A coin the index credited from a block that is reorged away (invalidateblock, its funding spent elsewhere
-  in the new chain) is taken back.
+  in the new chain) is taken back, and a swap acts on a DigiByte lock only while it stands: Admin's "Every swap waits
+  for 1 confirmation" makes a lock in the mempool wait, and a lock reorged out is never claimed or answered.
 
 Regtest's addresses differ from DigiByte testnet's only in the bech32 prefix ("dgbrt" against "dgbt"; P2PKH 126 and
 P2SH 140 on both, chainparams.cpp), and its extended keys are tprv/tpub. So the arcade runs its DigiByte testnet chain
@@ -41,8 +42,10 @@ from test_extension import H, _bip32, _pubkey                      # noqa: E402
 from test_funding import _sign                                     # noqa: E402
 from test_me_page import _seat                                     # noqa: E402
 from test_restore_kit import CORE_SAID, PHRASE, descsum            # noqa: E402
+from test_trade import _trade                                      # noqa: E402
 
 from arcade import funding, restore_kit, seed, utxos               # noqa: E402
+from arcade import node_trader as NT, trade as T                   # noqa: E402
 from arcade.config import NETWORKS, RpcCredentials                 # noqa: E402
 from arcade.rpc import RpcClient                                   # noqa: E402
 from arcade.script import (b58check_encode, b58decode, b58encode, hash160,  # noqa: E402
@@ -425,3 +428,69 @@ def test_a_coin_credited_from_a_block_that_is_reorged_away_is_taken_back(dgb, tm
         assert utxos.balance(db, credited) == 0 and not utxos.unspent(db, credited), "the credit went with its block"
         assert utxos.balance(db, elsewhere) == 9 * COIN, "and the coin that replaced it is the one credited"
         assert not db.conn.execute("SELECT 1 FROM activity WHERE address=?", (credited,)).fetchall()
+
+
+def _swap(role: str, dgb_amount: int = 2 * COIN):
+    """A swap whose other side locks DigiByte (the leg this trader claims), and this side Dogecoin: both mainnet tier,
+    so the operator's lines apply. Locks are read from this regtest Core."""
+    tr, _, _, _ = _trade(role, give_net="doge", get_net="dgb")
+    tr.get = dataclasses.replace(tr.get, amount=dgb_amount)
+    return tr
+
+
+class _Settings:
+    def __init__(self, **settings):
+        self.settings, self.all_chains = settings, []
+
+    def setting(self, key, default=None):
+        return self.settings.get(key, default)
+
+
+def test_a_swap_acts_on_a_digibyte_lock_only_while_the_chain_keeps_it(dgb):
+    """Rule 9 on a real DigiByte Core: with "Every swap waits for 1 confirmation" on, the other side's lock in the
+    mempool is waited for; once in a block it is acted on; and once that block is reorged away and the lock's coins
+    spent elsewhere, neither side acts on it again -- the responder never locks against it, the initiator never claims
+    it, and a responder already locked waits to refund."""
+    for role in (T.RESPONDER, T.INITIATOR):
+        tr = _swap(role)
+        lines_off, lines_on = NT.swap_lines(_Settings()), NT.swap_lines(_Settings(**{NT.CONFIRM_ALL: True}))
+        assert T.confirmations_for(tr.give, tr.get, lines_off) == 0, "2 DGB is below the line: zero-conf by default"
+        tr.need = T.confirmations_for(tr.give, tr.get, lines_on)
+        assert tr.need == 1, "the switch makes it wait"
+
+        locker = _python_coin(dgb, (0x6161 if role == T.RESPONDER else 0x6262) << 200, 5)
+        lock_script = funding.p2sh_script(hash160(tr.their_redeem()))
+        lock = _spend(locker, [(tr.get.amount, lock_script)])
+        txid = dgb.rpc.call("sendrawtransaction", lock)
+        pointer = {"txid": txid, "vout": 0}
+        now = int(time.time())
+        mine = None if role == T.RESPONDER else T.LockSeen("ab" * 32, 0, tr.give.amount,
+                                                           funding.p2sh_script(hash160(tr.my_redeem())).hex(), 1)
+        expect = T.LOCK if role == T.RESPONDER else T.CLAIM
+
+        seen = NT.observe(dgb.rpc, pointer, set())
+        assert seen is not None and seen.confirmations == 0 and not seen.replaceable
+        assert T.next_step(tr, T.Facts(mine=mine, theirs=seen), now)[0] == T.WAIT, (role, "in the mempool")
+        tr.need = 0
+        assert T.next_step(tr, T.Facts(mine=mine, theirs=seen), now)[0] == expect, (role, "without the switch")
+        tr.need = 1
+
+        (block,) = dgb.mine(1)
+        seen = NT.observe(dgb.rpc, pointer, set())
+        assert seen.confirmations == 1
+        assert T.next_step(tr, T.Facts(mine=mine, theirs=seen), now)[0] == expect, (role, "in a block")
+
+        # The block goes, and the lock's coins go elsewhere in the new chain.
+        _reorg_out(dgb, block, _spend(locker, [(tr.get.amount, _p2pkh(locker["address"]))]))
+        assert dgb.rpc.call("getrawtransaction", txid, True)["confirmations"] == 0, "the Core still finds it"
+        seen = NT.observe(dgb.rpc, pointer, set())
+        assert seen is None, (role, "a lock that is nowhere is not a lock in the mempool", seen)
+        for need in (1, 0):
+            tr.need = need
+            step = T.next_step(tr, T.Facts(mine=mine, theirs=seen), now)[0]
+            assert step == T.WAIT, (role, need, step)
+        if role == T.RESPONDER:
+            # Already locked when the reorg came: never more than waiting to refund.
+            ours = T.LockSeen("cd" * 32, 0, tr.give.amount, funding.p2sh_script(hash160(tr.my_redeem())).hex(), 1)
+            assert T.next_step(tr, T.Facts(mine=ours, theirs=seen), now)[0] == T.WAIT
+            assert T.next_step(tr, T.Facts(mine=ours, theirs=seen), tr.my_locktime)[0] == T.REFUND

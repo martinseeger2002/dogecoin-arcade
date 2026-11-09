@@ -200,7 +200,7 @@ that Kotia's own Core signed.
 ## Rule 9: a swap acts only on a lock that cannot be taken back
 
 *Code:* `node_trader.swap_lines`, `node_trader.observe` / `proved_depth`, `trade._unsettled` (and `unsettled` in
-wallet_js.js). *Test:* `test_swap_settled.py`.
+wallet_js.js). *Test:* `test_swap_settled.py`, and on a real DigiByte Core `test_dgb_staging_regtest.py`.
 
 Added 2026-11-08, after an outside security review.
 
@@ -215,8 +215,13 @@ Added 2026-11-08, after an outside security review.
   swaps.
 * **A replaceable lock is waited out.** The other side's lock, in the mempool and signalling BIP 125, may be
   replaced by one paying its locker back. Neither side acts on it until it confirms.
+* **A lock that is nowhere is not a lock.** A lock whose block was reorged away while its coins went elsewhere is
+  still found by the Core (in the stale block), at 0 confirmations. `observe` reads a lock at 0 confirmations that is
+  not in the mempool, and that nothing there spends, as no lock at all (2026-11-09). Before, it read as a lock in the
+  mempool, and a swap at zero confirmations locked its own side against it.
 * **Admin -> Lock-script swaps, "Every swap waits for 1 confirmation"** (`swap_confirm_all`) makes every swap on
-  every chain wait for one.
+  every chain wait for one. Every swap with a real-coin leg: lines apply to mainnet-tier legs only
+  (`trade.confirmations_for`), so a swap between two test chains still goes at zero (checked 2026-11-09).
 
 ## Known and left as decided
 
