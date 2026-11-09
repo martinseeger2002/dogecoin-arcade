@@ -208,8 +208,9 @@ def test_only_the_wallet_may_frame_its_own_pages(client):
     its own: every page the wallet draws says who may frame it, and the
     sandbox the inscription runs in is nobody."""
     for path in ("/approvals", "/", "/inscriptions"):
-        assert client.get(path).headers.get("content-security-policy") == \
-            "frame-ancestors 'self'; object-src 'none'; base-uri 'self'", path
+        # startswith: with the script policy enforced (2026-11-09) the same header goes on to say script-src.
+        assert client.get(path).headers.get("content-security-policy", "").startswith(
+            "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"), path
     # Its content, on the other hand, is meant to be framed -- by the viewer --
     # and carries the sandbox instead.
     assert "frame-ancestors" not in (client.get("/r/blockheight").headers.get("content-security-policy") or "")

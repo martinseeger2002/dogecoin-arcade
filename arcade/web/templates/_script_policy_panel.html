@@ -1,0 +1,35 @@
+{#- Admin -> Safety -> Script policy (app.py enforced_page_policy; phase 2, 2026-11-09, security review). A partial of its
+    own with its own script, so admin.html carries only the include. `script_policy` is {enforce, forced}. -#}
+<section class="panel" id="scriptpolicy">
+  <h2>Script policy</h2>
+  <p class="muted" style="margin-top:0">An unlocked wallet&rsquo;s words are kept in the browser while you use it, so a
+    script slipped into one of this arcade&rsquo;s pages could read them. With this on, a browser runs only this
+    arcade&rsquo;s own scripts on its pages and refuses any other: an injected <code>&lt;script&gt;</code>, an
+    <code>on&hellip;=</code> attribute or a <code>javascript:</code> link. What it refuses is written to this node&rsquo;s
+    log. Inscriptions and games keep their own sandbox and are not changed by it.</p>
+  <label class="switch"><input type="checkbox" id="script_policy_enforce"
+    {{ 'checked' if script_policy.enforce or script_policy.forced }}
+    {{ 'disabled' if script_policy.forced }}> Enforce the script policy</label>
+  <p class="muted" id="scriptpolicysaid">{% if script_policy.forced %}On for every page: the node&rsquo;s service turns
+    it on (<code>--enforce-script-policy</code> or <code>ARCADE_ENFORCE_SCRIPT_POLICY</code>), so this switch cannot
+    turn it off.{% elif script_policy.enforce %}On: pages are sent the enforced policy.{% else %}Off: pages are only
+    measured against it, and the browser reports what it would refuse.{% endif %}</p>
+  <button type="button" class="small" id="scriptpolicysave" {{ 'disabled' if script_policy.forced }}>Save</button>
+</section>
+<script nonce="{{ csp_nonce }}">
+(function () {
+  var box = document.getElementById('script_policy_enforce'), said = document.getElementById('scriptpolicysaid');
+  document.getElementById('scriptpolicysave').addEventListener('click', function () {
+    fetch('/admin/api/settings', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'},
+      body: JSON.stringify({script_policy_enforce: box.checked})})
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/admin/login'; return; }
+        if (!r.ok) throw new Error('refused (' + r.status + ')');
+        said.textContent = box.checked ? 'Saved: on from the next page this arcade sends.'
+          : 'Saved: off. Pages are only measured against it again.';
+      })
+      .catch(function (e) { said.textContent = e.message; });
+  });
+})();
+</script>

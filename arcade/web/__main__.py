@@ -73,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--brand", choices=sorted(brandlib.BRANDS),
                         help="the face this node shows (name, colours, icons): "
                              "dogecoin (default) or pepecoin; ARCADE_BRAND works too")
+    parser.add_argument("--enforce-script-policy", action="store_true",
+                        help="send every page the enforced script policy (only this arcade's own scripts run), "
+                             "whatever Admin -> Safety says; ARCADE_ENFORCE_SCRIPT_POLICY=1 works too")
     parser.add_argument("--port", type=int, default=8420)
     parser.add_argument(
         "--public", action="store_true",
@@ -148,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
     from .watcher import BlockWatcher
     if args.brand:   # before create_app, which reads it (brand.py)
         os.environ["ARCADE_BRAND"] = args.brand
+    if args.enforce_script_policy:   # app.SCRIPT_POLICY_ENV, read on every page (2026-11-09, security review)
+        os.environ["ARCADE_ENFORCE_SCRIPT_POLICY"] = "1"
 
     # Nothing configured logging at all, so the root logger sat at its default
     # WARNING and every log.info in the package went nowhere -- two dozen
