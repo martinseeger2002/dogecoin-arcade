@@ -199,18 +199,43 @@ async def connect(url: str, timeout: float = 10.0) -> tuple[Reader, Writer]:
     return Reader(sock), Writer(sock, url)
 
 
+#: Headers that name the visitor's address, or how they came (2026-11-09, security review). The web app arrives here
+#: from loopback, where it believes them (apikeys.caller_ip), so a caller at an open mesh port could name any address
+#: and slip every per-visitor limit. The pass-through takes them all off and names the caller it knows itself.
+VISITOR_HEADERS = ("cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded", "true-client-ip")
+#: How the visitor reached the edge: believed only from the arcade's own tunnel (loopback), as the address is.
+EDGE_ONLY = ("x-forwarded-proto", "x-forwarded-host")
+
+
+def _visitor(kept: list[str], writer) -> str:
+    """The caller's address for the web app, taking off `kept` every header a caller could name one with. The
+    arcade's own tunnel connects from loopback and its header names the visitor (apikeys.caller_ip, as the web app
+    reads it); anybody else is the socket's own peer, whatever they said (2026-11-09, security review)."""
+    from ..apikeys import caller_ip
+    peer = writer.get_extra_info("peername")
+    peer_ip = str(peer[0]) if peer else None
+    said = {}
+    for line in kept:
+        name, _, value = line.partition(":")
+        said.setdefault(name.strip().lower(), value.strip())
+    who = caller_ip(said, peer_ip)[0] or "unknown"
+    drop = VISITOR_HEADERS if peer_ip in ("127.0.0.1", "::1") else VISITOR_HEADERS + EDGE_ONLY
+    # A folded line (one starting with a space) goes too: it could carry a header past the names checked here.
+    kept[:] = [l for l in kept if l[:1] not in (" ", "\t") and l.partition(":")[0].strip().lower() not in drop]
+    return who
+
+
 async def _proxy(head: bytes, reader, writer, http_port: int) -> None:
     """One /realtime/ request through the tunnel to the node's own web app, answer streamed back
     (the room stream is server-sent events and never ends by itself). Cloudflare's own headers
-    ride along, so the web app's door sees a request from outside and treats it as one."""
+    ride along, so the web app's door sees a request from outside and treats it as one; the visitor's
+    address is the one this pass-through knows (_visitor)."""
     lines = head.decode("latin-1").split("\r\n")
     kept = [l for l in lines[1:] if l and not l.lower().startswith(("connection:", "keep-alive:"))]
     # Who really asked. Without an edge in front (a node whose mesh port is open itself), nothing else says so, and
     # the web app saw 127.0.0.1 with whatever Host the caller chose: a local request (node 3's review, 2026-10-20).
     # A forwarded request is an outside one to the door (door.EDGE_HEADERS).
-    peer = writer.get_extra_info("peername")
-    if peer and not any(l.lower().startswith("x-forwarded-for:") for l in kept):
-        kept.append(f"X-Forwarded-For: {peer[0]}")
+    kept.append(f"X-Forwarded-For: {_visitor(kept, writer)}")
     length = next((int(l.split(":", 1)[1]) for l in kept if l.lower().startswith("content-length:")), 0)
     try:
         body = await asyncio.wait_for(reader.readexactly(min(length, 64 * 1024)), 15) if length else b""

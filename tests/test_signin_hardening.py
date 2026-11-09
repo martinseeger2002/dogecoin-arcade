@@ -4,7 +4,7 @@ can make this one do.
 - An announced arcade is asked only at a public address and never through a redirect (`_ask_arcade`).
 - A name the chain says another address holds is not filed by /signup.
 - The mesh port's pass-through says who really asked (`X-Forwarded-For`), so the web app never takes it for a
-  local request.
+  local request, and never a visitor address the caller named itself (2026-11-09).
 """
 import asyncio
 import socket
@@ -141,6 +141,94 @@ def test_behind_the_tunnel_each_visitor_has_their_own_sign_in_allowance(client):
     assert via.get("/signin/nobody?here=1", headers=other).status_code == 404, "the next visitor is not held up"
 
 
+class _Caller:
+    """The far end of one connection to the mesh port, as wsock._proxy sees it: its socket's own address."""
+
+    def __init__(self, peer: str):
+        self.peer, self.out = (peer, 40000), bytearray()
+
+    def get_extra_info(self, name, default=None):
+        return self.peer if name == "peername" else default
+
+    def write(self, data):
+        self.out += data
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def _through_the_mesh_port(client, asks):
+    """Each (socket address, header lines) in `asks` through wsock._proxy to the real web app, which sees the
+    pass-through arrive from loopback as it does on a node: (the status codes, the heads the web app was handed)."""
+    from fastapi.testclient import TestClient
+    from arcade.mesh import wsock
+    page, _ = client
+    inner = page.app
+
+    async def loopback(scope, receive, send):
+        await inner({**scope, "client": ("127.0.0.1", 40000)} if scope["type"] == "http" else scope, receive, send)
+    via = TestClient(loopback)
+    heads = []
+
+    async def go():
+        async def web(reader, writer):                     # hands what the pass-through sent to the web app
+            head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
+            heads.append(head.lower())
+            line, *rest = [l for l in head.split("\r\n") if l]
+            said = [(k.strip(), v.strip()) for k, _, v in (l.partition(":") for l in rest)]
+            got = await asyncio.to_thread(via.get, line.split(" ")[1], headers=said)
+            writer.write(b"HTTP/1.1 %d X\r\nContent-Length: 0\r\n\r\n" % got.status_code)
+            await writer.drain()
+            writer.close()
+        web_srv = await asyncio.start_server(web, "127.0.0.1", 0)
+        codes = []
+        try:
+            for peer, extra in asks:
+                caller = _Caller(peer)
+                head = ("GET /signin/nobody?here=1 HTTP/1.1\r\nHost: 127.0.0.1:8420\r\n"
+                        + "".join(l + "\r\n" for l in extra) + "\r\n").encode("latin-1")
+                await wsock._proxy(head, asyncio.StreamReader(), caller, web_srv.sockets[0].getsockname()[1])
+                codes.append(int(bytes(caller.out).split(b" ")[1]))
+        finally:
+            web_srv.close()
+            await web_srv.wait_closed()
+        return codes
+    return asyncio.run(asyncio.wait_for(go(), 60)), heads
+
+
+def test_a_visitor_address_named_at_the_mesh_port_is_not_believed(client):
+    """2026-11-09, security review: the pass-through reaches the web app from loopback, where an edge's header is
+    believed, and it passed the caller's own Cf-Connecting-Ip on. On a node whose mesh port is open with no edge in
+    front, one caller naming a new address each time had a new sign-in allowance each time. Now the address is the
+    socket's own, whatever the caller says."""
+    forged = [("198.51.100.20", [f"Cf-Connecting-Ip: 203.0.113.{n}", f"X-Forwarded-For: 203.0.113.{n}",
+                                 f"X-Real-Ip: 203.0.113.{n}", f"Forwarded: for=203.0.113.{n}",
+                                 f"True-Client-Ip: 203.0.113.{n}", "X-Forwarded-Proto: https",
+                                 "X-Forwarded-Host: elsewhere.example", f" Cf-Connecting-Ip: 203.0.113.{n}"])
+              for n in range(22)]
+    codes, heads = _through_the_mesh_port(client, forged + [("198.51.100.21", ["Cf-Connecting-Ip: 203.0.113.1"])])
+    assert codes[21] == 429, codes
+    assert codes[22] == 404, "another caller is not held up"
+    head = heads[0]
+    assert head.count("x-forwarded-for:") == 1 and "x-forwarded-for: 198.51.100.20\r\n" in head, head
+    for name in ("cf-connecting-ip", "x-real-ip", "forwarded:", "true-client-ip", "x-forwarded-proto",
+                 "x-forwarded-host", "203.0.113."):
+        assert name not in head, (name, head)
+
+
+def test_through_the_mesh_port_the_tunnel_still_names_each_visitor(client):
+    """The arcade's own tunnel connects to the mesh port from loopback: its Cf-Connecting-Ip names the visitor, and
+    each visitor keeps their own allowance (2026-11-09, security review)."""
+    one = ["Cf-Connecting-Ip: 203.0.113.1", "X-Forwarded-For: 203.0.113.1", "X-Forwarded-Proto: https"]
+    other = ["Cf-Connecting-Ip: 203.0.113.2", "X-Forwarded-Proto: https"]
+    codes, heads = _through_the_mesh_port(client, [("127.0.0.1", one)] * 22 + [("127.0.0.1", other)])
+    assert codes[21] == 429, codes
+    assert codes[22] == 404, "the next visitor is not held up"
+    assert heads[0].count("x-forwarded-for:") == 1 and "x-forwarded-for: 203.0.113.1\r\n" in heads[0]
+    assert "x-forwarded-proto: https" in heads[0], "how the visitor came is the tunnel's word"
 def _through_the_tunnel(page):
     """A client whose every request arrives from loopback, as the arcade's own tunnel's do."""
     from fastapi.testclient import TestClient
