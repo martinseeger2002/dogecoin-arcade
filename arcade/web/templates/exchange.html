@@ -142,6 +142,23 @@ document.querySelectorAll('.ex-seg a').forEach(function (a) {
   <input type="hidden" name="chain"><input type="hidden" name="back"></form>
 {% endif %}
 <script nonce="{{ csp_nonce }}">
+// A button shows or hides the form or panel its data-toggle names (the script policy, 2026-11-09: a listener, not
+// an inline onclick). On the document, so what the in-place refresh puts back still answers.
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("button[data-toggle]");
+  if (!b) return;
+  var f = document.getElementById(b.dataset.toggle);
+  if (f) f.hidden = !f.hidden;
+});
+// A thumbnail that does not load goes, rather than showing a broken picture. Caught on the way down (an image's
+// error does not bubble), and set before any thumbnail is on the page.
+document.addEventListener("error", function (e) {
+  if (e.target.matches && e.target.matches("img[data-drop-broken]")) e.target.remove();
+}, true);
+// The market search filters as it is typed in (findMarket, _exui.html market_list_assets).
+document.addEventListener("input", function (e) {
+  if (e.target.id === "marketfind" && window.findMarket) findMarket(e.target.value);
+});
 document.addEventListener('click', function (ev) {
   var a = ev.target.closest && ev.target.closest('a[data-switch]');
   if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button) return;
@@ -164,7 +181,7 @@ document.addEventListener('click', function (ev) {
   {%- endmacro %}
   {% macro thumb(b) -%}
     <a class="ofthumb" href="/inscriptions/{{ b.inscription }}/view"><img src="/content/{{ b.inscription }}"
-       alt="" loading="lazy" onerror="this.remove()"></a>
+       alt="" loading="lazy" data-drop-broken></a>
   {%- endmacro %}
   <style>
     .offerrow{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);min-width:0}
@@ -311,7 +328,7 @@ document.addEventListener('click', function (ev) {
   {%- endmacro %}
   {% macro xthumb(b) -%}
     <a class="ofthumb" href="/inscriptions/{{ b.inscription }}/view">{% if b.content_type.startswith('image/') %}<img src="/content/{{ b.inscription }}"
-       alt="{{ b.name }}" loading="lazy" onerror="this.remove()">{% else %}<span class="muted" style="display:grid;place-items:center;height:100%;font-size:.7rem">{{ (b.content_type.split('/')[-1] or 'file')[:6] }}</span>{% endif %}</a>
+       alt="{{ b.name }}" loading="lazy" data-drop-broken>{% else %}<span class="muted" style="display:grid;place-items:center;height:100%;font-size:.7rem">{{ (b.content_type.split('/')[-1] or 'file')[:6] }}</span>{% endif %}</a>
   {%- endmacro %}
   {% if x_in %}
   <div class="ex-h">Offers in Pepecoin main PEP for your things</div>
@@ -537,7 +554,7 @@ document.addEventListener('click', function (ev) {
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="back" value="/exchange?tab=mintpads{{ '&sort=new' if sort == 'new' else '' }}">
         <button class="small ghost dislikebtn{{ ' disliked' if it.disliked }}" type="submit" data-count="{{ it.dislikes }}">&#128078; {{ it.dislikes }}</button></form>
-      <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
+      <button class="small ghost" type="button" data-toggle="c-{{ it.txid }}">&#128172; {{ it.comments }}</button>
       {% else %}
       <span class="pill">&#9829; {{ it.likes }}</span>
       <span class="pill">&#128078; {{ it.dislikes }}</span>
@@ -657,7 +674,7 @@ document.addEventListener('click', function (ev) {
     <button type="button" data-mode="new" aria-pressed="false">+ New pair</button>
   </div>
   <input autocomplete="off" id="marketfind" class="ex-find" type="search" placeholder="Search all {{ pairs|length }} market{{ '' if pairs|length == 1 else 's' }}"
-         oninput="findMarket(this.value)" aria-label="Search markets">
+         aria-label="Search markets">
   <div class="ex-list" id="markets">
     <p class="ex-note" id="fav-empty" hidden style="margin:6px 4px 10px">Tap &#9734; on any market to keep it here.
       The Exchange opens on your favorites, and searching always looks through every market.</p>
@@ -946,7 +963,7 @@ document.addEventListener('click', function (ev) {
     <button type="button" data-mode="new" data-href="/me/nfts" aria-pressed="false">+ List yours</button>
   </div>
   <input autocomplete="off" id="marketfind" class="ex-find" type="search" placeholder="Search {{ (collections|length) + (ord_rows or [])|length }} collections"
-         oninput="findMarket(this.value)" aria-label="Search collections">
+         aria-label="Search collections">
   <div class="ex-list" id="markets">
     <p class="ex-note" id="fav-empty" hidden style="margin:6px 4px 10px">Tap &#9734; on any collection to keep it here.</p>
     <div id="sugg-head" hidden style="display:flex;justify-content:space-between;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:14px 4px 4px">
