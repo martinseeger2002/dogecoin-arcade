@@ -478,13 +478,44 @@ PAGE_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
 CSP_REPORT_PATH = "/csp-report"
 
 
+#: Workers may come from this arcade's files and from blob: addresses (2026-11-09, phase 2): without it worker-src falls
+#: back to script-src, and the trade runner's timer (wallet_js.js startTradeRunner, a blob: worker so a hidden tab keeps
+#: its beat) was stopped on every page that runs it. Only a script already running here can make a blob: address.
+WORKER_SRC = "worker-src 'self' blob:"
+
+
 def page_script_policy(nonce: str) -> str:
     """The script policy a page is measured against, sent report-only beside PAGE_CSP (2026-11-09, security review):
     the unlocked words live in sessionStorage, so any script on this origin could read them. Only this arcade's own
     files and the inline scripts its templates wrote (each `nonce="{{ csp_nonce }}"`) would run. Report-only for now:
     the reports name what still has to move before it can be enforced (inline on...= handlers first)."""
-    return (f"script-src 'self' 'nonce-{nonce}'; object-src 'none'; base-uri 'self'; "
+    return (f"script-src 'self' 'nonce-{nonce}'; {WORKER_SRC}; object-src 'none'; base-uri 'self'; "
             f"report-uri {CSP_REPORT_PATH}")
+
+
+def enforced_page_policy(nonce: str) -> str:
+    """PAGE_CSP and the script policy as ONE enforced header (phase 2, 2026-11-09, security review): only this arcade's
+    own files and the inline scripts carrying this request's nonce run; an injected <script>, an on...= attribute and
+    a javascript: address do not. Still reported, so what it stops shows in the node's log."""
+    return f"{PAGE_CSP}; script-src 'self' 'nonce-{nonce}'; {WORKER_SRC}; report-uri {CSP_REPORT_PATH}"
+
+
+#: Admin -> Safety -> "Enforce the script policy" (enforced_page_policy). Off by default until every page has been
+#: run under it (2026-11-09, security review).
+SCRIPT_POLICY_SETTING = "script_policy_enforce"
+#: Turns it on for the whole process, whatever the setting says: `arcade-web --enforce-script-policy`, or the test
+#: suite run with ARCADE_ENFORCE_SCRIPT_POLICY=1 so every browser test runs under the enforced policy.
+SCRIPT_POLICY_ENV = "ARCADE_ENFORCE_SCRIPT_POLICY"
+
+
+def script_policy_forced() -> bool:
+    """Whether the environment turns the enforced script policy on (SCRIPT_POLICY_ENV), read on every page."""
+    return (os.environ.get(SCRIPT_POLICY_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def script_policy_enforced(settings: dict) -> bool:
+    """Whether pages are sent the enforced script policy: the environment's word, else the operator's switch."""
+    return script_policy_forced() or bool(settings.get(SCRIPT_POLICY_SETTING))
 
 
 class CspReports:
@@ -556,8 +587,23 @@ class CspReports:
                 self.dropped += 1
                 return False
             self.logged += 1
-        log.warning("script policy (report-only) would stop: page %s, %s, blocked %s at %s", *said)
+        log.warning("script policy %s: page %s, %s, blocked %s at %s",
+                    "stopped" if self.enforced(body) else "would stop", *said)
         return True
+
+    @staticmethod
+    def enforced(body: bytes) -> bool:
+        """Whether the report says the policy was enforced (phase 2's one header) rather than report-only: only the
+        log line's wording follows it (2026-11-09, security review)."""
+        try:
+            said = json.loads(body.decode("utf-8", "replace"))
+        except ValueError:
+            return False
+        if isinstance(said, list):
+            said = next((r.get("body") for r in said if isinstance(r, dict) and isinstance(r.get("body"), dict)), None)
+        elif isinstance(said, dict):
+            said = said.get("csp-report")
+        return isinstance(said, dict) and said.get("disposition") == "enforce"
 
 
 CSP_REPORTS = CspReports()
@@ -591,8 +637,11 @@ class _SafeHeaders:
     (inscribed content says its own, unsafe-url, for its viewer ticket); HSTS over https; and `no-store` on every
     account, sign-in and admin answer (21 account GETs said nothing, so a cache in between could keep one)."""
 
-    def __init__(self, app):
+    def __init__(self, app, enforce=script_policy_forced):
         self.app = app
+        # Whether this page gets the enforced script policy (enforced_page_policy) rather than the report-only one:
+        # the node's switch or the environment, asked for each page (create_app hands over the setting's reader).
+        self.enforce = enforce
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -627,7 +676,14 @@ class _SafeHeaders:
                     # security review). Inscribed content and /recover say their own, stricter policy and are left be.
                     own = next((v for k, v in headers if k.lower() == b"content-security-policy"), None)
                     if own is None or own == PAGE_CSP.encode():
-                        add.append((b"content-security-policy-report-only", page_script_policy(nonce).encode()))
+                        if self.enforce():
+                            # Phase 2: the same policy enforced, in the one header that also says who may frame the
+                            # page, in place of PAGE_CSP and of the report-only copy (2026-11-09, security review).
+                            headers = [(k, v) for k, v in headers if k.lower() != b"content-security-policy"]
+                            have.discard(b"content-security-policy")
+                            add[-1] = (b"content-security-policy", enforced_page_policy(nonce).encode())
+                        else:
+                            add.append((b"content-security-policy-report-only", page_script_policy(nonce).encode()))
                 message = {**message, "headers": headers + [(k, v) for k, v in add if k not in have]}
             await send(message)
 
@@ -6068,7 +6124,7 @@ def create_app(state: AppState) -> FastAPI:
     # Outside every other middleware, so a session renewed anywhere in a request (the door's look, the chain
     # pick, the route) sends the cookie again (issue #13, 2026-10-25).
     app.add_middleware(_SessionRenewal)
-    app.add_middleware(_SafeHeaders)
+    app.add_middleware(_SafeHeaders, enforce=lambda: script_policy_enforced(state.settings()))
 
     @app.get("/create/chain")
     def create_chain(request: Request, to: str = "", back: str = "/create"):
@@ -30087,7 +30143,9 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "admin.html", local=who["local"], update_status=state.update_status, when=_when,
                       window_tab="admin",
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY, release_key=releaselib.PUBLIC_KEY,
-                      trade_cut=swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT)) / 100, names=_arcade_names())
+                      trade_cut=swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT)) / 100, names=_arcade_names(),
+                      script_policy={"enforce": bool(state.setting(SCRIPT_POLICY_SETTING, False)),
+                                     "forced": script_policy_forced()})
 
     def _arcade_names() -> dict:
         """The arcade's two names for Admin -> This node (2026-11-04, "Who runs this node", Plan B): its node's own
@@ -30332,6 +30390,10 @@ def create_app(state: AppState) -> FastAPI:
             "delegate_cap": {k: v / COIN for k, v in _delegate_caps().items()},
             "inscribe_fee": _admin_inscribe_fee(),
             "flags": _admin_flags(),
+            # Admin -> Safety -> Script policy (enforced_page_policy, 2026-11-09): the switch, and whether the service's
+            # --enforce-script-policy / ARCADE_ENFORCE_SCRIPT_POLICY holds it on whatever the switch says.
+            "script_policy": {"enforce": bool(state.setting(SCRIPT_POLICY_SETTING, False)),
+                              "forced": script_policy_forced()},
             "chains": _admin_chains(),
             "brand": {"current": brandlib.own().key, "locked": brandlib.FROM_ENV,
                       "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()],
@@ -31512,7 +31574,7 @@ def create_app(state: AppState) -> FastAPI:
                 state.set_setting("faucet_daily",
                                   None if text in ("", "none") else walletlib.parse_amount(text))
             for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades", termslib.GATE_SETTING,
-                         "serve_index_copies", "fetch_index_copies"):
+                         "serve_index_copies", "fetch_index_copies", SCRIPT_POLICY_SETTING):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
             if termslib.TEXT_SETTING in said:
