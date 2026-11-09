@@ -86,6 +86,13 @@ CHALLENGE_SECONDS = 120
 ATTEMPTS = 20
 ATTEMPT_WINDOW = 300
 
+#: An account's sealed wallet (/signin/<name>) goes to at most this many different visitors in VAULT_WINDOW seconds,
+#: whoever they are (2026-11-09, security review). The per-visitor limit above holds one address; this holds a name
+#: asked for from many addresses at once. The same visitor asking again (a mistyped password, the owner's own phone)
+#: takes no new place, so a person signing in on a second device is not counted against themselves.
+VAULT_VISITORS = 30
+VAULT_WINDOW = 3600
+
 # --- what one account may do on a node everybody shares ------------------------
 #
 # One machine, one chain connection, and up to `SEATS` people on it. Without a
@@ -454,8 +461,9 @@ class Accounts:
                 "WHERE released IS NULL AND seen < ?", (now, cutoff))
         self.conn.execute("DELETE FROM challenge WHERE expires < ?", (now,))
         self.conn.execute("DELETE FROM session WHERE expires < ?", (now,))
+        # Kept for the longest window that counts them (a name's lookups: an hour).
         self.conn.execute("DELETE FROM attempt WHERE at < ?",
-                          (now - ATTEMPT_WINDOW,))
+                          (now - max(ATTEMPT_WINDOW, VAULT_WINDOW),))
         # A deed older than the longest window says nothing that is still
         # worth counting, and a table nobody deletes would be a file that
         # only grows on a machine whose whole job is to be shared.
@@ -674,6 +682,30 @@ class Accounts:
             "SELECT COUNT(*) FROM attempt WHERE who = ? AND at > ?",
             (who, now - ATTEMPT_WINDOW)).fetchone()[0]
         return count >= ATTEMPTS
+
+    def wait_for(self, who: str, now: int, *, limit: int = ATTEMPTS, window: int = ATTEMPT_WINDOW) -> int:
+        """Seconds before `who` may try again: 0 when it may now. The `limit`-th newest try in the window is the one
+        whose end lets the next in (2026-11-09, security review: a 429 says how long, not "a few minutes")."""
+        if not who:
+            return 0
+        rows = self.conn.execute("SELECT at FROM attempt WHERE who = ? AND at > ? ORDER BY at DESC LIMIT ?",
+                                 (who, now - window, limit)).fetchall()
+        return max(1, rows[-1][0] + window - now) if len(rows) >= limit else 0
+
+    def vault_lookup_wait(self, name: str, visitor: str, now: int) -> int:
+        """Seconds before `visitor` may have `name`'s sealed wallet, or 0 -- and then the lookup is counted.
+        At most VAULT_VISITORS different visitors a name in VAULT_WINDOW; one already counted is let in again."""
+        prefix = "vaultname:" + hashlib.sha256(str(name).strip().lower().encode()).hexdigest()[:32] + "|"
+        mine, since = prefix + (visitor or "?"), now - VAULT_WINDOW
+        if not self.conn.execute("SELECT 1 FROM attempt WHERE who = ? AND at > ? LIMIT 1", (mine, since)).fetchone():
+            # '}' is the character after '|': every visitor of this name and nothing else, read off the index.
+            lasts = sorted((row[0] for row in self.conn.execute(
+                "SELECT MAX(at) FROM attempt WHERE who > ? AND who < ? AND at > ? GROUP BY who",
+                (prefix, prefix[:-1] + "}", since))), reverse=True)
+            if len(lasts) >= VAULT_VISITORS:
+                return max(1, lasts[VAULT_VISITORS - 1] + VAULT_WINDOW - now)
+        self._attempt(mine, now)
+        return 0
 
     def _attempt(self, who: str, now: int) -> None:
         if who:
