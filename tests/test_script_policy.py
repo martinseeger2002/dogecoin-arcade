@@ -5,7 +5,7 @@ to /csp-report, and the count of inline on...= handlers (phase 2 moves them) may
 
 Phase 2 (2026-11-09): the same policy can be enforced (Admin -> Safety -> "Enforce the script policy", or
 ARCADE_ENFORCE_SCRIPT_POLICY=1 / --enforce-script-policy for a whole process): ONE Content-Security-Policy header with
-the page policy and the script policy together, still reported."""
+the page policy and the script policy together, still reported. The pages built in Python carry the nonce too."""
 import json
 import pathlib
 import re
@@ -20,7 +20,7 @@ from test_safe_headers import LOCAL, _html_pages                # noqa: E402
 from arcade.web import door                                      # noqa: E402
 from arcade.web import app as webapp                             # noqa: E402
 from arcade.web.app import (PAGE_CSP, SCRIPT_POLICY_ENV, SCRIPT_POLICY_SETTING, CspReports,  # noqa: E402
-                            enforced_page_policy)
+                            enforced_page_policy, nonced)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent / "arcade"
 TEMPLATE_DIRS = (ROOT / "web" / "templates", ROOT / "lite" / "templates")
@@ -33,11 +33,11 @@ NOT_JINJA = {"mintpad.html", "tokenpad.html", "recover.html"}
 #: until then this number may only go down. Lower it when you move one; never raise it -- add a listener instead.
 INLINE_HANDLERS_AT_MOST = 68
 
-#: Pages whose inline scripts carry no nonce yet (phase 2): inscription previews drawn as the page that will be
-#: inscribed, the nodes globe (the same file GitHub Pages serves) and the mesh browser are files, not templates; the
-#: DogeFeedX Network page is sent as its template's unrendered text (dogefeedx/network.py: `render` is no module name).
-UNNONCED_PAGES = {"/globe", "/tokens/launchpad/preview", "/inscriptions/collection/preview", "/browser",
-                  "/dogefeedx/network"}
+#: Pages whose inline scripts carry no nonce: the wizards' previews, drawn as the page that will be inscribed (chain
+#: bytes, its scripts included). They belong under the inscription sandbox's own policy, not the page policy:
+#: team/innerhtml-audit sends them app._preview_headers() (contentlib.CONTENT_HEADERS + frame-ancestors 'self'), and a
+#: page with a policy of its own gets no script policy beside it. Once that is merged, this set is empty.
+UNNONCED_PAGES = {"/tokens/launchpad/preview", "/inscriptions/collection/preview"}
 
 SCRIPT_TAG = re.compile(r"<script\b[^>]*>", re.I)
 HANDLER = re.compile(r"\son[a-z]+=")
@@ -224,6 +224,33 @@ def test_pages_with_their_own_policy_keep_it_when_enforced(client, monkeypatch):
     policies = [v for k, v in recover.headers.items() if k.lower() == "content-security-policy"]
     assert len(policies) == 1 and "frame-ancestors 'none'" in policies[0] and "'nonce-" not in policies[0], policies
     assert "content-security-policy" not in app.get("/coins.js", headers=LOCAL).headers
+
+
+def test_the_pages_built_in_python_carry_the_nonce(client, monkeypatch):
+    """/globe and /browser are files the arcade ships (the globe is GitHub Pages' too), the Network app was sent as its
+    template's raw text: each inline script now carries the nonce its header names."""
+    app, _ = client
+    monkeypatch.setenv(SCRIPT_POLICY_ENV, "1")
+    for path in ("/globe", "/browser", "/browser/somename", "/dogefeedx/network"):
+        got = app.get(path, headers=LOCAL)
+        assert got.status_code == 200, (path, got.status_code)
+        nonce = _nonce(got.headers["content-security-policy"])
+        tags = [t for t in SCRIPT_TAG.findall(got.text) if "src=" not in t]
+        assert tags and all(f'nonce="{nonce}"' in t for t in tags), (path, tags)
+        assert "{{" not in got.text and "{%" not in got.text, f"{path} is drawn, not its template's text"
+
+
+def test_nonced_writes_the_nonce_into_inline_scripts_only():
+    page = ('<script>a()</script><script type="module">b()</script><SCRIPT>c()</SCRIPT>'
+            '<script src="/x.js"></script><script nonce="kept">d()</script><scripted>')
+    assert nonced(page) == page, "outside a request there is no nonce to write"
+    drawn = webapp._NONCE.set("N0nce")
+    try:
+        assert nonced(page) == ('<script nonce="N0nce">a()</script><script nonce="N0nce" type="module">b()</script>'
+                                '<script nonce="N0nce">c()</SCRIPT><script src="/x.js"></script>'
+                                '<script nonce="kept">d()</script><scripted>')
+    finally:
+        webapp._NONCE.reset(drawn)
 
 
 def _admin(app):

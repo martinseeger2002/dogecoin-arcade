@@ -627,6 +627,17 @@ class _PageNonce:
 CSP_NONCE = _PageNonce()
 TEMPLATES.env.globals["csp_nonce"] = CSP_NONCE
 
+_BARE_SCRIPT = re.compile(r"<script\b(?![^>]*\b(?:src|nonce)\s*=)", re.I)
+
+
+def nonced(page: str) -> str:
+    """A page this arcade ships as a plain file (the nodes globe, the mesh Browser) with this request's nonce written
+    into each of its inline <script>s, as a template writes `csp_nonce` (phase 2, 2026-11-09, security review). Only
+    for the arcade's own files: never for anything a person wrote, which runs sandboxed under a policy of its own."""
+    nonce = _NONCE.get()
+    return _BARE_SCRIPT.sub(f'<script nonce="{nonce}"', page) if nonce else page
+
+
 #: Paths whose answers are one account's (or the operator's) own: never kept by a browser or a cache in between.
 PRIVATE_PATHS = ("/account", "/auth", "/signin", "/signup", "/admin", "/api/v1", "/me")
 
@@ -9452,7 +9463,9 @@ def create_app(state: AppState) -> FastAPI:
         path = globelib.page_path()
         if path is None:
             return HTMLResponse("the nodes globe is not in this copy", status_code=404)
-        return HTMLResponse(path.read_text(encoding="utf-8"),
+        # Its inline scripts carry this request's nonce, written in as it is sent: the file itself is GitHub Pages'
+        # too, so no template word can be in it (2026-11-09, security review).
+        return HTMLResponse(nonced(path.read_text(encoding="utf-8")),
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/globe.json")
@@ -37812,7 +37825,7 @@ def create_app(state: AppState) -> FastAPI:
     dogefeedx.register_routes(app, render, local=dfx_local)
     # DogeFeedX Network app: node status, sync progress, and mesh peers.
     from .dogefeedx import network as dogefeedx_network
-    dogefeedx_network.register(app, state, admin_check=_admin_check)
+    dogefeedx_network.register(app, state, admin_check=_admin_check, render=render)
     # Node modules installed from packages (arcade/modhost.py): confined, reading chains through this node's Cores, and
     # handing what spends to the account's own wallet as an offer, as every account send is.
     from .. import modhost

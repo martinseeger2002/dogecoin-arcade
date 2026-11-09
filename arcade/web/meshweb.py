@@ -294,7 +294,9 @@ def register(app, state, content=None) -> None:
     @app.get("/browser", response_class=HTMLResponse)
     @app.get("/browser/{address:path}", response_class=HTMLResponse)
     def browser(address: str = ""):
-        return HTMLResponse(BROWSER_FILE.read_text(), headers={"Cache-Control": "no-cache"})
+        # Its script carries this request's nonce (app.nonced, 2026-11-09, security review): the same file is a card.
+        from .app import nonced
+        return HTMLResponse(nonced(BROWSER_FILE.read_text()), headers={"Cache-Control": "no-cache"})
 
     # --- in a browser ---------------------------------------------------------------------------------------------
 
