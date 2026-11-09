@@ -180,7 +180,7 @@
     the coins it mines. Its key is on this machine{{ "; your own coins stay in your wallet" if names.owner_kind == "account" }}.</p>
   <div id="wallets"></div>
   <h3 style="margin-bottom:6px">Send</h3>
-  <form class="sendform" id="sendform" onsubmit="return false">
+  <form class="sendform" id="sendform">
     <select id="sendwhich"></select>
     <input id="sendto" placeholder="@name or address" autocomplete="off" spellcheck="false"
       {%- if names.owner %} value="@{{ names.owner }}" title="To your own wallet, unless you change it"{% endif %}>
