@@ -38,7 +38,27 @@ from . import relay as _relay
 
 log = logging.getLogger("arcade.mesh")
 
-ROWS_PER_FRAME = 500           # a "dn" frame stays well under the link's 64 KB frame
+ROWS_PER_FRAME = 500           # at most this many words in one "dn" frame...
+#: ...and at most this many bytes (2026-11-09, V1.0's report): a word row grew to [c, hash, births, nd], so 500 came to
+#: ~73 KB, over the link's 64 KB frame and the 16-bit header length, and link_up stopped after the first frame.
+FRAME_BYTES = 48 * 1024
+
+
+def row_frames(frame: dict, rows: list) -> list[dict]:
+    """`frame` once per part of `rows`, each part at most ROWS_PER_FRAME rows and FRAME_BYTES encoded (a single row larger
+    than that still goes, alone)."""
+    base = len(json.dumps({**frame, "rows": []}, separators=(",", ":")))
+    parts, part, size = [], [], base
+    for row in rows:
+        n = len(json.dumps(row, separators=(",", ":"))) + 1
+        if part and (len(part) >= ROWS_PER_FRAME or size + n > FRAME_BYTES):
+            parts.append(part)
+            part, size = [], base
+        part.append(row)
+        size += n
+    if part:
+        parts.append(part)
+    return [{**frame, "rows": p} for p in parts]
 
 
 ASK_SECONDS = 15.0
@@ -129,8 +149,8 @@ class DxShare:
                     continue
                 await link.send({"t": "dx", **await asyncio.to_thread(index.hello)})
                 rows = await asyncio.to_thread(index.all_mine)
-                for i in range(0, len(rows), ROWS_PER_FRAME):
-                    await link.send({"t": "dx", "op": "dn", "net": net, "rows": rows[i:i + ROWS_PER_FRAME]})
+                for part in row_frames({"t": "dx", "op": "dn", "net": net}, rows):
+                    await link.send(part)
                 for lane in list(index.chunks.lanes):              # every lane this arcade holds
                     await link.send({"t": "dx", "op": "ls", "net": net, "c": lane["c"], "at": lane["at"],
                                      "until": time.time() + LEASE_SECONDS})
@@ -385,8 +405,7 @@ class DxShare:
         if loop is None or self.node is None:
             return
         rows = frame.get("rows")
-        frames = ([{**frame, "rows": rows[i:i + ROWS_PER_FRAME]} for i in range(0, len(rows), ROWS_PER_FRAME)]
-                  if isinstance(rows, list) else [frame])
+        frames = row_frames(frame, rows) if isinstance(rows, list) else [frame]
         for f in frames:
             try:
                 asyncio.run_coroutine_threadsafe(self._send_all({"t": "dx", **f}), loop)

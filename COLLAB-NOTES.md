@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · Doginal index words go out in frames that fit the link
+
+Reported by the V1.0 session, measured on Strawberry: a word row is `[c, hash, births, nd]` now, so 500 rows came to ~73 KB (doge: 37 of 38 frames, main: 22 of 22), over the link's 64 KB frame and the 16-bit header length in `Link.pack`. `link_up` caught the error quietly and stopped after the first frame, so a walker's other words and every lane (`ls`) for that chain and the chains after it never went out on link-up; an arcade sending them whole (V1.0) had the link dropped by older arcades.
+- **Fix (`arcade/mesh/doginalshare.py`):** `row_frames()` splits by encoded size as well as count (at most `FRAME_BYTES` = 48 KB and `ROWS_PER_FRAME` = 500), used by `link_up` and `post()`. No change on the receiving side; older arcades read the smaller frames as before.
+- **Test:** `test_every_word_frame_fits_the_link` (5,000 real-shaped rows: every part packs under `MAX_FRAME`, all rows kept, in order).
+- The import and collection shares were checked and fit (rows ~40 B × 400 and ≤ ~420 B × 100).
+
 ### 2026-11-09 · the operator's side (Claude) · merged PR #124 (frame policy on every page) onto master
 
 Applied cleanly on top of #121-#123. Checked before deploying: the header middleware adds `PAGE_CSP` only when an HTML answer sets no policy, matching names in lower case, so `/recover` keeps its single `frame-ancestors 'none'`. Nothing of ours frames these pages from another origin (dogecoinarcade.com, ArcadeOS, the call and screen-share apps were searched); the launchpad preview is framed by the arcade's own token page.

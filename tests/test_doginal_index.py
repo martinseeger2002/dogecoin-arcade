@@ -1908,3 +1908,22 @@ def test_the_lanes_of_a_walking_arcade_keep_within_reach_of_its_walk(tmp_path, m
         helper.step()
     assert len(helper.store.all_words(6)) == 6, "a helper covers the whole chain, LANES_AHEAD or not"
 
+
+
+def test_every_word_frame_fits_the_link():
+    """2026-11-09, the V1.0 session's report: a word row grew to [c, hash, births, nd], so 500 rows came to ~73 KB, over
+    the link's 64 KB frame and its 16-bit header length; link_up stopped after the first frame, and every word and lane
+    after it never went out. Every part now fits, and together they carry every row, in order."""
+    import json
+    from arcade.mesh import doginalshare as share
+    from arcade.mesh.link import Link, MAX_FRAME
+    rows = [[100000 + i, hashlib.sha256(b"h%d" % i).hexdigest(), 6_000_000 + i, hashlib.sha256(b"n%d" % i).hexdigest()]
+            for i in range(5000)]
+    parts = share.row_frames({"t": "dx", "op": "dn", "net": "doge"}, rows)
+    assert [r for p in parts for r in p["rows"]] == rows
+    for part in parts:
+        assert part["t"] == "dx" and part["op"] == "dn" and part["net"] == "doge"
+        assert len(part["rows"]) <= share.ROWS_PER_FRAME
+        assert len(json.dumps(part, separators=(",", ":"))) <= share.FRAME_BYTES
+        assert len(Link.pack(part)) < MAX_FRAME                    # packs (16-bit header length) and fits a frame
+    assert share.row_frames({"op": "dn"}, []) == []
