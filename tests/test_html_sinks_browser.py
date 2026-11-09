@@ -160,3 +160,17 @@ def test_the_trade_card_shows_the_token_and_the_coin_by_name_as_words(served, br
     browser.execute_script("window.card.setMode('limit')")    # the node fee's row names the coin
     assert "Node fee" in _text(browser, "#card .ex-quote")
     _nothing_ran(browser, "#card")
+
+
+# --- DogeFeedX: what other arcades say about themselves ----------------------------------------------------------------
+
+def test_the_network_app_shows_what_peers_say_about_themselves_as_words(served, browser):
+    _, base, _ = served
+    FAKE["/dogefeedx/network/api/status"] = {
+        "nodes": [], "timestamp": 0, "trusted_nodes": [{"id": SNEAKY}],
+        "mesh_peers": [{"tag": SNEAKY, "node": SNEAKY, "hosts": [SNEAKY], "linked": True}]}
+    browser.get(f"{base}/dogefeedx/network")
+    _until(browser, "return document.querySelectorAll('.dfx-peer-row').length === 1", "the peer's row")
+    assert _text(browser, ".dfx-peer-tag") == "@" + SNEAKY
+    assert _text(browser, ".dfx-node-id") == SNEAKY + "..."
+    _nothing_ran(browser, "body")

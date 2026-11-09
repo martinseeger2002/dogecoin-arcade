@@ -569,8 +569,9 @@ a { color: inherit; text-decoration: none; }
       var box = document.getElementById('side-trending');
       if (!box) return;
       box.innerHTML = (data.trending || []).map(function(t) {
-        return '<div class="df-trend" data-tag="' + t.tag + '"><div class="df-trend-label">' + t.rank +
-          ' · Trending</div><div class="df-trend-tag">#' + t.tag + '</div></div>';
+        // Escaped (2026-11-09, security review): a tag is words out of somebody's post.
+        return '<div class="df-trend" data-tag="' + esc(t.tag) + '"><div class="df-trend-label">' + esc(t.rank) +
+          ' · Trending</div><div class="df-trend-tag">#' + esc(t.tag) + '</div></div>';
       }).join('') || '<div class="df-empty">No trends</div>';
       box.addEventListener('click', function(e) {
         var row = e.target.closest('[data-tag]');

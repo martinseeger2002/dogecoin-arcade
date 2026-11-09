@@ -716,14 +716,24 @@
       return;
     }
 
-    container.innerHTML = peers.map(peer => `
-      <div class="dfx-peer-row">
-        <span class="dfx-peer-icon ${peer.linked ? 'linked' : 'known'}"></span>
-        ${peer.tag ? `<span class="dfx-peer-tag">@${peer.tag}</span>` : ''}
-        <span class="dfx-peer-node">${peer.node || '?'}</span>
-        ${peer.hosts && peer.hosts.length ? `<span class="dfx-peer-host">${peer.hosts[0]}</span>` : ''}
-      </div>
-    `).join('');
+    // Built as elements, every word as text (2026-11-09, security review): a peer's @tag, id and host are what that
+    // arcade says about itself.
+    container.replaceChildren(...peers.map(peer => {
+      const row = document.createElement('div');
+      row.className = 'dfx-peer-row';
+      row.append(part('dfx-peer-icon ' + (peer.linked ? 'linked' : 'known'), ''));
+      if (peer.tag) row.append(part('dfx-peer-tag', '@' + peer.tag));
+      row.append(part('dfx-peer-node', peer.node || '?'));
+      if (peer.hosts && peer.hosts.length) row.append(part('dfx-peer-host', peer.hosts[0]));
+      return row;
+    }));
+  }
+
+  function part(cls, text) {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    return span;
   }
 
   function renderTrustedNodes(nodes) {
@@ -733,12 +743,12 @@
       return;
     }
 
-    container.innerHTML = nodes.map(node => `
-      <div class="dfx-node-row">
-        <span class="dfx-peer-icon linked"></span>
-        <span class="dfx-node-id">${node.id}...</span>
-      </div>
-    `).join('');
+    container.replaceChildren(...nodes.map(node => {
+      const row = document.createElement('div');
+      row.className = 'dfx-node-row';
+      row.append(part('dfx-peer-icon linked', ''), part('dfx-node-id', node.id + '...'));
+      return row;
+    }));
   }
 
   async function refresh() {
