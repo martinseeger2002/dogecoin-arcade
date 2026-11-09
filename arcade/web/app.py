@@ -471,6 +471,7 @@ def _preview_headers() -> dict:
     csp = contentlib.CONTENT_HEADERS["Content-Security-Policy"] + "; frame-ancestors 'self'"
     return {**contentlib.CONTENT_HEADERS, "Content-Security-Policy": csp, "Cache-Control": "no-store"}
 
+
 #: A page's own policy: only this arcade may frame it, no plugins, and no <base> pointing its addresses elsewhere.
 PAGE_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
 
