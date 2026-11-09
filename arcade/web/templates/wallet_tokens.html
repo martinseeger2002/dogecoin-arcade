@@ -46,7 +46,7 @@
           <table style="margin-top:4px">
             {% for piece in t.pieces %}
             <tr><td class="muted" style="font-size:.76rem;border:0">
-                  <code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ piece.address }}</code></td>
+                  <code class="addr" data-copy-addr title="Click to copy">{{ piece.address }}</code></td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums;border:0">{{ piece.display }}</td></tr>
             {% endfor %}
           </table>
@@ -82,4 +82,16 @@
     receive theirs.</p>
 </div>
 {% endif %}
+<script nonce="{{ csp_nonce }}">
+// An address in "where it sits" copies on a click. Its inline handler called copyAddr, which only the address book
+// defines, so the click did nothing here; this listener (the script policy, 2026-11-09) copies as the book does.
+document.querySelectorAll('[data-copy-addr]').forEach(function (el) {
+  el.addEventListener('click', function () {
+    navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+      el.classList.add('copied');
+      setTimeout(function () { el.classList.remove('copied'); }, 1200);
+    });
+  });
+});
+</script>
 {% endblock %}
