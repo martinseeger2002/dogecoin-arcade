@@ -20,6 +20,7 @@ pytest.importorskip("selenium", reason="browser tests need selenium: pip install
 
 from fastapi import Request                                          # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse            # noqa: E402
+from selenium.webdriver.common.by import By                          # noqa: E402
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browsers                                                      # noqa: E402
@@ -262,3 +263,19 @@ def test_an_approval_waiting_under_a_piece_is_listed_as_words(served, browser):
     assert browser.execute_script("return document.querySelectorAll('#asked [data-pwned]').length") == 0, \
         "an id stays inside its attribute"
     _nothing_ran(browser, "#asked")
+
+
+# --- the address book: a contact's name in the question before removing it ---------------------------------------------
+
+def test_removing_a_contact_asks_about_its_name_as_words(served, browser):
+    state, base, _ = served
+    name = "Bob '+(window.ran=1)+' " + SNEAKY
+    with state.store() as store:
+        store.save_contact(name=name)
+    browser.get(f"{base}/contacts/more")
+    browser.find_element(By.CSS_SELECTOR, "form[action$='/delete'] button[type=submit]").click()
+    alert = browser.switch_to.alert
+    asked = alert.text
+    alert.dismiss()
+    assert name in asked, asked
+    _nothing_ran(browser, "body")

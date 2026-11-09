@@ -266,7 +266,10 @@
       {% endif %}
       <a class="ghost btn" href="/contacts?edit={{ p['id'] }}">Notes</a>
       <form method="post" action="/contacts/{{ p['id'] }}/delete" style="margin-left:auto"
-            onsubmit="return confirm('Remove {{ (handle and '@' ~ handle) or p['name']|e }} from the address book? Messages already received are kept.')">
+            {# The question as data, read as text (2026-11-09, security review): a name inside the handler's own
+                JavaScript is HTML-escaped and then un-escaped by the browser before it runs. #}
+            data-ask="Remove {{ (handle and '@' ~ handle) or p['name'] }} from the address book? Messages already received are kept."
+            onsubmit="return confirm(this.dataset.ask)">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <button class="ghost" type="submit">Remove</button></form>
     </div>
