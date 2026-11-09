@@ -309,6 +309,13 @@ def test_mainnet_sends_wait_for_the_operator_too(tmp_path):
         pilot.command_ddsend(main, pilot.dd_address("dgb", pub[1:]), 5, "main")
 
 
+def test_a_send_to_your_own_digidollar_address_is_refused_plainly(tmp_path):
+    _, pilot = _pilot()
+    pub, _ = _key()
+    with pytest.raises(ValueError, match="that is your own DigiDollar address"):
+        pilot.command_ddsend(_ctx(pub, tmp_path), pilot.dd_address("dgbtest", pub[1:]), 5, "test")
+
+
 def test_gather_and_mint_pass_over_coins_a_waiting_gather_spent(tmp_path):
     """SadFrog, 2026-11-05: "can multiple presses select new utxos different from the previous presses? so we can
     gather all in one go?" Coins spent by a transaction still waiting for its block (gettxout with the mempool) are

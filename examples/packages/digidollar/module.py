@@ -476,6 +476,10 @@ def command_ddsend(ctx, address, amount, chain="test"):
     cents = _cents(amount)
     _ready(ctx, net)
     pay_address, owner = _owner(ctx, net)
+    # Said plainly (2026-11-08, security review): the Wallet's review refused a send to oneself as "not the send you
+    # typed". The arcade's own send (app.py _dd_send) says the same.
+    if str(address).strip() == dd_address(net, owner):
+        raise ValueError("that is your own DigiDollar address: send to somebody else's")
     held = _holdings(ctx, net, owner)
     coins, script = _coins(ctx, net, pay_address)
     if not coins:
