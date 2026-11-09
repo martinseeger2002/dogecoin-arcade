@@ -1018,10 +1018,14 @@ document.addEventListener("click", async (event) => {
 })().catch(() => {});
 </script>
 {% endif %}
+{% if account_here %}{# Every page of a signed-in browser counts what is done and locks the wallet after the minutes
+   chosen on /me with nothing done (wallet.js idleLockMinutes, 2026-11-09, security review); loading it is enough. #}
+<script type="module">import("/wallet.js").catch(() => {});</script>
+{% endif %}
 {% if account_here and account_name and not embed and not fullscreen and path not in ('/me', '/join', '/restore') %}
 {# Signed in, wallet locked in this browser: one bar, every page. #}
 <div id="unlockbar" class="unlockbar" hidden>
-  <span>Your wallet is locked.</span>
+  <span id="unlockbar-said">Your wallet is locked.</span>
   <button type="button" class="small" id="unlockbar-go">Unlock</button>
 </div>
 <script nonce="{{ csp_nonce }}">

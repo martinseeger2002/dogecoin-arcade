@@ -57,6 +57,16 @@ def test_an_account_gets_its_own_page(client):
     assert 'id="scan"' not in body
 
 
+def test_an_accounts_page_offers_the_wallet_lock_choices(client):
+    """2026-11-09, security review: the wallet locks itself after a while with nothing done (wallet.js
+    idleLockMinutes, tests/test_idle_lock_browser.py); the choice is on /me, per browser."""
+    app, _ = client
+    _seat(app)
+    body = app.get("/me").text
+    assert 'id="idlelock-pref"' in body
+    assert re.findall(r'data-idle-set="(\d+)"', body) == ["0", "5", "15", "30", "60"]
+
+
 def test_it_asks_for_the_password_before_anything(client):
     """The key is opened for one tab and forgotten when it closes."""
     app, _ = client

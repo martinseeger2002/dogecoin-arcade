@@ -390,6 +390,9 @@ function kept(key, empty) {
 function keep(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
 
 let said = {chains: []}, net = null, keys = null, tab = "activity";
+// Locked after nothing was done (wallet.js, 2026-11-09, security review): the wallet this page kept goes too, so a
+// page left open with typed text in it cannot send without the password.
+window.addEventListener("arcade-wallet-locked", () => { keys = null; const shut = $("shut"); if (shut) shut.hidden = false; });
 /* The token the balance card is showing, or null for the chain's own coins
  * (2026-10-08: "When you click on the tokens tab and you click on a token your
  * send receive and balance at the top of your wallet should be in that token").
