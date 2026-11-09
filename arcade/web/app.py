@@ -27525,11 +27525,17 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         if not address or not name:
             return JSONResponse({"detail": "which collection?"}, status_code=400)
+        # Only a collection this account has open listings of, and only when one of them joins the list (2026-11-09,
+        # security review): any name at all was written, an empty list under a new setting per name, so one account
+        # could grow this node's settings without end. The name is held to 120 characters above, as announce holds it.
+        mine = {r["listing"] for r in _mintpad_rows(chain, address, name)}
+        if not mine:
+            return JSONResponse({"detail": "this account has no listings of that collection"}, status_code=404)
         key = f"announced:{chain.network}:{address}:{name}"
         done = list(state.setting(key, []) or [])
-        mine = {r["listing"] for r in _mintpad_rows(chain, address, name)}
-        done += [i for i in ids if i in mine and i not in done]
-        state.set_setting(key, done[-5000:])
+        new = [i for i in dict.fromkeys(ids) if i in mine and i not in done]
+        if new:
+            state.set_setting(key, (done + new)[-5000:])
         return JSONResponse({"ok": True, "left": len(_unannounced(chain, address, name))})
 
     def _pads_ranked(request: Request, index, chain, sort: str,
