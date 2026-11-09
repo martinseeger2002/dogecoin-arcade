@@ -65,6 +65,8 @@ PUBLIC_PAGES = frozenset({
     "/affiliates.json",       # the same, as data: the arcades a game may move a player to (2026-10-23)
     "/globe",                 # the nodes globe (docs/nodes-globe.html)
     "/globe.json",            # the city-level list that globe polls
+    "/preview-frame",         # the sandboxed frame a draft is previewed in (/create/name, ...); empty until its page
+                              # sends one (app.py preview_frame, 2026-11-09, security review)
     "/collections",
     "/tokens",
     "/nfts",

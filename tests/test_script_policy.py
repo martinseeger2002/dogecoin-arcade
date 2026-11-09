@@ -5,7 +5,8 @@ to /csp-report, and the count of inline on...= handlers (phase 2 moves them) may
 
 Phase 2 (2026-11-09): the same policy can be enforced (Admin -> Safety -> "Enforce the script policy", or
 ARCADE_ENFORCE_SCRIPT_POLICY=1 / --enforce-script-policy for a whole process): ONE Content-Security-Policy header with
-the page policy and the script policy together, still reported. The pages built in Python carry the nonce too."""
+the page policy and the script policy together, still reported. The pages built in Python carry the nonce too, and a
+draft is previewed in /preview-frame (its own sandbox policy) rather than a srcdoc frame that would take the page's."""
 import json
 import pathlib
 import re
@@ -113,6 +114,7 @@ def test_a_page_with_its_own_policy_gets_no_script_policy_beside_it(client):
     app, _ = client
     assert not _policy(app.get("/recover", headers=LOCAL))
     assert not _policy(app.get("/coins.js", headers=LOCAL))
+    assert not _policy(app.get("/preview-frame", headers=LOCAL))
 
 
 def _report(page="https://wallet.example/me?v=secret-ticket", blocked="inline", rule="script-src-elem"):
@@ -223,6 +225,8 @@ def test_pages_with_their_own_policy_keep_it_when_enforced(client, monkeypatch):
     recover = app.get("/recover", headers=LOCAL)
     policies = [v for k, v in recover.headers.items() if k.lower() == "content-security-policy"]
     assert len(policies) == 1 and "frame-ancestors 'none'" in policies[0] and "'nonce-" not in policies[0], policies
+    frame = app.get("/preview-frame", headers=LOCAL).headers["content-security-policy"]
+    assert frame.startswith("sandbox allow-scripts") and "'unsafe-inline'" in frame and "frame-ancestors 'self'" in frame
     assert "content-security-policy" not in app.get("/coins.js", headers=LOCAL).headers
 
 
@@ -251,6 +255,20 @@ def test_nonced_writes_the_nonce_into_inline_scripts_only():
                                 '<script nonce="kept">d()</script><scripted>')
     finally:
         webapp._NONCE.reset(drawn)
+
+
+def test_the_preview_frame_is_public_sandboxed_and_takes_drafts_only_from_its_framer(client):
+    app, _ = client
+    assert door.public_path("/preview-frame"), "the name and website wizards are public pages"
+    got = app.get("/preview-frame", headers={"host": "node.example.com", "cf-ray": "abc"})
+    assert got.status_code == 200 and "sandbox allow-scripts" in got.headers["content-security-policy"]
+    assert "e.source!==parent" in got.text and "e.origin!==home" in got.text and "srcdoc" in got.text
+
+
+def test_no_template_previews_a_draft_in_a_srcdoc_frame():
+    """A srcdoc frame takes its page's script policy: a draft's scripts would not run once it is enforced."""
+    found = [str(p.relative_to(ROOT)) for p, t in _templates() if re.search(r"\.srcdoc\s*=|\ssrcdoc=", t)]
+    assert not found, f"preview through arcadePreview (base.html) instead: {found}"
 
 
 def _admin(app):

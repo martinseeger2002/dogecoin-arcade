@@ -121,6 +121,17 @@ def _review(browser, base, folder, state):
     raise AssertionError("the review never appeared")
 
 
+def _drawn(browser, frame) -> str:
+    """The page the preview shows: the preview frame (/preview-frame, base.html arcadePreview; 2026-11-09, so the page's
+    script policy is not the draft's) draws each draft it is handed in a frame of its own, as srcdoc."""
+    browser.switch_to.frame(frame)
+    try:
+        inner = browser.find_elements(By.TAG_NAME, "iframe")
+        return (inner[0].get_attribute("srcdoc") or "") if inner else ""
+    finally:
+        browser.switch_to.default_content()
+
+
 def test_the_mintpad_is_folded_away_until_it_is_asked_for(browser, served):
     """Optional means optional: nothing about a shop is on screen until the
     box is ticked, and the box starts clear."""
@@ -145,10 +156,10 @@ def test_ticking_it_draws_the_page_and_shows_its_html(browser, served):
     # And the frame is drawing that page, not an empty document.
     frame = browser.find_element(By.ID, "pad-preview")
     for _ in range(40):
-        if frame.get_attribute("srcdoc"):
+        if _drawn(browser, frame):
             break
         time.sleep(0.25)
-    assert "MINTPAD" in frame.get_attribute("srcdoc").upper()
+    assert "MINTPAD" in _drawn(browser, frame).upper()
 
 
 def test_the_preview_follows_the_edits(browser, served):
@@ -166,15 +177,16 @@ def test_the_preview_follows_the_edits(browser, served):
 
     frame = browser.find_element(By.ID, "pad-preview")
     for _ in range(40):
-        if "A SHOP OF MY OWN" in (frame.get_attribute("srcdoc") or ""):
+        if "A SHOP OF MY OWN" in _drawn(browser, frame):
             break
         time.sleep(0.25)
-    assert "A SHOP OF MY OWN" in frame.get_attribute("srcdoc")
+    assert "A SHOP OF MY OWN" in _drawn(browser, frame)
 
     # Painted, not merely set: the frame is same-origin-less but the DOM
     # inside it can still be reached through the frame context.
     browser.switch_to.frame(frame)
     try:
+        browser.switch_to.frame(browser.find_element(By.TAG_NAME, "iframe"))
         for _ in range(40):
             found = browser.find_elements(By.ID, "mine")
             if found:

@@ -1,7 +1,7 @@
 """The enforced script policy in a real browser (phase 2, 2026-11-09, security review): with Admin -> Safety -> "Enforce
 the script policy" on, a page's own scripts run and a script slipped into it does not -- an injected <script>, an
 on...= attribute, a javascript: address -- while one carrying the page's nonce still would. The pages built in Python
-(the globe, the mesh Browser) run."""
+(the globe, the mesh Browser) run, and a draft previewed through /preview-frame runs its own scripts."""
 
 import pathlib
 import socket
@@ -124,6 +124,48 @@ def test_the_pages_built_in_python_run_under_it(browser, served):
     WebDriverWait(browser, 15).until(lambda d: d.execute_script("return typeof window.THREE") == "object")
     browser.get(base + "/browser")
     WebDriverWait(browser, 15).until(lambda d: d.execute_script("return Array.isArray(window.back)"))
+
+
+def test_a_draft_previewed_through_the_preview_frame_runs_its_scripts(browser, served):
+    """A srcdoc frame would take the page's policy and stop the draft's own script; /preview-frame has its own."""
+    base, _ = served
+    browser.get(base + "/join")
+    WebDriverWait(browser, 15).until(lambda d: d.execute_script("return typeof window.arcadePreview") == "function")
+    browser.execute_script("""
+        var f = document.createElement('iframe'); f.id = 'drafted'; f.setAttribute('sandbox', 'allow-scripts');
+        document.body.appendChild(f);
+        arcadePreview(f, '<p id="said">not run</p><button id="b" onclick="this.textContent=1">b</button>'
+          + '<script>document.getElementById("said").textContent = "ran"<\\/script>');""")
+    outer = browser.find_element(By.ID, "drafted")
+    browser.switch_to.frame(outer)
+    try:
+        inner = WebDriverWait(browser, 15).until(lambda d: d.find_elements(By.TAG_NAME, "iframe") or None)[0]
+        browser.switch_to.frame(inner)
+        WebDriverWait(browser, 15).until(lambda d: d.find_element(By.ID, "said").text == "ran")
+        browser.execute_script("document.getElementById('b').click()")
+        assert browser.find_element(By.ID, "b").text == "1", "the draft's own handlers run too"
+    finally:
+        browser.switch_to.default_content()
+    # Drawn again in place, without loading the frame again.
+    browser.execute_script("arcadePreview(document.getElementById('drafted'),"
+                           " '<p id=\"said\">x</p><script>document.getElementById(\"said\").textContent = \"again\"<\\/script>')")
+    browser.switch_to.frame(outer)
+    try:
+        browser.switch_to.frame(WebDriverWait(browser, 15).until(
+            lambda d: d.find_elements(By.TAG_NAME, "iframe") or None)[0])
+        WebDriverWait(browser, 15).until(lambda d: d.find_elements(By.ID, "said")
+                                         and d.find_element(By.ID, "said").text == "again")
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_the_preview_frame_takes_no_draft_from_a_page_that_did_not_frame_it(browser, served):
+    """Opened on its own (or by another window), it draws nothing it is sent."""
+    base, _ = served
+    browser.get(base + "/preview-frame")
+    browser.execute_script("window.postMessage({arcadePreview: '<p id=said>x</p>'}, '*')")
+    time.sleep(0.5)
+    assert not browser.find_elements(By.TAG_NAME, "iframe")
 
 
 def test_the_switch_in_admin_turns_it_off_and_on(browser, served):

@@ -261,10 +261,11 @@
       for (var i = 0; i < PAD_SWAPS.length; i++) {
         html = html.split(PAD_SWAPS[i][0]).join(PAD_SWAPS[i][1]);
       }
-      // srcdoc rather than a URL: there is nothing on the chain and nothing
-      // on the server to point at, and a round trip per keystroke would
-      // make "live" mean "a second late".
-      frame.srcdoc = html + PAD_NOTE;
+      // Handed to the preview frame rather than a URL: there is nothing on
+      // the chain and nothing on the server to point at, and a round trip
+      // per keystroke would make "live" mean "a second late". Not srcdoc,
+      // which would take this page's script policy (base.html arcadePreview).
+      arcadePreview(frame, html + PAD_NOTE);
 
       var bytes = new TextEncoder().encode(box.value).length;
       document.getElementById('pad-size').textContent =
