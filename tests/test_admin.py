@@ -84,6 +84,34 @@ def test_limits_faucet_and_switches_are_saved(public):
     assert state.setting("moderation") is None
 
 
+def test_the_screening_switch_turns_it_off_and_keeps_the_address(public):
+    """2026-11-09: the operator stopped the screening model and every new picture waited "Checking", with no way
+    out in Admin -> Safety but emptying the address. The switch turns screening off and keeps the address and
+    token for when it goes back on; the panel says when a model that is on has stopped answering."""
+    app, state = public
+    state.set_setting("moderation", {"url": "http://127.0.0.1:9/v1", "model": "q", "key": "sekrit", "timeout": 2})
+    assert state.screen().check_text("are you there", now=True) is None
+    shown = app.get("/admin/api/state", headers=LOCAL).json()["moderation"]
+    assert shown.get("away") is True, "a model that does not answer is said in the panel"
+    off = app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={
+        "moderation": {"url": "http://127.0.0.1:9/v1", "model": "q", "on": False}})
+    assert off.status_code == 200
+    assert state.setting("moderation") == {"url": "http://127.0.0.1:9/v1", "model": "q", "key": "sekrit",
+                                           "timeout": 2, "off": True}
+    assert not state.screen().enabled
+    shown = app.get("/admin/api/state", headers=LOCAL).json()["moderation"]
+    assert shown["off"] is True and shown["url"] == "http://127.0.0.1:9/v1"
+    assert "key" not in shown and "away" not in shown
+    app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={
+        "moderation": {"url": "http://127.0.0.1:9/v1", "model": "q", "on": True}})
+    assert "off" not in state.setting("moderation") and state.screen().enabled
+    # a page from before the switch sends no "on": what is saved stays as it was
+    state.set_setting("moderation", {**state.setting("moderation"), "off": True})
+    app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={
+        "moderation": {"url": "http://127.0.0.1:9/v1", "model": "q"}})
+    assert state.setting("moderation")["off"] is True
+
+
 def test_a_screening_token_is_kept_hidden_and_saving_keeps_what_the_form_does_not_show(public):
     """2026-09-30: "a place where a person can enter a vLLM address and access
     token". The token is saved, never sent back, and survives a save that does

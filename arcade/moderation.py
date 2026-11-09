@@ -114,7 +114,10 @@ class Screen:
 
     def __init__(self, home: Path, config: Any = None):
         self.config = config if isinstance(config, dict) else None
-        self.enabled = bool(self.config and self.config.get("url") and self.config.get("model"))
+        # `off` (Admin -> Safety's switch, 2026-11-09) keeps the model's address for later while nothing is
+        # screened: a model that is gone left every new piece "Checking" with no way out but emptying the address.
+        self.enabled = bool(self.config and self.config.get("url") and self.config.get("model")
+                            and not self.config.get("off"))
         self.home = Path(home)
         self.conn = sqlite3.connect(self.home / "moderation.sqlite", check_same_thread=False)
         self.conn.row_factory = sqlite3.Row

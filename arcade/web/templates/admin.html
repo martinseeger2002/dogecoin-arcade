@@ -502,7 +502,9 @@
   <h2>Content screening</h2>
   <p class="muted" style="margin-top:0">A model (vLLM, or any OpenAI-compatible server that
     reads images) looks at pictures and posts before this arcade shows them.
-    <strong>Leave the address empty and nothing is screened</strong>: everything shows.</p>
+    <strong>Switch it off and nothing is screened</strong>: everything shows, and the model&rsquo;s address is kept
+    for when you switch it back on.</p>
+  <label class="switch"><input type="checkbox" id="modon"> Screen pictures and posts before they show</label>
   <div class="row" style="gap:8px;flex-wrap:wrap">
     <input autocomplete="off" id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
     <input autocomplete="off" id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
@@ -2489,8 +2491,13 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
       ? 'access token saved (type to replace)' : 'access token (optional)';
     $('modclearrow').hidden = !(d.moderation && d.moderation.has_key);
     $('modclear').checked = false;
-    $('modsaid').textContent = (d.moderation && d.moderation.url)
-      ? 'Screening is on.' : 'Screening is off: nothing is screened.';
+    var mo = d.moderation || {};
+    $('modon').checked = !!(mo.url && !mo.off);
+    $('modsaid').textContent = !mo.url ? 'Screening is off: nothing is screened.'
+      : mo.off ? 'Screening is off: nothing is screened. The model\u2019s address is kept.'
+      : mo.away ? 'Screening is on, but the model has not answered lately: new pictures and posts show '
+        + '\u201cChecking\u201d until it does. Switch screening off and save to show them now.'
+      : 'Screening is on.';
     // content flags (arcade/flags.py): this arcade's switch, then everyone who broadcasts
     var f = d.flags || {}, fs = f.status || {};
     $('flags_broadcast').checked = !!f.broadcast;
@@ -4159,7 +4166,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
       xchain_enabled: $('xchain_enabled').checked,
       flags_broadcast: $('flags_broadcast').checked,
       moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim(),
-                   key: $('modkey').value.trim(), clear_key: $('modclear').checked}})
+                   key: $('modkey').value.trim(), clear_key: $('modclear').checked, on: $('modon').checked}})
       .then(function () { say('Switches saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
 
