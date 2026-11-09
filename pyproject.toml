@@ -86,7 +86,7 @@ packages = ["arcade", "arcade.ddlib", "arcade.messaging", "arcade.mesh", "arcade
 #
 # `arcade/bip39-english.txt` is read at import time by arcade/seed.py, so
 # leaving it out does not degrade anything: the application does not start.
-"arcade" = ["bip39-english.txt"]
+"arcade" = ["bip39-english.txt", "nodes-globe.html"]   # /globe (arcade/globe.py): docs/nodes-globe.html, the same bytes
 "arcade.lora" = ["SOURCE.md"]
 "arcade.lite" = ["templates/*.html", "templates/*.css", "templates/*.js"]   # modforms.js (2026-11-08)
 "arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.css", "templates/*.md",

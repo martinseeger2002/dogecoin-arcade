@@ -66,11 +66,14 @@ PLACES = (
 
 
 def page_path():
-    """The standalone page. GitHub Pages serves `docs/` at the site root, and a
-    checkout of this repo keeps the same file for `/globe`."""
+    """The standalone page. GitHub Pages serves `docs/` at the site root; the
+    package ships the same file beside this module (pyproject package-data), so an
+    installed arcade has it too (2026-11-09: /globe was a 404 on every install,
+    which has no docs/). tests/test_globe.py keeps the two copies the same."""
     from pathlib import Path
     here = Path(__file__).resolve()
-    for path in (here.parents[1] / "docs" / "nodes-globe.html",
+    for path in (here.parent / "nodes-globe.html",
+                 here.parents[1] / "docs" / "nodes-globe.html",
                  here.parents[2] / "docs" / "nodes-globe.html"):
         if path.is_file():
             return path

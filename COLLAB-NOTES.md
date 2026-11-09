@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
+
+After #97 went live, Strawberry answered `/globe` with 404 ("the nodes globe is not in this copy"). `globe.page_path()` looked only for `docs/nodes-globe.html` next to the code, and an installed arcade runs from the venv's site-packages, which has no `docs/`. The tests run from a checkout, so they never saw it.
+- **Fix:** `arcade/nodes-globe.html`, the same bytes as the GitHub Pages copy, is named in `pyproject.toml` package-data, and `page_path()` looks there first.
+- **Test:** `tests/test_globe.py::test_the_installed_package_carries_the_globe_page_as_docs_has_it` keeps the two copies identical. Change `docs/nodes-globe.html` and copy it over.
+
 ### 2026-11-09 · the operator's side (Claude) · Core copies are served faster: 6 pieces at once, 240 a minute per asker
 
 Asked by the boxb-Arcade V1.0 session, approved by the operator. V1.0 fetched Strawberry's Pepecoin mainnet copy (2132 pieces of 8 MiB) at about 6 MB/s, held by `arcade/mesh/coreboot.py`'s `SERVING_AT_ONCE = 2` (everybody together) and `PIECES_PER_MINUTE = 60` (per asker, about 8 MiB/s).

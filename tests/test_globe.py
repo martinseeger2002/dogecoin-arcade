@@ -183,3 +183,14 @@ def test_the_operator_saves_a_list_and_a_linked_arcade_shows_up_without_its_addr
     again = app.post("/admin/api/globe", headers=WRITE, json={"source": "mesh", "picked": []})
     assert "pepmonster" in {row["tag"] for row in again.json()["members"]}
     assert "banana" in {row["tag"] for row in again.json()["members"]}
+
+
+def test_the_installed_package_carries_the_globe_page_as_docs_has_it():
+    """/globe 404'd on every installed arcade (2026-11-09): the wheel has no docs/. The page ships in the package too,
+    byte for byte the one GitHub Pages serves, and package-data names it."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    assert (root / "arcade" / "nodes-globe.html").read_bytes() == (root / "docs" / "nodes-globe.html").read_bytes()
+    assert '"nodes-globe.html"' in (root / "pyproject.toml").read_text()
+    from arcade import globe
+    assert globe.page_path() == root / "arcade" / "nodes-globe.html"
