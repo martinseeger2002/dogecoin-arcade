@@ -73,6 +73,7 @@
     </form>
     <div id="w-qr"></div>
     <p class="muted" id="w-only"></p>
+    <p class="warn" id="w-same" hidden></p>
     <p class="muted" data-kindsaid hidden></p>
   </fieldset>
 </section>
@@ -434,6 +435,10 @@ async function draw() {
   if (address || !c.dd) $("w-only").textContent = !address ? problem : (w ? `${w.name}, imported. ` : "") + (c.dd
     ? `Send only ${unit(c)} here, from a DigiDollar wallet. ${c.mainnet ? "Real dollars." : "Test dollars have no value."}`
     : c.mainnet ? `Send only ${unit(c)} here: real coins.` : `Send only ${unit(c)} here. Test coins have no value.`);
+  // A legacy Dogecoin or DigiByte address is the same string on the other chain (2026-11-09, security review). The
+  // node's own wallet module has no such call and says nothing.
+  const same = c.dd || !wallet.sameAddressNote ? "" : wallet.sameAddressNote(c.network, address);
+  $("w-same").textContent = same; $("w-same").hidden = !same;
   $("w-qr").textContent = "";
   if (address && typeof qrcode === "function") {
     const qr = qrcode(0, "M"); qr.addData(address); qr.make();

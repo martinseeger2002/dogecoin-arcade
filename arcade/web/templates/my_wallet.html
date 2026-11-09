@@ -1139,8 +1139,11 @@ function drawHead() {
   const shownAddr = w ? "" : asset && asset.dd ? asset.address : k ? here.address : c.address;
   $("addrchip").hidden = !shownAddr;
   $("addrchip").textContent = short(shownAddr || "");
+  // The chip copies too, so it says what Receive says of a Dogecoin/DigiByte legacy address (2026-11-09, security review).
+  const sameChip = asset && asset.dd || !wallet.sameAddressNote ? "" : wallet.sameAddressNote(c.network, shownAddr);
   $("addrchip").onclick = async () => toast(await copyText(shownAddr)
-    ? "Address copied" : "Copy blocked here: press Receive and copy it from there");
+    ? (sameChip ? `Address copied. ${sameChip}` : "Address copied")
+    : "Copy blocked here: press Receive and copy it from there");
   let dismissed = false;
   try { dismissed = sessionStorage.getItem("arcade.wallet.backupx") === "yes"; } catch (e) {}
   $("not-backed-up").hidden = dismissed || !chains().some((one) => one.backed_up === false);
@@ -1470,7 +1473,15 @@ function openReceive() {
     if (!ok) getSelection().selectAllChildren(addr);
     setTimeout(() => { copy.textContent = "Copy address"; }, 2500);
   };
-  body.append(pic, addr, note, copy);
+  body.append(pic, addr, note);
+  // A legacy Dogecoin or DigiByte address is the same string on the other chain (2026-11-09, security review).
+  const same = asset && asset.dd || !wallet.sameAddressNote ? "" : wallet.sameAddressNote(c.network, c.address);
+  if (same) {
+    const twin = el("p", "wl-note bad", same);
+    twin.id = "receive-same"; twin.style.textAlign = "center";
+    body.append(twin);
+  }
+  body.append(copy);
   const warn = $("receive-note").content.cloneNode(true);
   const holder = el("div"); holder.style.marginTop = "14px"; holder.append(warn);
   body.append(holder);
