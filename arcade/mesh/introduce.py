@@ -186,8 +186,19 @@ class Introducer:
                 and time.monotonic() - self.lonely_since >= LONELY_AFTER):
             await self._ask_chain()
 
+    def _asking(self, peer: str) -> dict | None:
+        """Our open "hi" to `peer`, or None. A hi never answered (lost, peer down, dropped on the way) expires: FRESH
+        is as long as the other side believes it, and a chain ask gets CHAIN_WAIT more for its answer to be mined.
+        Left standing, it kept the peer from being asked again and, the lower id's ask winning, dropped the peer's
+        own hi too, so the two never met (2026-11-08)."""
+        mine = self.opening.get(peer)
+        if mine is not None and time.monotonic() - mine["at"] > FRESH + (CHAIN_WAIT if mine["chain"] else 0):
+            del self.opening[peer]
+            return None
+        return mine
+
     def _due(self, peer: str) -> bool:
-        return (peer != self.node.node_id and peer not in self.node.links and peer not in self.opening
+        return (peer != self.node.node_id and peer not in self.node.links and self._asking(peer) is None
                 and peer not in self.paths and time.monotonic() >= self.cooling.get(peer, (0, 0))[0])
 
     def _worth_meeting(self) -> list[str]:
@@ -252,7 +263,7 @@ class Introducer:
         if peer in self.node.links or peer in self.paths:
             return
         if op == "hi":
-            mine = self.opening.get(peer)
+            mine = self._asking(peer)
             if mine is not None and self.node.node_id < peer:
                 return                                  # both asked: the lower id's question stands
             self.opening.pop(peer, None)
@@ -265,7 +276,7 @@ class Introducer:
             if sent:
                 self._punch(peer, eph, header, outbound=False)
         elif op == "yes":
-            mine = self.opening.get(peer)
+            mine = self._asking(peer)
             if mine is not None and mine["n"] == header.get("n"):
                 del self.opening[peer]
                 self._punch(peer, mine["eph"], header, outbound=True)

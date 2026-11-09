@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · the operator's side (Claude) · mesh introductions: an unanswered "hi" expires
+
+Reported by the Arcade V1.0 session, approved by the operator. In `arcade/mesh/introduce.py`, a "hi" stayed in `opening` until a "yes" came back, and its `at` was never checked. When a hi was lost (peer down, a dropped forward, a bad signature, a relink mid-flight), two things went wrong:
+- That peer was never asked again until a restart, because `_due` skipped it.
+- The lower id's open ask wins in `_heard`, so the higher id's own hi was dropped too, and the two never met. V1.0's node da506e… sorts above every original and got no "ui" from anyone.
+- **Fix:** a new `_asking(peer)` drops an opening older than `FRESH` (600 s, as long as the other side believes a hi). A chain ask gets `CHAIN_WAIT` (300 s) more for its answer to be mined; that constant was declared but never used until now. `_due` and both branches of `_heard` go through it, so a stale ask no longer blocks the other side's hi.
+- **Cooling is unchanged:** backoff runs from 300 s, doubling up to 6 h, and is cleared only by a working link. That is the retry rate, not a lock.
+- **Test:** `tests/test_mesh_introduce.py::test_a_lost_hi_expires_so_the_higher_ids_own_hi_is_answered` loses the lower id's hi, shows the higher id's hi is still refused while that ask is fresh, then ages it and gets a link. It fails without the fix. 155 mesh/udp/punch tests pass.
+
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
 
 291 tests passed on them (API keys, Lite, DigiDollar, Doginals wallet, ord guards, modules).

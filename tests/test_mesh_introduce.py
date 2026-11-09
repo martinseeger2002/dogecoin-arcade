@@ -195,3 +195,41 @@ def test_only_the_target_opens_a_sealed_introduction():
     sealed = introduce.seal_to(bytes(a.verify_key).hex(), {"hello": 1})
     assert introduce.open_sealed(a, sealed) == {"hello": 1}
     assert introduce.open_sealed(b, sealed) is None
+
+
+def test_a_lost_hi_expires_so_the_higher_ids_own_hi_is_answered():
+    """The lower id's hi is lost on the way. While it stands it wins over the higher id's hi; once it is older than
+    FRESH it no longer blocks, so the higher id's next hi gets a yes and the two meet (seen 2026-11-08)."""
+    async def run():
+        t, servers = await _stun()
+        c, a, b = _node(servers, listen=True), _node(servers), _node(servers)
+        lo, hi = (a, b) if a.node_id < b.node_id else (b, a)
+        for n in (c, a, b):
+            await n.start()
+        for n in (a, b):
+            n.add_address("127.0.0.1", c.listen_port)
+        assert await _until(lambda: b.node_id in a._via and a.node_id in b._via)
+        real = lo.intro._forward
+
+        async def lost(header):
+            return True                                    # "sent", never arrives
+        lo.intro._forward = lost
+        await lo.intro.meet(hi.node_id)
+        lo.intro._forward = real
+        assert hi.node_id in lo.intro.opening and not lo.intro._due(hi.node_id)
+
+        await hi.intro.meet(lo.node_id)                    # the lower id's (lost) ask still stands
+        await asyncio.sleep(1.0)
+        assert lo.node_id not in hi.links and hi.node_id in lo.intro.opening
+
+        old = introduce.FRESH + 1
+        lo.intro.opening[hi.node_id]["at"] -= old          # the lost hi is now stale
+        hi.intro.opening[lo.node_id]["at"] -= old          # and so is hi's unanswered one
+        hi.intro.cooling.pop(lo.node_id, None)
+        assert lo.intro._asking(hi.node_id) is None and hi.node_id not in lo.intro.opening, "a stale ask is dropped"
+        await hi.intro.meet(lo.node_id)
+        assert await _until(lambda: lo.node_id in hi.links and hi.node_id in lo.links), hi.intro.status()
+        for n in (a, b, c):
+            await n.stop()
+        t.close()
+    asyncio.run(run())
