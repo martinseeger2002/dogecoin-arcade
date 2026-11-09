@@ -151,6 +151,25 @@ that published LTC/DGB/BEL/LKY addresses but no Pepecoin main one (our ArcadeCor
 - **Tests:** `tests/test_name_chain_addresses.py` (7). With Profile Pay, Bells/Luckycoin, Litecoin, L test, Dogecoin,
   chain wallets and feed: 135 passed; `test_web`, Dogecoin network, feed, Profile Pay in Firefox and Lite: 405 more.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/announce-proof` (on `main` 8287e37b) · a profile is kept only when the address it names signed it
+
+A key announcement names the address it belongs to (its hash160), and the scanner stored it under that address with
+nothing tying the two together. The newest profile for an address is where its @name is paid off the name chain
+(`other_address`, `doge_address`, `chain_addresses` in `_where_to_pay`) and the key its messages and offers are sealed
+to (`key_for` → `pubkey`), so it has to come from that address.
+- **`messaging/scanner.py`:** a profile that names an address is kept only when that address signed it: one of its
+  coins is an input (`ArcadeTransaction.signed_by`, which the swaps already use). Otherwise it is skipped and listed in
+  the scan's errors. The same check is applied where a node looks up its own profiles. A profile that names no
+  address is attributed to whoever paid for it, as before.
+- **Nothing to migrate:** all 332 profiles on our node were paid for from the address they name. Checked against the
+  chain, every one passes.
+- **Tests:** `tests/test_announce_signed.py` (4, regtest). A profile signed by another address is ignored, in a block
+  and in the pool. The address itself can still change its profile, and a profile naming no address is its payer's.
+  Every test file that publishes or reads a profile (messaging, accounts, sign-in, feed, swaps, Lite, `test_web`,
+  browser tests): 1328 passed here, 1325 on `main`. The one difference is `test_claim_browser`, whose second test
+  needs its first; it fails only when 12 workers split the two, and passes when run in order.
+- **For the operator:** please merge into `main`. Nothing to set on a node. A node that stored a profile like that
+  before keeps it until its next rescan; we found none.
 
 ### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
 
