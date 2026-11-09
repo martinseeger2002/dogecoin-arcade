@@ -6728,8 +6728,10 @@ def create_app(state: AppState) -> FastAPI:
         """The mintpad page as it will be inscribed, pointed at the build."""
         build = _preview_build(folder)
         collection = (name or build.collection).strip() or "Collection"
+        # Served sandboxed, as the inscribed page will be (2026-11-09, security review): the collection's name and the
+        # creator are written into the page as they are, and "Open full size" shows it in a tab of its own.
         return HTMLResponse(_as_preview(_pad_page(creator, collection), folder),
-                            headers={"Cache-Control": "no-store"})
+                            headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"})
 
     @app.get("/inscriptions/collection/preview/set")
     def preview_set(folder: str = "", limit: int = 100, offset: int = 0):
@@ -10363,7 +10365,9 @@ def create_app(state: AppState) -> FastAPI:
                  "var l=document.getElementById('left');"
                  "if(l){l.textContent='This is the page that will be inscribed.';}});"
                  "</script>")
-        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+        # Sandboxed like the page once inscribed (2026-11-09, security review): its words come from the query string,
+        # a token's on-chain icon among them, and the preview also opens in a tab of its own.
+        return HTMLResponse(page, headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"})
 
     @app.post("/tokens/{property_id}/launchpad", response_class=HTMLResponse)
     def make_launchpad(request: Request, property_id: int, lot: str = Form(""),
