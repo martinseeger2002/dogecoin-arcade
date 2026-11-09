@@ -35,7 +35,7 @@
               title="A private group: only the people in it can read it">New group</button>
     </div>
 
-    <form class="newconv" id="newgroup" hidden onsubmit="return false">
+    <form class="newconv" id="newgroup" hidden data-no-submit>
       <label>What the group is called</label>
       <input autocomplete="off" id="group-name" maxlength="60" placeholder="Weekend crew">
       <label style="margin-top:8px">Who is in it</label>
@@ -53,7 +53,7 @@
          style="font-size:.8rem;margin:9px 0 0"></p>
     </form>
 
-    <form class="newconv" id="newconv" hidden onsubmit="return false">
+    <form class="newconv" id="newconv" hidden data-no-submit>
       <label>Their @tag, or their address</label>
       <input type="search" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" data-not-me id="who-new" class="mono" spellcheck="false"
              placeholder="@tag or their address">
@@ -114,7 +114,7 @@
 
       <div class="bubbles" id="bubbles"></div>
 
-      <form class="composer" id="composer" onsubmit="return false">
+      <form class="composer" id="composer" data-no-submit>
         <textarea autocomplete="off" id="body" rows="1"
                   placeholder="Write a message…"></textarea>
         <button type="button" id="send">Send</button>
@@ -171,6 +171,10 @@ import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
 
 const $ = (id) => document.getElementById(id);
 const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
+// These forms are never sent as forms: their buttons act. Enter in a lone field would submit (reload) the page, so a
+// listener stops it, as the inline handler did before the script policy (2026-11-09).
+document.querySelectorAll("form[data-no-submit]").forEach((form) =>
+  form.addEventListener("submit", (event) => event.preventDefault()));
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
