@@ -65,7 +65,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="/launches{{ '?sort=new' if sort == 'new' else '' }}">
       <button class="small {{ 'on' if it.disliked else 'ghost' }}" type="submit">&#128078; {{ it.dislikes }}</button></form>
-    <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
+    <button class="small ghost" type="button" data-toggle="c-{{ it.txid }}">&#128172; {{ it.comments }}</button>
   </div>
   {% endif %}
   {% if it.comment_rows %}
@@ -94,6 +94,17 @@
   {% endif %}
 </div>
 {% endfor %}
+
+<script nonce="{{ csp_nonce }}">
+// A button shows or hides the form or panel its data-toggle names (the script policy, 2026-11-09: a listener, not
+// an inline onclick). On the document, so what the in-place refresh puts back still answers.
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("button[data-toggle]");
+  if (!b) return;
+  var f = document.getElementById(b.dataset.toggle);
+  if (f) f.hidden = !f.hidden;
+});
+</script>
 
 <style>
 .lface{width:48px;height:48px;border-radius:50%;object-fit:cover;flex:none}
