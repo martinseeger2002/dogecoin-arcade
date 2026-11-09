@@ -354,7 +354,7 @@ function quotePicked(file, choice) {
   const one = cost.chunks === 1;
   note.hidden = false;
   note.className = "muted picked" + (cost.chunks > 40 ? " costly" : "");
-  text.innerHTML = `<strong>${file.name}</strong> &mdash; ${arcadeSize(file.size)}`
+  text.innerHTML = `<strong></strong> &mdash; ${arcadeSize(file.size)}`
     + `, ${commas(cost.chunks)} piece${one ? "" : "s"}, about <strong>`
     + arcadeCoins(cost.coins) + "</strong> in dust and fees"
     + (choice && choice.key !== "large"
@@ -364,6 +364,8 @@ function quotePicked(file, choice) {
           + "The first one splits the coins; one block for it, then the rest "
           + "go together &mdash; none of them waits for another. A smaller "
           + "setting costs fewer.");
+  // The name as text (2026-11-09, security review): a file can be called anything, markup included.
+  text.querySelector("strong").textContent = file.name;
 }
 
 // Pressed once means working until it is done: the button says so and cannot be
@@ -1196,11 +1198,12 @@ async function checkJson(files) {
   jsonState = {pictures, has, missing, entries, hashlips: !!(meta || singles.length)};
   if (!missing.length && !broken.length && !nameless) return;
   const n = pictures.length;
-  $("json-says").innerHTML = !entries.length
+  // As text (2026-11-09, security review): it quotes file names and the parser's own words about a file's contents.
+  $("json-says").textContent = !entries.length
     ? `This folder has ${commas(n)} picture${n === 1 ? "" : "s"} and no JSON for them`
       + (broken.length ? ` (${broken.slice(0, 2).join("; ")})` : "")
       + ". Without it nothing says these pieces are one collection, or what they are: each "
-      + "would go up as a picture on its own. The wizard can write it &mdash; your "
+      + "would go up as a picture on its own. The wizard can write it \u2014 your "
       + "collection's name, a description, and traits if you have them."
     : `The JSON is not complete: ${commas(missing.length)} of the ${commas(n)} pictures have `
       + "none" + (nameless ? `, ${commas(nameless)} entries have no name` : "")

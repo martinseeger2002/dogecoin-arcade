@@ -216,10 +216,12 @@ function priceInscription(input){
   var chainKb = (chunks * 300 + outputs * 114) / 1000;
   var fee = chainKb * feePerKb, dustTotal = outputs * dust;
   note.hidden = false;
-  note.innerHTML = '<strong>' + file.name + '</strong> — ' + arcadeSize(file.size) +
+  note.innerHTML = '<strong></strong> — ' + arcadeSize(file.size) +
     ', about <strong>' + chunks.toLocaleString() + '</strong> transaction' +
     (chunks === 1 ? '' : 's') + ', ' + arcadeCoins(fee + dustTotal) +
     ' to send and ' + arcadeCoins(fee) + ' once the dust is swept back.';
+  // The name as text (2026-11-09, security review): a file can be called anything, markup included.
+  note.querySelector('strong').textContent = file.name;
 }
 </script>
 {% endblock %}
