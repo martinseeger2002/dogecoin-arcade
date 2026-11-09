@@ -340,7 +340,7 @@ a { color: inherit; text-decoration: none; }
 
   <main class="df-main">
     <div class="df-header">
-      <button class="df-back" onclick="history.back()">
+      <button class="df-back" data-go-back>
         <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
       </button>
       <div class="df-header-info">
@@ -370,6 +370,9 @@ a { color: inherit; text-decoration: none; }
   var DOGEFEED_BASE = '';   // this arcade's own pages
   
   function $(id) { return document.getElementById(id); }
+
+  document.querySelector('[data-go-back]').addEventListener('click', function() { history.back(); });
+
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
   function getInscriptionId() {
@@ -383,7 +386,11 @@ a { color: inherit; text-decoration: none; }
     var content = $('insc-content');
     
     if (contentType.startsWith('image/')) {
-      content.innerHTML = '<img src="' + IMG_BASE + '/' + esc(id) + '" alt="Inscription" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23fff8e7%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23f5a623%22 font-size=%2240%22>?</text></svg>\'">';
+      content.innerHTML = '<img src="' + IMG_BASE + '/' + esc(id) + '" alt="Inscription">';
+      // A picture that will not load shows a "?" (a listener, not an inline handler: the script policy, 2026-11-09).
+      content.firstChild.addEventListener('error', function() {
+        this.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23fff8e7%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23f5a623%22 font-size=%2240%22>?</text></svg>';
+      });
     } else if (contentType.startsWith('text/html')) {
       content.innerHTML = '<iframe src="' + IMG_BASE + '/' + esc(id) + '" sandbox="allow-scripts"></iframe>';
     } else if (contentType.startsWith('text/') || contentType === 'application/json') {

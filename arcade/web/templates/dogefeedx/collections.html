@@ -400,6 +400,12 @@ a { color: inherit; text-decoration: none; }
   'use strict';
   
   var IMG_BASE = '/content';   // this arcade's own copy of every inscription
+
+  // A picture that will not load hides: one listener, not an inline handler (the script policy, 2026-11-09).
+  document.addEventListener('error', function(e) {
+    var img = e.target;
+    if (img && img.tagName === 'IMG' && img.getAttribute('data-broken') === 'hide') img.style.display = 'none';
+  }, true);
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
@@ -417,7 +423,7 @@ a { color: inherit; text-decoration: none; }
     
     return '<div class="df-collection" data-id="' + esc(c.id) + '">' +
       '<div class="df-collection-img">' +
-      (imgUrl ? '<img src="' + esc(imgUrl) + '" alt="" onerror="this.style.display=\'none\'">' : 
+      (imgUrl ? '<img src="' + esc(imgUrl) + '" alt="" data-broken="hide">' : 
        '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>') +
       '</div>' +
       '<div class="df-collection-info">' +

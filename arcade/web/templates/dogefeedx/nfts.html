@@ -378,6 +378,12 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
   'use strict';
   
   var IMG_BASE = '/content';   // this arcade's own copy of every inscription
+
+  // A picture that will not load hides: one listener, not an inline handler (the script policy, 2026-11-09).
+  document.addEventListener('error', function(e) {
+    var img = e.target;
+    if (img && img.tagName === 'IMG' && img.getAttribute('data-broken') === 'hide') img.style.display = 'none';
+  }, true);
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function readingLine(data) {
@@ -392,7 +398,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
     
     return '<div class="df-nft-card" data-id="' + esc(item.id) + '">' +
       '<div class="df-nft-img">' +
-      (imgUrl ? '<img src="' + esc(imgUrl) + '" alt="" onerror="this.style.display=\'none\'">' :
+      (imgUrl ? '<img src="' + esc(imgUrl) + '" alt="" data-broken="hide">' :
        '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>') +
       '</div>' +
       '<div class="df-nft-info">' +
