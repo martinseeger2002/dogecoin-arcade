@@ -89,6 +89,26 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-09 · the operator's side (Claude) · an ord snapshot is made only with room for it, and a failed one leaves nothing
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/digiassets-guard` (on `main` 50182a46) · the inscription guard reads DigiAssets; Gather's 0.0001 DGB rule narrowed
+
+Security review: DigiAssets ride on DigiByte coins and the guard could not read them, so Gather kept back every coin of
+0.0001 DGB or less (2026-11-08) and ordinary sends had no protection at all.
+- **`arcade/digiassets.py`:** reads a transaction's "DA" OP_RETURN by DigiAsset Core's rules (issuance opcodes 1-15,
+  transfer 0x15, burn 0x25, fixed-precision amounts, skip/range/percent instructions). It marks each output an
+  instruction pays and the last output, where leftovers go. It does not know what the inputs carry, so it marks at
+  least as much as DigiAsset Core, never less. When it cannot read a transaction exactly, it marks every output except
+  the OP_RETURN: an unknown version or opcode, rules (opcodes 3 and 4), data cut short, or a second OP_RETURN.
+- **`arcade/doginals.py` + `web/app.py`:** `Doginals(digiassets=, ords=)`. On `dgb` the guard reads ords and
+  DigiAssets. `dgbtest` now has a guard too, reading DigiAssets only (it has no ord index). Answers are kept in a new
+  table, `tx2da`, so a DGB answer from before is read again once. A broadcast that may carry a "DA" OP_RETURN is never
+  vouched clean. The Wallet says "held in DigiAssets".
+- **`arcade/modhost.py`:** on a chain whose guard reads DigiAssets, a module's `scantxoutset` comes back with
+  `"digiassets": "read"`. **DigiDollar 0.4.5:** Gather keeps a coin of 0.0001 DGB or less back only if the read lacks
+  that flag (an older arcade). Coins carrying an asset are never listed to the module.
+- **Not covered:** rule bodies (fail closed instead). Assets on a coin of a non-DA transaction: DigiAsset Core burns
+  them, so nothing is marked.
+- **Tests:** `tests/test_digiassets.py` (16) + two Gather tests in `test_digidollar.py`. Run with the guard, module
+  host, DigiByte, wallet and DigiDollar tests: 182 passed. **For the operator:** please review; nothing to set on a node.
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/receive-cointype` (on `main` 50182a46) · same-address note on Receive, coin type 3 on Backup
 
 From the security review of the DigiByte work. Every real coin uses coin type 3, and Dogecoin and DigiByte share key-hash byte 30, so an account's legacy `D...` address is the same string on both chains.
