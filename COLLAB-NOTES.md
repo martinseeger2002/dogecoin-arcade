@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · the operator's side (Claude) · group adds write only to the newcomers, and one "added" line tells the rest
+
+Reported by the Arcade V1.0 session, approved by the operator. `addToGroup` re-sent the key to EVERY member, one transaction each, stopping at the first failure. @apple's add of @arcade_v1 to a 19-member Riffs group ran out of coins after 18 re-invites: the newcomer's letter and the self copy never went, and @apple's browser listed @arcade_v1 anyway.
+- **Order of sends** (`arcade/web/templates/messaging_js.js` `addToGroup`): one letter per NEWCOMER first (it still carries the full member list), then our own hidden copy, then ONE line to the group. The key is the same; only removal makes a new one (unchanged).
+- **The line:** `addedLine` writes an ARCB body: `\x01ARCB` | 0x01 | u16 BE length | `{"text": "@adder added @new1, @new2", "v1_added": [{tag, key, address}, ...]}`.
+  - Arcade V1.0 sends the same form, so `v1_added` must stay.
+  - Unpatched readers show `text`: both `parseBody` and `messaging/content.py` ignore unknown fields.
+  - `writeGroup` now also takes bytes, because an ARCB length field is not text.
+- **On receipt:** `parseBody` returns `added`. `heardAdded` merges it into the members, only on the current key of that lineage, skipping keys already in, and never removing anybody.
+- **No silent stops:**
+  - The first newcomer's offer gives the cost of one message (inputs less change). Before anything is signed, that cost × (newcomers + 2) is checked against `/account`'s `spendable`; if short, "… Nothing was sent."
+  - A failed send is noted and the rest still go. The returned group carries a non-stored `failed` list, and `arcade.groups` add returns it too (`_page_doors.js.html`).
+  - Only newcomers whose letter went are listed.
+- **Messages go out through `outbox`** (`ask`, `spendable`), so tests can count and fail sends. `sendSealed` is now `outbox.ask` then `signAndSend`; `write` can take an offer already asked for.
+- **Tests** (`tests/test_messaging_browser.py`):
+  - an add is N new + our copy + one line, with no letter to anyone already in;
+  - a short balance sends nothing and lists nobody;
+  - one failed invite doesn't stop the rest;
+  - the line round-trips through JS `parseBody` and Python `content.parse`, from our encoder and in V1.0's form;
+  - a member merges the newcomers on reading the line, once.
+- **Real chain:** `tests/test_groups_chain_browser.py::test_somebody_added_later…` now expects the newcomer to read the "added" line too, and Bob learns of Carol from it. Its createGroup step gets the same one retry on tweetnacl's "use Uint8Array" as the leaving test; that error fails this test alone on master too.
+
 ### 2026-11-08 · the operator's side (Claude) · mesh introductions: an unanswered "hi" expires
 
 Reported by the Arcade V1.0 session, approved by the operator. In `arcade/mesh/introduce.py`, a "hi" stayed in `opening` until a "yes" came back, and its `at` was never checked. When a hi was lost (peer down, a dropped forward, a bad signature, a relink mid-flight), two things went wrong:

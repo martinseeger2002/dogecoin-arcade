@@ -2324,7 +2324,7 @@
               if (!yes) throw new Error('declined');
               return s.mail.addToGroup(s.keys, s.me, group, more);
             });
-        }).then(function(group){ groupsCards--; return {group: s.mail.groupForApp(group)}; },
+        }).then(function(group){ groupsCards--; return {group: s.mail.groupForApp(group), failed: group.failed || []}; },
                 function(err){ groupsCards--; throw err; });
       }
       if (op === 'leave') {

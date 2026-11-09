@@ -616,6 +616,7 @@ export async function collect(me, {onProgress} = {}) {
         };
         await keep(line);
         await heardLeaving(group, line, me);
+        await heardAdded(group, line);
         opened += 1;
         break;
       }
@@ -747,16 +748,19 @@ function boundHeader() {
   return new Uint8Array([0x61, 0x72, 0x63, 0x6d, 0x01, 0x01]);
 }
 
-export async function write(wallet, me, to, text, {hidden = false} = {}) {
-  return workingOn(async () => {
-    const them = await lookUp(to);
-    if (!them.key) throw new Error(them.detail || "they have no key published");
-    const theirKey = unhex(them.key);
+/** A message sealed and its offer asked for, not yet signed: what it costs is known before anything is sent. */
+async function readyToWrite(me, to, text) {
+  const them = await lookUp(to);
+  if (!them.key) throw new Error(them.detail || "they have no key published");
+  const plain = new Uint8Array([...boundHeader(), ...new TextEncoder().encode(text)]);
+  const sealed = sealEnvelope(plain, me, unhex(them.key));
+  return {them, asked: await outbox.ask(them.address, sealed)};
+}
 
-    const plain = new Uint8Array([...boundHeader(),
-                                  ...new TextEncoder().encode(text)]);
-    const sealed = sealEnvelope(plain, me, theirKey);
-    const {said, shown} = await sendSealed(wallet, them.address, sealed);
+export async function write(wallet, me, to, text, {hidden = false, ready = null} = {}) {
+  return workingOn(async () => {
+    const {them, asked} = ready || await readyToWrite(me, to, text);
+    const {said, shown} = await asked.send(wallet);
 
     // Our own copy, kept here and nowhere else. What went on the chain is
     // sealed to THEM: it cannot be read back, not by this browser either,
@@ -782,13 +786,32 @@ export async function write(wallet, me, to, text, {hidden = false} = {}) {
 /** Hand the node sealed bytes and an address to pay, check the offer here,
  *  sign it here. Shared by a message to one person and a message to a group. */
 async function sendSealed(wallet, toAddress, sealed) {
-  const coins = await import("/coins.js");
+  return (await outbox.ask(toAddress, sealed)).send(wallet);
+}
+
+/** Ask the node for the offer that carries sealed bytes. `cost` is what it spends, in the coin's smallest unit:
+ *  every input less the change (the fee, the dust that carries it, the dust that pays the recipient). */
+async function askToSend(toAddress, sealed) {
   const asked = await fetch("/account/write", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({to: toAddress, sealed: hex(sealed)}),
   });
   const offer = await asked.json();
   if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
+  const spent = (offer.inputs || []).reduce((sum, i) => sum + Number(i.value || 0), 0) - Number(offer.change || 0);
+  return {offer, cost: Math.max(0, spent), send: (wallet) => signAndSend(wallet, offer)};
+}
+
+/** What this account can spend now, in the coin's smallest unit (`/account`'s "spendable"). */
+async function spendableNow() {
+  return Number((await (await fetch("/account")).json()).spendable || 0);
+}
+
+/** The one door messages go out by. Tests swap its parts to count and fail sends (tests/test_messaging_browser.py). */
+export const outbox = {ask: askToSend, spendable: spendableNow};
+
+async function signAndSend(wallet, offer) {
+  const coins = await import("/coins.js");
   const keys = keysFor(offer, wallet);
   const shown = await coins.verifyOffer(offer, keys);
   const signatures = [];
@@ -899,23 +922,39 @@ export function inviteIn(letter) {
   } catch (e) { return null; }
 }
 
-async function invite(wallet, me, group, members) {
-  const body = GROUP_MARK + JSON.stringify({
+function inviteBody(group) {
+  return GROUP_MARK + JSON.stringify({
     id: group.id, root: rootOf(group), name: group.name, secret: group.secret,
     public: group.public, members: group.members, creator: group.creator,
     rotated_from: group.rotated_from || null, created: group.created,
     invited: Math.floor(Date.now() / 1000),
   });
-  const sent = [];
+}
+
+const reachBy = (m) => m.tag ? "@" + m.tag : m.address;
+
+/** Send the group's key to `members`, then a copy to ourselves. Returns {sent, failed}. With `keepGoing`, a send that
+ *  fails is noted and the rest still go; without it the first failure throws, as it always has. `selfCopy: false`
+ *  leaves our own copy to the caller; `ready` is an offer already asked for, for `ready.to`, with `body`. */
+async function invite(wallet, me, group, members, {keepGoing = false, body = null, ready = null, selfCopy = true} = {}) {
+  const said = body || inviteBody(group), sent = [], failed = [];
+  const one = async (to, opts = {}) => {
+    try { sent.push(await write(wallet, me, to, said, opts)); }
+    catch (e) {
+      if (!keepGoing) throw e;
+      failed.push({to, error: String((e && e.message) || e)});
+    }
+  };
   for (const m of members) {
     if (m.key === hex(me.publicKey)) continue;
-    sent.push(await write(wallet, me, m.tag ? "@" + m.tag : m.address, body));
+    const to = reachBy(m);
+    await one(to, ready && ready.to === to ? {ready: ready.ready} : {});
   }
   // And one to ourselves, sealed to our own key: without it the group lived only
   // in the browser that made it, and the creator lost it on any other device
   // (found in the live test, 2026-09-25). Kept hidden: it is not a conversation.
-  sent.push(await write(wallet, me, wallet.address, body, {hidden: true}));
-  return sent;
+  if (selfCopy) await one(wallet.address, {hidden: true});
+  return {sent, failed};
 }
 
 /** Make a group and send its key to everybody named. */
@@ -946,8 +985,9 @@ export async function createGroup(wallet, me, name, names, myTag = "") {
 export async function writeGroup(wallet, me, group, words) {
   return workingOn(async () => {
     if (!group.current) throw new Error("this group moved to a new key; write in that one");
-    const plain = new Uint8Array([...boundHeader(),
-                                  ...new TextEncoder().encode(words)]);
+    // Words, or a body already made (an ARCB body is bytes: its length field is not text).
+    const said8 = words instanceof Uint8Array ? words : new TextEncoder().encode(words);
+    const plain = new Uint8Array([...boundHeader(), ...said8]);
     const sealed = sealEnvelope(plain, me, unhex(group.public));
     const {said, shown} = await sendSealed(wallet, wallet.address, sealed);
     await keep({
@@ -956,7 +996,7 @@ export async function writeGroup(wallet, me, group, words) {
       when: Math.floor(Date.now() / 1000),
       height: 0, to_address: wallet.address, from_address: wallet.address,
       sender: hex(me.publicKey), peer: `group:${rootOf(group)}`, group: group.id,
-      mine: true, body: hex(new TextEncoder().encode(words)),
+      mine: true, body: hex(said8),
     });
     return {...said, fee: shown.fee};
   });
@@ -1008,8 +1048,14 @@ export async function groupLines(root, {after = 0, limit = 200} = {}) {
   }));
 }
 
-/** Let somebody in: the same key, so they can read what was said under it, and everybody told who is here now.
- *  One message per person. Any member may: holding the key is all it takes to hand it on. */
+/** Let somebody in: the same key, so they can read what was said under it. Any member may: holding the key is all it
+ *  takes to hand it on.
+ *
+ *  Only the newcomers get the key (2026-11-08: re-inviting all 19 members of a Riffs group ran out of coins before
+ *  the newcomer's letter, and the adder's browser listed them anyway). Then our own hidden copy, then ONE line to the
+ *  group, `addedLine`, from which everybody already in learns who arrived. What all of it costs is checked before
+ *  anything goes; a send that fails is reported in the returned group's `failed` (not stored), and the rest still go.
+ *  Nobody is listed whose letter did not go. */
 export async function addToGroup(wallet, me, group, names) {
   if (!group.current) throw new Error("this group moved to a new key; add them in that one");
   const members = [...group.members], arriving = [];
@@ -1021,10 +1067,66 @@ export async function addToGroup(wallet, me, group, names) {
     members.push(one); arriving.push(one);
   }
   if (!arriving.length) throw new Error("everybody named is already in this group");
-  const grown = {...group, members};
+  const body = inviteBody({...group, members});
+  const first = reachBy(arriving[0]);
+  const ready = await readyToWrite(me, first, body);
+  const count = arriving.length + 2;                  // each newcomer, our own copy, the line to the group
+  const need = ready.asked.cost * count, have = await outbox.spendable();
+  if (have < need) {
+    const coins = (n) => (n / 1e8).toFixed(2);
+    throw new Error(`adding ${arriving.length === 1 ? "them" : `these ${arriving.length}`} takes ${count} messages, `
+                    + `about ${coins(need)} coins, and this account can spend ${coins(have)}. Nothing was sent.`);
+  }
+  const {failed} = await invite(wallet, me, {...group, members}, arriving,
+                                {keepGoing: true, body, ready: {to: first, ready}, selfCopy: false});
+  const missed = new Set(failed.map((f) => f.to));
+  const joined = arriving.filter((m) => !missed.has(reachBy(m)));
+  if (!joined.length) {
+    throw new Error("no invite went: " + failed.map((f) => `${f.to}: ${f.error}`).join("; "));
+  }
+  const grown = {...group, members: [...group.members, ...joined]};
   await saveGroup(grown);
-  await invite(wallet, me, grown, members);
+  const copy = await invite(wallet, me, grown, [], {keepGoing: true});
+  failed.push(...copy.failed);
+  const mine = group.members.find((m) => m.key === hex(me.publicKey));
+  try {
+    await writeGroup(wallet, me, grown, addedLine(mine && mine.tag, joined));
+  } catch (e) {
+    failed.push({to: "the group", error: String((e && e.message) || e)});
+  }
+  Object.defineProperty(grown, "failed", {value: failed, enumerable: false});
   return grown;
+}
+
+/** The line that tells a group who was let in: an ARCB body (parseBody) whose words are for anybody, and whose
+ *  `v1_added` says who, for the browsers that add them (`heardAdded`). The field name is Arcade V1.0's too: keep it. */
+export function addedLine(adderTag, people) {
+  const said = {
+    text: `${adderTag ? "@" + adderTag : "Somebody"} added ${people.map((m) => m.tag ? "@" + m.tag : m.address).join(", ")}`,
+    v1_added: people.map((m) => ({tag: m.tag || "", key: m.key, address: m.address || ""})),
+  };
+  const head = new TextEncoder().encode(JSON.stringify(said));
+  if (head.length > 0xffff) throw new Error("too many people to add at once");
+  return new Uint8Array([...BODY_MAGIC, BODY_VERSION, head.length >> 8, head.length & 0xff, ...head]);
+}
+
+/** A group line that says who was let in: they join the members here. Only on the group's current key, only people not
+ *  already in, and it never takes anybody out (that is a new key). */
+async function heardAdded(group, letter) {
+  const added = bodyOf(letter).added;
+  if (!Array.isArray(added) || !added.length) return;
+  const now = await currentGroup(rootOf(group));
+  if (!now || now.id !== group.id || !now.current) return;
+  const known = new Set((now.members || []).map((m) => m.key)), fresh = [];
+  for (const m of added.slice(0, 500)) {
+    if (!m || typeof m !== "object") continue;
+    const key = String(m.key || "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(key) || known.has(key)) continue;
+    known.add(key);
+    fresh.push({tag: String(m.tag || "").replace(/^@/, "").slice(0, 64), key,
+                address: String(m.address || "").slice(0, 128)});
+  }
+  if (fresh.length) await saveGroup({...now, members: [...(now.members || []), ...fresh]});
 }
 
 /** Take somebody out: a new key for everybody who stays. */
@@ -1613,7 +1715,7 @@ export function sniff(bytes) {
 export function parseBody(body) {
   const bytes = body instanceof Uint8Array ? body : unhex(body || "");
   const plain = () => ({text: decodeBytes(bytes), file: null, profile: null,
-                        plain: true});
+                        plain: true, added: null});
   if (!begins(bytes, BODY_MAGIC, 0) || bytes.length < BODY_MAGIC.length + 3) {
     return plain();
   }
@@ -1652,14 +1754,16 @@ export function parseBody(body) {
     }
   }
   return {text: typeof said.text === "string" ? said.text : "",
-          file, profile, plain: false};
+          file, profile, plain: false,
+          // Who a group line says was let in (addedLine); anything else here is somebody else's to check.
+          added: Array.isArray(said.v1_added) ? said.v1_added : null};
 }
 
 function bodyOf(letter) {
   try {
     return parseBody(unhex(letter.body || ""));
   } catch (e) {
-    return {text: "", file: null, profile: null, plain: true};
+    return {text: "", file: null, profile: null, plain: true, added: null};
   }
 }
 

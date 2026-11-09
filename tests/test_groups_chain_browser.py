@@ -122,13 +122,17 @@ def test_somebody_added_later_reads_what_was_said_and_everybody_sees_them(world)
         a.switch_to.default_content()
         b.switch_to.default_content()
         a.get(f"{base}/join")
-        made = a.execute_async_script("""
+        script = """
             const done = arguments[0];
             Promise.all([import("/messaging.js"), import("/wallet.js")]).then(async ([mail, w]) => {
               const keys = await w.opened(ARCADE_CHAIN), me = await mail.identity(keys.phrase);
               const g = await mail.createGroup(keys, me, "Late club", ["@bobgroup"], "alicegroup");
               return {id: g.id};
-            }).then(done, (e) => done({error: String(e.message || e)}));""")
+            }).then(done, (e) => done({error: String(e.message || e)}));"""
+        made = a.execute_async_script(script)
+        if "use Uint8Array" in str(made.get("error", "")):      # the same workaround as the leaving test below
+            a.get(f"{base}/join")
+            made = a.execute_async_script(script)
         assert "error" not in made, made
         _settled(state, node.rpc)
         grown = a.execute_async_script("""
@@ -140,10 +144,10 @@ def test_somebody_added_later_reads_what_was_said_and_everybody_sees_them(world)
               const more = await mail.addToGroup(keys, me, g, ["@carolgroup"]);
               let again = "";
               try { await mail.addToGroup(keys, me, more, ["@carolgroup"]); } catch (e) { again = String(e.message || e); }
-              return {members: more.members.map((m) => m.tag), again};
+              return {members: more.members.map((m) => m.tag), again, failed: more.failed};
             }).then(done, (e) => done({error: String(e.message || e)}));""", made["id"])
         assert "error" not in grown, grown
-        assert "carolgroup" in grown["members"] and "already" in grown["again"]
+        assert "carolgroup" in grown["members"] and "already" in grown["again"] and grown["failed"] == [], grown
         _settled(state, node.rpc)
 
         def seen(driver):
@@ -158,12 +162,13 @@ def test_somebody_added_later_reads_what_was_said_and_everybody_sees_them(world)
         _app(third, base)
         assert {m["tag"] for m in seen(third)["members"]} >= {"alicegroup", "bobgroup", "carolgroup"}
         end, lines = time.time() + 60, []
-        while time.time() < end and not lines:
+        while time.time() < end and len(lines) < 2:
             lines = _do(third, op="read", id=made["id"])["value"]
             time.sleep(2)
-        assert [l["text"] for l in lines] == ["before carol"], "the newcomer reads what was said before"
+        # What was said before, then the one line that told the group (2026-11-08: no more letters to who was in).
+        assert [l["text"] for l in lines] == ["before carol", "@alicegroup added @carolgroup"], lines
         _app(b, base)
-        seen(b)                                                      # who was already in sees the newcomer
+        seen(b)                                                      # who was already in learns of her from that line
     finally:
         third.quit()
 

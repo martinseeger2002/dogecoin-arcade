@@ -398,3 +398,184 @@ def test_a_bare_file_says_what_it_was_in_words(loaded):
         const done = arguments[1];
         done(window.m.text({body: arguments[0]}));""", body.hex())
     assert said == content.own_copy(body)[0].decode()
+
+
+# --- letting people into a group (2026-11-08) --------------------------------
+#
+# The node is not asked anything here: who people are, what can be spent and the mailbox come from a stubbed fetch,
+# and every send goes through `outbox`, swapped for one that counts. What is checked is what the browser decides to
+# send, and what it does with what it reads.
+
+_GROUP_STUBS = """
+  const m = window.m, people = arguments[0], opts = arguments[1] || {};
+  window.__asked = []; window.__sent = []; window.__mail = window.__mail || [];
+  window.__realFetch = window.__realFetch || window.fetch;
+  window.fetch = async (url, init) => {
+    const u = String(url), json = (o) => new Response(JSON.stringify(o), {status: 200});
+    if (u.startsWith("/account/who/")) {
+      const name = decodeURIComponent(u.slice(13)).replace(/^@/, "");
+      const who = people[name] || Object.values(people).find((p) => p.address === name)
+        || (window.__self && window.__self.address === name ? window.__self : null);
+      return who ? json(who) : new Response(JSON.stringify({detail: "nobody"}), {status: 404});
+    }
+    if (u.startsWith("/account/messages")) {
+      const after = Number(new URL(u, location.href).searchParams.get("after") || 0);
+      return json({candidates: window.__mail.filter((c) => c.cursor > after), more: false,
+                   cursor: Math.max(after, ...window.__mail.map((c) => c.cursor))});
+    }
+    if (u === "/account") return json({spendable: opts.spendable ?? 1e12, mail_from: 0});
+    return window.__realFetch(url, init);
+  };
+  window.__realOutbox = window.__realOutbox || {...m.outbox};
+  m.outbox.spendable = async () => opts.spendable ?? 1e12;
+  m.outbox.ask = async (to, sealed) => {
+    window.__asked.push({to, sealed: m.hex(sealed)});
+    if ((opts.fail || []).includes(to)) throw new Error("no coins left for " + to);
+    return {cost: 84000000, offer: {}, send: async () => {
+      const txid = m.hex(crypto.getRandomValues(new Uint8Array(32)));
+      window.__sent.push({to, txid});
+      return {said: {txid}, shown: {fee: 0}};
+    }};
+  };
+"""
+
+JSON_PHRASE = '"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"'
+
+_UNSTUB = """
+  window.fetch = window.__realFetch; Object.assign(window.m.outbox, window.__realOutbox);
+"""
+
+
+def _people(*names):
+    from arcade.messaging.keys import Identity
+    out = {}
+    for name in names:
+        ident = Identity.generate()
+        out[name] = {"tag": name, "key": ident.public_bytes.hex(), "address": "n" + name.ljust(33, "x")[:33]}
+    return out
+
+
+def _run(browser, body, people, opts=None):
+    said = browser.execute_async_script(
+        "const done = arguments[arguments.length - 1];\n" + _GROUP_STUBS + """
+        (async () => { try { return await (async () => {""" + body + """})(); } finally {""" + _UNSTUB + """} })()
+          .then(done, (e) => done({error: String((e && e.message) || e)}));""", people, opts or {})
+    return said
+
+
+def test_adding_to_a_group_writes_only_to_the_newcomers_then_our_copy_and_one_line(loaded):
+    """@apple's add to a 19-member Riffs group re-sent the key to all 18 and ran out of coins before the newcomer's.
+    An add is one letter per NEWCOMER, our own copy, and one line to the group: never a letter to who is already in."""
+    browser, _, _ = loaded
+    folks = _people("bobadd", "carol", "dave", "dan", "erin")
+    said = _run(browser, """
+        const me = await m.identity(arguments[2]), wallet = {address: "nMEadd".padEnd(34, "x")};
+        window.__self = {tag: "", key: m.hex(me.publicKey), address: wallet.address};
+        const g = await m.createGroup(wallet, me, "Big club", ["@bobadd", "@carol", "@dave"], "alice");
+        window.__asked = []; window.__sent = [];
+        const grown = await m.addToGroup(wallet, me, g, ["@dan", "@erin"]);
+        return {asked: window.__asked.map((a) => a.to), sent: window.__sent.map((s) => s.to), me: wallet.address,
+                members: grown.members.map((x) => x.tag), failed: grown.failed};
+    """.replace("arguments[2]", JSON_PHRASE), folks)
+    assert "error" not in said, said
+    dan, erin = folks["dan"]["address"], folks["erin"]["address"]
+    assert said["sent"] == [dan, erin, said["me"], said["me"]], "newcomers first, then our copy, then the group line"
+    assert len(said["sent"]) == 2 + 2, "N new + our copy + one line, not N members + 1"
+    for old in ("bobadd", "carol", "dave"):
+        assert folks[old]["address"] not in said["asked"], f"{old} is already in and gets nothing"
+    assert said["members"] == ["alice", "bobadd", "carol", "dave", "dan", "erin"] and said["failed"] == []
+
+
+def test_an_add_that_cannot_be_paid_for_sends_nothing(loaded):
+    browser, _, _ = loaded
+    folks = _people("bobpay", "fran")
+    said = _run(browser, """
+        const me = await m.identity(arguments[2]), wallet = {address: "nMEpay".padEnd(34, "x")};
+        window.__self = {tag: "", key: m.hex(me.publicKey), address: wallet.address};
+        const g = await m.createGroup(wallet, me, "Poor club", ["@bobpay"], "alice");
+        window.__sent = [];
+        let error = "";
+        try { await m.addToGroup(wallet, me, g, ["@fran"]); } catch (e) { error = String(e.message || e); }
+        return {error_said: error, sent: window.__sent.length,
+                members: (await m.groupById(g.id)).members.map((x) => x.tag)};
+    """.replace("arguments[2]", JSON_PHRASE), folks, {"spendable": 84000000 * 2})
+    assert "error" not in said, said
+    assert "Nothing was sent" in said["error_said"] and "3 messages" in said["error_said"], said
+    assert said["sent"] == 0 and said["members"] == ["alice", "bobpay"], "not listed when the letter never went"
+
+
+def test_one_failed_invite_does_not_stop_the_rest(loaded):
+    browser, _, _ = loaded
+    folks = _people("bobfail", "gail", "hank", "ivy")
+    said = _run(browser, """
+        const me = await m.identity(arguments[2]), wallet = {address: "nMEfail".padEnd(34, "x")};
+        window.__self = {tag: "", key: m.hex(me.publicKey), address: wallet.address};
+        const g = await m.createGroup(wallet, me, "Shaky club", ["@bobfail"], "alice");
+        window.__sent = [];
+        const grown = await m.addToGroup(wallet, me, g, ["@gail", "@hank", "@ivy"]);
+        return {sent: window.__sent.map((s) => s.to), me: wallet.address, failed: grown.failed,
+                members: (await m.groupById(g.id)).members.map((x) => x.tag)};
+    """.replace("arguments[2]", JSON_PHRASE), folks, {"fail": [folks["hank"]["address"]]})
+    assert "error" not in said, said
+    assert said["sent"] == [folks["gail"]["address"], folks["ivy"]["address"], said["me"], said["me"]]
+    assert [f["to"] for f in said["failed"]] == ["@hank"] and "no coins" in said["failed"][0]["error"]
+    assert said["members"] == ["alice", "bobfail", "gail", "ivy"], "only who got the key is listed"
+
+
+def test_the_added_line_reads_the_same_on_both_sides_and_unpatched_readers_see_words(loaded):
+    """The ARCB form Arcade V1.0 sends too: `text` for anybody, `v1_added` for the browsers that add people."""
+    import json as _json
+    from arcade.messaging import content
+
+    browser, _, _ = loaded
+    people = [{"tag": "dan", "key": "ab" * 32, "address": "nDan"}, {"tag": "", "key": "cd" * 32, "address": "nErin"}]
+    head = _json.dumps({"text": "@v1 added @dan, nErin", "v1_added": people}).encode()
+    from_v1 = content.BODY_MAGIC + bytes([content.BODY_VERSION]) + len(head).to_bytes(2, "big") + head
+    said = browser.execute_async_script("""
+        const done = arguments[2], m = window.m;
+        const ours = m.addedLine("alice", arguments[0]);
+        const a = m.parseBody(ours), b = m.parseBody(m.unhex(arguments[1]));
+        done({ours: m.hex(ours), a: {text: a.text, added: a.added}, b: {text: b.text, added: b.added}});""",
+        people, from_v1.hex())
+    ours = bytes.fromhex(said["ours"])
+    assert said["a"] == {"text": "@alice added @dan, nErin", "added": people}
+    assert said["b"] == {"text": "@v1 added @dan, nErin", "added": people}, "V1.0's line reads here"
+    assert content.parse(ours).text == "@alice added @dan, nErin" and not content.parse(ours).plain, "and in Python"
+    assert content.parse(from_v1).text == said["b"]["text"]
+
+
+def test_who_was_in_learns_of_the_newcomer_from_the_line_when_it_arrives(loaded):
+    """A member reads the group line off the chain: the newcomers join the group here, once, and nobody leaves."""
+    import json as _json
+    from arcade.messaging.envelope import Header, TYPE_SINGLE, seal_message
+    from arcade.messaging.keys import Identity
+
+    browser, _, _ = loaded
+    folks = _people("adder", "jill")
+    made = _run(browser, """
+        const me = await m.identity(arguments[2]), wallet = {address: "nMEread".padEnd(34, "x")};
+        window.__self = {tag: "", key: m.hex(me.publicKey), address: wallet.address};
+        const g = await m.createGroup(wallet, me, "Readers", ["@adder"], "bobread");
+        return {id: g.id, public: g.public};
+    """.replace("arguments[2]", JSON_PHRASE), folks)
+    assert "error" not in made, made
+    jill, adder = folks["jill"], folks["adder"]
+    named = [{"tag": "jill", "key": jill["key"], "address": jill["address"]},
+             {"tag": "adder", "key": adder["key"], "address": adder["address"]}]       # already in: not twice
+    head = _json.dumps({"text": "@adder added @jill", "v1_added": named}).encode()
+    body = b"\x01ARCB\x01" + len(head).to_bytes(2, "big") + head
+    blob = seal_message(Identity.generate(), bytes.fromhex(made["public"]), Header(type=TYPE_SINGLE), body)
+    browser.execute_script("window.__mail = [{txid: arguments[0], cursor: 10**9, when: 1, height: 5,"
+                           " from_address: arguments[1], payload: arguments[2]}];", "ef" * 32, adder["address"], blob.hex())
+    said = _run(browser, """
+        const me = await m.identity(arguments[2]);
+        await m.collect(me);
+        await m.collect(me);                                                   // read twice: still once
+        const g = await m.groupById(arguments[3]);
+        const lines = await m.groupLines(g.root || g.id);
+        return {members: g.members.map((x) => x.tag), lines: lines.map((l) => l.text)};
+    """.replace("arguments[2]", JSON_PHRASE).replace("arguments[3]", _json.dumps(made["id"])), folks)
+    browser.execute_script("window.__mail = [];")
+    assert "error" not in said, said
+    assert said["members"] == ["bobread", "adder", "jill"], said
+    assert said["lines"] == ["@adder added @jill"], "shown as the words it carries"
