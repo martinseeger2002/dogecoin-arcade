@@ -24,12 +24,12 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_account_cross_writes import FIELD, LOCAL, WRITES, _sign_in, no_node_is_503  # noqa: E402
+from address_claim import file_address                       # noqa: E402
 from test_funding import _pubkey                                 # noqa: E402
+from arcade.script import b58check_encode, hash160               # noqa: E402
+from test_account_cross_writes import FIELD, LOCAL, WRITES, _sign_in, no_node_is_503  # noqa: E402
 from test_web import app_state                                   # noqa: F401,E402
 
-from arcade.config import NETWORKS                               # noqa: E402
-from arcade.script import b58check_encode, hash160               # noqa: E402
 
 #: Not objects at all.
 NOT_OBJECTS = ["[]", '"a string"', "5", "null", "true"]
@@ -53,8 +53,9 @@ def _app(app_state):
     no_node_is_503(app)
     client = TestClient(app, raise_server_exceptions=False)
     _sign_in(client, LOCAL)
-    address = b58check_encode(NETWORKS["test"].pubkeyhash_version, hash160(_pubkey(int("a1" * 32, 16))))
-    assert client.post("/account/address", headers=LOCAL, json={"address": address}).status_code == 200
+    secret = int("a1" * 32, 16)
+    address = b58check_encode(app_state.messaging.params.pubkeyhash_version, hash160(_pubkey(secret)))
+    assert file_address(client, address, secret, headers=LOCAL).status_code == 200   # proved, as the wallet files it
     return app, client
 
 
