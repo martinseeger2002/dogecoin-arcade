@@ -139,7 +139,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit"
       {% if mining.stopping %}disabled{% endif %}>{{ 'Stopping…' if mining.stopping else 'Stop mining' }}</button>
   </form>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   (function(){
     var shown = document.getElementById('mining-so-far');
     function minutes(s){ return s < 90 ? s + ' s' : Math.round(s / 60) + ' min'; }
@@ -241,7 +241,7 @@
 </section>
 {% endfor %}
 {% if (keyed or [])|selectattr("minable")|list %}
-<script>
+<script nonce="{{ csp_nonce }}">
 /* Mining on this machine's CPU, the same miner as Admin -> Chains (blockminer.py). */
 (function () {
   function post(body) {
@@ -337,7 +337,7 @@
 #nets button{padding:5px 12px;border-radius:999px;font-size:.8rem;font-weight:650;color:var(--muted);background:none;border:0;box-shadow:none}
 #nets button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   /* The chain picker: one chain's sections at a time, grouped by label. */
   var secs = Array.prototype.slice.call(document.querySelectorAll('section.wchain'));

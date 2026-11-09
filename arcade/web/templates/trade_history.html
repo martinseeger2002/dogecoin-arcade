@@ -9,7 +9,7 @@
 {{ ex.style() }}{{ ex.market_css() }}
 <h1 style="margin:6px 0 12px">Trade history{% if pair_label %} <span class="muted" style="font-weight:600">&middot; {{ pair_label }}</span>{% endif %}</h1>
 {% if pair %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history">All your trades &rarr;</a></p>
-<script>window.HISTORY_PAIR = {{ pair|tojson }};</script>{% endif %}
+<script nonce="{{ csp_nonce }}">window.HISTORY_PAIR = {{ pair|tojson }};</script>{% endif %}
 {% if viewer == 'nobody' %}
 <div class="panel"><p class="muted" style="margin:0">Sign in to see your trades.</p></div>
 {% else %}
@@ -40,7 +40,7 @@
 </div>
 {% endif %}
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.querySelectorAll("[data-when]").forEach(function (e) {
   var d = new Date(Number(e.dataset.when) * 1000);
   e.textContent = d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});

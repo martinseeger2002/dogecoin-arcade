@@ -28,7 +28,7 @@
   .pick-held{color:var(--muted,#a69d8e);font-size:.82rem;white-space:nowrap}
   .pick-none{display:block;padding:9px 10px;color:var(--muted,#a69d8e);font-size:.86rem}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 window.arcadeSearchBox = window.arcadeSearchBox || function (box, cfg) {
   var q = box.querySelector('.pick-q'), list = box.querySelector('.pick-list'), at = -1, rows = [], asked = 0;
   var hint = cfg.placeholder || q.placeholder || '';

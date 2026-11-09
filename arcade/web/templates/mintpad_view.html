@@ -139,7 +139,7 @@
 </style>
 
 {% if look.template == 'lottery' %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // Lottery: tiles of the wall turn over now and then, for everybody looking.
 (function () {
   var tiles = [].slice.call(document.querySelectorAll('.ltflip'));
@@ -151,7 +151,7 @@
 </script>
 {% endif %}
 {% if is_seller %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
 const news = (t, ok) => { const n = document.getElementById("pad-news");
@@ -224,7 +224,7 @@ if (listBtn) listBtn.onclick = async () => {
 </script>
 {% endif %}
 {% if public and signed_in and left %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const CHAIN = {network: "{{ chain.network }}",

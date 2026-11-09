@@ -18,7 +18,7 @@
   #access-list .what{white-space:nowrap}
   #access-list .acts{text-align:right;white-space:nowrap}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var KINDS = [
     {prefix: 'arcade.wallet.allow:', label: 'Wallet access', says: 'may ask your wallet to trade, pay and sign (each time with a card, except small test-network game actions)', off: function (id) { arcadeGameAllow(id, false); }},

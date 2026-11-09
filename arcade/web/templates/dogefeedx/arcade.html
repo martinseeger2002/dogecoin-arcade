@@ -18,7 +18,7 @@ ul { list-style:none; padding:0; }
 li { padding:12px 0; border-bottom:1px solid var(--df-line); }
 li a { color:#f3e3a5; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Arcade</h1>
   <p class="note" id="chip-note">Free chips, for fun only. They have no DOGE value, and they never touch a wallet.</p>
@@ -28,7 +28,7 @@ li a { color:#f3e3a5; }
   <p class="note">{{ 'Games inscribed on this arcade.' if public else 'Games inscribed on this node.' }} </p>
   <ul id="games"><li class="note">Loading games…</li></ul>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var list = document.getElementById('games');
   var pub = document.getElementById('public-games');

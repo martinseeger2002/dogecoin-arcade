@@ -229,7 +229,7 @@
 {% if not rows %}
   <div class="panel empty"><p>Nothing of this collection is indexed yet.</p></div>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var bar = document.getElementById("piece-sort").parentNode;
   var box = bar && bar.nextElementSibling, only = document.getElementById("only-sale"),

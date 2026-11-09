@@ -204,7 +204,7 @@ python3 installer/install.py{% if first_peer %} --first-peer {{ first_peer }}{% 
     so a clone starts with the chain already read rather than spending a day
     reading it. <a href="/clone">Everything needed is on one page</a>.
   </p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     document.getElementById("here").textContent = location.origin;
   </script>
 </div>
@@ -225,7 +225,7 @@ python3 installer/install.py{% if first_peer %} --first-peer {{ first_peer }}{% 
 .clone{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto}
 </style>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as signer from "/signin.js";
 
 const $ = (id) => document.getElementById(id);

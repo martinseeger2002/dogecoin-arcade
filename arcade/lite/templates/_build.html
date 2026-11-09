@@ -182,7 +182,7 @@ allowtheme my-theme      people may pick it in Settings → Theme…</pre>
 #build .b-route{border-bottom:1px solid var(--line);padding:6px 0}
 @media (max-width:700px){ #build .steps, #build .b-ref{grid-template-columns:1fr} }
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var step = 1;

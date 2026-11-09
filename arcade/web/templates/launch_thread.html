@@ -65,7 +65,7 @@
 </style>
 
 {% if acts %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 /* The same signing as the launches list and the feed: the tab signs the reply
    or like itself, aimed at the launch or at the comment being answered. */
 import * as wallet from "/wallet.js";

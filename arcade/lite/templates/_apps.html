@@ -13,7 +13,7 @@
     </fieldset>
   </div>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var ORDS = {{ 'true' if ords_on else 'false' }};
   var $ = function (id) { return document.getElementById(id); };

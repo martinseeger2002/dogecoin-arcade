@@ -2,7 +2,7 @@
    data-answer-for="<offer txid>" gets a "Complete the purchase" button once this
    browser finds the seller's answer to that offer among its sealed program
    messages (wallet.answersToMe); a refusal says so instead. #}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 
 const CHAIN = {network: "{{ chain.network }}",

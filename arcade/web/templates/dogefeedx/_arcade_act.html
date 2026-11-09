@@ -4,7 +4,7 @@
     the Feed page does); the operator's arcade uses its own wallet (/dogefeedx/api/post and /react, as /feed/post and
     /feed/{txid}/{doing} do). Both show on the feed when their block lands. -#}
 {% if public and chain %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
   import * as wallet from "/wallet.js";
   const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
   const KINDS = {{ feed_kinds | tojson }};
@@ -27,7 +27,7 @@
   };
 </script>
 {% elif not public %}
-<script>
+<script nonce="{{ csp_nonce }}">
   (function () {
     function send(path, body) {
       body.csrf_token = {{ csrf | tojson }};
@@ -45,7 +45,7 @@
   })();
 </script>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // The buttons under a post: Reply opens it, Like and Repost go on the chain (dfxReact), the link and share
   // buttons copy its address, Bookmark keeps it in this browser (Bookmarks reads them back).

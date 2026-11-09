@@ -204,7 +204,7 @@
 </div>
 {% endfor %}
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 /* Starred apps first, as soon as a star changes (and for a visitor whose stars live in this browser). */
 (function () {
   var list = document.getElementById('gamelist');
@@ -232,7 +232,7 @@
   @media(max-width:560px){.gamecard{flex-direction:column}.gamecover{flex:none;width:100%;aspect-ratio:16/9}}
 </style>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 /* The cards' wallet access switches and the wallet's lock status (base.html, WALLET ACCESS, PER GAME). */
 (function () {
   function draw() {
@@ -368,7 +368,7 @@
 </script>
 
 {% if viewer == 'account' and mine_tag %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 /* An account's tab signs its own like, dislike, comment or tip, as on the feed. */
 import * as wallet from "/wallet.js";
 const CHAIN = {network: "{{ state.messaging.network }}",
@@ -420,6 +420,6 @@ document.addEventListener("submit", async (event) => {
 {% endif %}
 {% if viewer == 'wallet' %}
 {# The operator's tip form posts to the node (tip_send); this only fills its token list from the node's wallet. #}
-<script type="module">import {tipPicker} from "/wallet.js"; tipPicker(document, "/node/wallet/tokens");</script>
+<script type="module" nonce="{{ csp_nonce }}">import {tipPicker} from "/wallet.js"; tipPicker(document, "/node/wallet/tokens");</script>
 {% endif %}
 {% endblock %}

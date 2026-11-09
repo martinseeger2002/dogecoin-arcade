@@ -31,7 +31,7 @@
   <a id="ex-offers-tab" class="{{ 'on' if current == 'offers' }}" href="/exchange?tab=offers"{% if current == 'offers' %} aria-current="page"{% endif %}>Offers
     {%- if waiting_offers %}<span class="nav-count" aria-label="{{ waiting_offers }} waiting">{{ waiting_offers if waiting_offers < 100 else '99+' }}</span>{% endif %}</a>
 </nav>
-<script>
+<script nonce="{{ csp_nonce }}">
 // A pressed tab looks pressed at once, while its page is on its way (the operator
 // 2026-10-11: the tabs felt "really unresponsive when you click the button").
 document.querySelectorAll('.ex-seg a').forEach(function (a) {
@@ -77,7 +77,7 @@ document.querySelectorAll('.ex-seg a').forEach(function (a) {
 <h1>Exchange {{ tk.chain_switch(chain, other_chains, csrf, "/exchange", public) }}</h1>
 {{ tabs(tab) }}
 {% if tab != 'offers' %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // The Offers count, fetched after this tab has shown (2026-10-13: each tab loads only
 // what it draws; the offers are read on the Offers tab itself).
 (function () {
@@ -141,7 +141,7 @@ document.querySelectorAll('.ex-seg a').forEach(function (a) {
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
   <input type="hidden" name="chain"><input type="hidden" name="back"></form>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.addEventListener('click', function (ev) {
   var a = ev.target.closest && ev.target.closest('a[data-switch]');
   if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button) return;
@@ -217,7 +217,7 @@ document.addEventListener('click', function (ev) {
     {% endfor %}
     {% if viewer == 'account' %}
     <p class="msg" id="answer-news" hidden></p>
-    <script type="module">
+    <script type="module" nonce="{{ csp_nonce }}">
     /* Answering an offer from the tab that holds the key, which is all this
        row ever lacked. `wallet.answerOffer` runs the three signatures &mdash;
        two over the leg, never broadcast, and one over the letter that carries
@@ -366,7 +366,7 @@ document.addEventListener('click', function (ev) {
     {% if viewer == 'account' %}
     <p class="msg" id="fill-news" hidden></p>
     {% include "_offer_complete.html" %}
-    <script type="module">
+    <script type="module" nonce="{{ csp_nonce }}">
     // Cancel an offer (2026-09-28: "Offers need to be able to be
     // canceled"): spend the coins it was signed over back to you, which is the
     // only way to take back a signature already handed over.
@@ -402,7 +402,7 @@ document.addEventListener('click', function (ev) {
 
   {% if token_bids %}
   <div class="ex-h">Buy orders on your tokens {{ net_badge(chain) }}</div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   /* Decline hides it from this list only: the order stays on the book, and
      anybody may still sell into it (2026-09-28). */
   document.addEventListener("click", async function (e) {
@@ -467,7 +467,7 @@ document.addEventListener('click', function (ev) {
     <div><b id="ddpad-name"></b><div class="muted" id="ddpad-says" style="font-size:.88rem"></div></div>
     <a class="ex-cta" href="/bytelings" style="margin:0 0 0 auto">Open</a>
   </div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   fetch("/ddpad/state", {cache: "no-store"}).then((r) => r.ok ? r.json() : null).then((s) => {
     if (!s || !s.counts || !s.counts.total) return;
     const card = document.getElementById("ddpad-card");
@@ -562,7 +562,7 @@ document.addEventListener('click', function (ev) {
     {% endif %}
   </div>
   {% endfor %}
-  <script>
+  <script nonce="{{ csp_nonce }}">
   // Mint opens the pad's own page in the card; it loads only when asked for.
   document.querySelectorAll("[data-pad-open]").forEach(function (b) {
     b.onclick = function () {
@@ -580,7 +580,7 @@ document.addEventListener('click', function (ev) {
     .lacts button.on{background:var(--accent,#c9a227);color:#fff}
   </style>
   {% if viewer == 'account' and mine_tag %}
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   /* An account's tab signs the like, dislike or comment itself, as on the feed. */
   import * as wallet from "/wallet.js";
   const CHAIN = {network: "{{ state.messaging.network }}",
@@ -749,7 +749,7 @@ document.addEventListener('click', function (ev) {
       <button type="submit" class="ex-cta" id="pair-go" style="margin-top:10px">{{ 'Place order' if trades_here else 'Open the market' }}</button>
     </form>
     {% if pair_viewer == 'nobody' %}<p class="muted" style="font-size:.8rem;margin:8px 0 0">Sign in to trade, and to see your own tokens and pieces here.</p>{% endif %}
-    <script>
+    <script nonce="{{ csp_nonce }}">
     (function () {
       var f = document.getElementById('start-market'); if (!f) return;
       var trades = {{ 'true' if trades_here else 'false' }};

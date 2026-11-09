@@ -478,6 +478,15 @@ PAGE_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
 CSP_REPORT_PATH = "/csp-report"
 
 
+def page_script_policy(nonce: str) -> str:
+    """The script policy a page is measured against, sent report-only beside PAGE_CSP (2026-11-09, security review):
+    the unlocked words live in sessionStorage, so any script on this origin could read them. Only this arcade's own
+    files and the inline scripts its templates wrote (each `nonce="{{ csp_nonce }}"`) would run. Report-only for now:
+    the reports name what still has to move before it can be enforced (inline on...= handlers first)."""
+    return (f"script-src 'self' 'nonce-{nonce}'; object-src 'none'; base-uri 'self'; "
+            f"report-uri {CSP_REPORT_PATH}")
+
+
 class CspReports:
     """What browsers say the report-only script policy would have stopped (page_script_policy, 2026-11-09, security
     review), kept small. A report is anybody's words, so only a summary is read from it, each part cut short and with
@@ -554,6 +563,24 @@ class CspReports:
 CSP_REPORTS = CspReports()
 
 
+#: This request's script nonce, drawn by _SafeHeaders before any route runs ("" outside a request).
+_NONCE: "contextvars.ContextVar[str]" = contextvars.ContextVar("arcade_csp_nonce", default="")
+
+
+class _PageNonce:
+    """The templates' `csp_nonce`: this request's, read when a page writes it, as `brand` is (brand.CURRENT). A global
+    rather than a context value, so a macro imported without context (_exui.html), a page drawn outside render() (/lite,
+    /terms, /offline) and the window's parts all write the nonce the header names (2026-11-09, security review)."""
+
+    def __str__(self):
+        return _NONCE.get()
+
+    __html__ = __str__
+
+
+CSP_NONCE = _PageNonce()
+TEMPLATES.env.globals["csp_nonce"] = CSP_NONCE
+
 #: Paths whose answers are one account's (or the operator's) own: never kept by a browser or a cache in between.
 PRIVATE_PATHS = ("/account", "/auth", "/signin", "/signup", "/admin", "/api/v1", "/me")
 
@@ -575,6 +602,10 @@ class _SafeHeaders:
         https = (asked.headers.get("x-forwarded-proto") or scope.get("scheme")) == "https"
         path = scope.get("path", "")
         private = any(path == p or path.startswith(p + "/") for p in PRIVATE_PATHS)
+        # One nonce per request, drawn before any route runs, so the page's templates and the header below say the
+        # same one (2026-11-09, security review).
+        nonce = secrets.token_urlsafe(16)
+        drawn = _NONCE.set(nonce)
 
         async def sending(message):
             if message["type"] == "http.response.start":
@@ -591,10 +622,19 @@ class _SafeHeaders:
                 kind = next((v for k, v in headers if k.lower() == b"content-type"), b"")
                 if kind.lower().startswith(b"text/html"):
                     add.append((b"content-security-policy", PAGE_CSP.encode()))
+                    # This arcade's own pages (no policy, or PAGE_CSP) are also measured against the script policy,
+                    # report-only: nothing is stopped, the browser only says what would have been (2026-11-09,
+                    # security review). Inscribed content and /recover say their own, stricter policy and are left be.
+                    own = next((v for k, v in headers if k.lower() == b"content-security-policy"), None)
+                    if own is None or own == PAGE_CSP.encode():
+                        add.append((b"content-security-policy-report-only", page_script_policy(nonce).encode()))
                 message = {**message, "headers": headers + [(k, v) for k, v in add if k not in have]}
             await send(message)
 
-        await self.app(scope, receive, sending)
+        try:
+            await self.app(scope, receive, sending)
+        finally:
+            _NONCE.reset(drawn)
 
 
 class _SessionRenewal:
@@ -37736,6 +37776,7 @@ def create_app(state: AppState) -> FastAPI:
 
     # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
     from ..lite import web as liteweb
+    liteweb.TEMPLATES.env.globals["csp_nonce"] = CSP_NONCE      # the window's scripts carry the page's nonce too
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
                                   public_tools=public_tools, wallet_name=_account_name,

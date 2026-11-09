@@ -4,7 +4,7 @@
    data-piece="<name>"> on the page buys that listing: one card that says the
    trade by name, then one transaction the seller already signed their half of.
    Include once per page, with `chain` in scope. #}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 // A refresh moves tiles; a note left behind would sit under the wrong one.

@@ -28,7 +28,7 @@ button.ghost{background:transparent;color:{{ skin.fg }};border-color:{{ skin.lin
     <button id="go"></button><button id="stay" class="ghost"></button>
   </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 {% include "_fastest_arcade.js.html" %}
 (function(){
   var NEXT = {{ opens|tojson }}, WHICH = {{ which|tojson }};

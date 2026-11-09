@@ -192,7 +192,7 @@
       <p class="ex-note">Settles on {{ chain.label|lower }} in the block your order lands in: no deposit, nobody
         holding your coins. You hold {{ held }} {{ wall_text(prop.name, 'this token') }} and
         {{ "%.4f"|format(coins) }} {{ coin_name }}. A sell holds its tokens back until it trades or you cancel it.</p>
-      <script>
+      <script nonce="{{ csp_nonce }}">
       exTrade(document.getElementById("ex-trade"), {hint: {asks: [{% for o in book.asks %}Number(String({{ o.price_shown|tojson }}).replace(/,/g, "")),{% endfor %}], bids: [{% for o in book.bids %}Number(String({{ o.price_shown|tojson }}).replace(/,/g, "")),{% endfor %}], last: {{ (day.last)|tojson }}},
     sideName: "book-side", buyValue: "bid",
         amount: "book-amount", price: "book-price", button: "book-order",
@@ -204,7 +204,7 @@
           .map(function (l) { return [Number(String(l[0]).replace(/,/g, "")), Number(String(l[1]).replace(/,/g, ""))]; }),
         coin: {{ coin_name|tojson }}, token: {{ wall_text(prop.name, 'token')|tojson }}});
       </script>
-      <script type="module">
+      <script type="module" nonce="{{ csp_nonce }}">
       /* An order on the book, from the account's side of it.
 
          The same two integers the operator's form sends, and the same

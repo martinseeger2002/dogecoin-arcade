@@ -101,7 +101,7 @@
 </style>
 
 {% if public and mine.tag %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 /* An account's tab signs the like, dislike or comment itself, as on the feed:
    the same forms, the same wallet.react, aimed at the launch's txid. */
 import * as wallet from "/wallet.js";

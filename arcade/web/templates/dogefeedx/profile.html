@@ -403,7 +403,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
 .df-book-actions { display: flex; gap: 8px; margin-top: 8px; }
 .df-book-actions button { width: auto; padding: 6px 12px; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -508,7 +508,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
 
 {% include "dogefeedx/_chain.js.html" %}
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   
@@ -856,7 +856,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
   loadSidebar();
 })();
 </script>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var bookEditing = '';
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }

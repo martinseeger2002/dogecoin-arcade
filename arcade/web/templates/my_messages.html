@@ -161,10 +161,10 @@
 .talking{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
 </style>
 
-{% if node_side %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>
+{% if node_side %}<script nonce="{{ csp_nonce }}">window.ARCADE_CSRF = {{ csrf|tojson }};</script>
 <p class="muted" style="font-size:.84rem;margin:14px 0 0">Sending a file, finishing an interrupted send, or writing by
   contact code: <a href="/messages/more">the node's full Messenger</a>.</p>{% endif %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 {# The operator's Messages is this page over the node's own opened messages (2026-10-19; node-mail.js). #}
 import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
 import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
@@ -945,7 +945,7 @@ else $("locked").hidden = false;
 document.body.dataset.messagesReady = "yes";
 </script>
 {% if not node_side %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // Notifications for new messages on this device (arcade/push.py). Offered only
 // where the browser can do it and this arcade sends them. On an iPhone that
 // means the arcade has been added to the Home Screen and opened from there --

@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/script-csp` (on `team/frame-ancestors` 582111e1) · script policy, phase 1: report-only, nonces, a ratchet
+
+From the security review: the unlocked words live in sessionStorage, so any script running on the arcade's origin could read them, and the only page policy (`PAGE_CSP`) says nothing about scripts. Phase 1 changes no behaviour; it measures.
+- **Nonce (`arcade/web/app.py`):** `_SafeHeaders` draws one per request (`secrets.token_urlsafe(16)`) into a contextvar; templates read it as the global `csp_nonce` (`_PageNonce`, the way `brand` works), so `render()`, `/lite` and its parts, `/terms`, `/offline` and macros imported without context (`_exui.html`) all write the header's nonce.
+- **Templates:** `nonce="{{ csp_nonce }}"` written into every inline `<script>` (238 in 113 templates, web + lite), in the source, never added to rendered HTML. Not touched: `mintpad.html`, `tokenpad.html` (chain bytes) and `recover.html` (its own hash policy), which are read as plain files.
+- **Header:** every HTML answer with no policy or `PAGE_CSP` also gets `Content-Security-Policy-Report-Only: script-src 'self' 'nonce-…'; object-src 'none'; base-uri 'self'; report-uri /csp-report`. The enforced `PAGE_CSP` is unchanged. Content and `/recover` keep their own policies and get no second one.
+- **`POST /csp-report`:** public (`door.PUBLIC_POST`), claimed by the core `node` module. It reads at most 16 kB and keeps a short summary (page path, rule, blocked address, file:line, no query strings, control characters replaced). It logs one line per new kind, at most 30 a minute and 500 kinds. Nothing is kept whole.
+- **Ratchet (`tests/test_script_policy.py`):** every inline `<script>` in a template carries the nonce; every page walked has its inline scripts carrying the nonce its header names; inline `on...=` handlers may not exceed **68** (in 32 templates on this date). Lower the number when you move one; add listeners in a nonced script instead of new handlers.
+- **Phase 2 (not done):** move the 68 handlers; give a nonce or a file to the pages built in Python (`/globe`, `/browser`, `/tokens/launchpad/preview`, `/inscriptions/collection/preview`); the `srcdoc` previews in `collection_wizard.html`/`create_name.html` inherit the page policy. `/dogefeedx/network` is sent as its template's unrendered text (its `from arcade.web.app import render` always fails), so it shows raw Jinja today. Then enforce.
+
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/innerhtml-audit` (on `main` 50182a46) · other people's words are set as text; the wizard previews are sandboxed
 
 A read-through of every innerHTML / insertAdjacentHTML / document.write in the served templates (392 lines), the

@@ -376,7 +376,7 @@ html.indesk body.df-dogefeed .df-search { background:#111 !important; }
 html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; background:transparent !important; color:#fff6dd !important; }
 html.indesk body.df-dogefeed .df-person-handle, html.indesk body.df-dogefeed .df-trend-count, html.indesk body.df-dogefeed .df-collection-meta { color:rgba(255,255,255,.55) !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -449,7 +449,7 @@ html.indesk body.df-dogefeed .df-person-handle, html.indesk body.df-dogefeed .df
   
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   

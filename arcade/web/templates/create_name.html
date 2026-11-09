@@ -192,7 +192,7 @@
 .ord-bar span{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
 </style>
 {% if account_here %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 
 const $ = (id) => document.getElementById(id);

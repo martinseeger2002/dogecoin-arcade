@@ -111,7 +111,7 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]) .ex-scrim{background:rgba(0,0,0,.6)}}
 :root[data-theme=dark] .ex-scrim{background:rgba(0,0,0,.6)}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 /* A bottom sheet: exSheet(title) -> {body, close}. Escape and a tap outside close it. */
 window.exSheet = window.exSheet || function (title) {
   var scrim = document.createElement("div"); scrim.className = "ex-scrim";
@@ -131,7 +131,7 @@ window.exSheet = window.exSheet || function (title) {
   return {body: body, close: close, sheet: s};
 };
 </script>
-<script>
+<script nonce="{{ csp_nonce }}">
 /* The trade card (2026-10-09), laid over a page's own order form without touching how
  * an order is placed: the page's button still reads the same two boxes when pressed.
  *   "Best price now" walks the real book on the other side for the amount typed and
@@ -265,7 +265,7 @@ tr.tradelink{cursor:pointer}tr.tradelink:hover td{background:var(--code)}
    a phone sends no click for a tap on a plain table row, so the row script alone never fired there. */
 a.tl{color:inherit;text-decoration:none;display:block}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 // A recent trade opens its own page (who sold, who bought) wherever the row is pressed.
 document.addEventListener("click", function (e) {
   var row = e.target.closest && e.target.closest("tr.tradelink");
@@ -290,7 +290,7 @@ document.addEventListener("click", function (e) {
 .ex-star{background:none;border:0;box-shadow:none;padding:4px 6px;font-size:1.3rem;line-height:1;color:var(--muted);flex:none}
 .ex-star[aria-pressed="true"]{color:var(--accent)}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 window.arcadeFavs = window.arcadeFavs || (function () {
   var LS = "arcade-favorites", set = null, saved = false, listeners = [];
   function local() { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch (e) { return []; } }
@@ -409,7 +409,7 @@ window.arcadeFavs = window.arcadeFavs || (function () {
   @media (prefers-reduced-motion:reduce){ #markets .ex-name.scroll .ex-name-in{animation:none}
     #markets .ex-mrow .ex-name{text-overflow:ellipsis}}
   </style>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   (function () {
     // A name wider than its line scrolls across to its end and back.
     function fit() {
@@ -429,7 +429,7 @@ window.arcadeFavs = window.arcadeFavs || (function () {
     var find = document.getElementById('marketfind'); if (find) find.addEventListener('input', function () { setTimeout(fit, 0); });
   })();
   </script>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   (function () {
     var list = document.getElementById('markets'), find = document.getElementById('marketfind');
     var rows = Array.prototype.slice.call(list.querySelectorAll('[data-market]'));

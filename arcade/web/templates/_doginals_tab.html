@@ -58,7 +58,7 @@
   {% endif %}
 
   {% if viewer == 'account' %}
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   const CHAIN = {network: {{ NET|tojson }}, version: {{ doge_version }}};
   const W = {{ W|tojson }}, C = {{ C|tojson }}, CN = {{ CN|tojson }};
   // Whether one may also be priced in another coin through lock scripts, and in which first (arcade/ord_chains.py).

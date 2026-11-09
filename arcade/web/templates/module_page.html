@@ -21,7 +21,7 @@
 <p class="sub muted">{{ summary }}</p>
 <div class="modpanel" data-modpanel="{{ module }}"><p class="muted">Loading…</p></div>
 <iframe class="modpage-frame" title="{{ title }}" src="/m/{{ module }}/"></iframe>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 import * as modforms from "/lite/modforms.js";
 const TAGCHAIN = {{ tagchain|tojson }};

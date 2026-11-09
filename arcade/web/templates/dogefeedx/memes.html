@@ -32,7 +32,7 @@ html.indesk body.df-dogefeed #meme-q { width:100% !important; max-width:420px; b
 button.more { display:block; width:auto; margin:16px auto 0; background:transparent; color:#fff6dd; border:1px solid rgba(255,255,255,.25); border-radius:999px; padding:8px 16px; font-weight:700; cursor:pointer; }
 html.indesk body.df-dogefeed button.more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Meme Library</h1>
   <p class="note">Pictures you keep in this browser to attach to a local draft. Nothing is uploaded.</p>
@@ -51,7 +51,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
   <div id="memes" class="grid"><p class="note">Loading…</p></div>
   <button type="button" class="more" id="meme-more" hidden>More</button>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var KEY = 'dogefeedx.memes';
   var DRAFT = 'dogefeedx.draftMeme';

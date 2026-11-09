@@ -17,7 +17,7 @@
     {%- elif row.txid %} as <code class="mono">{{ row.txid }}</code>{% endif %}
     {%- if row.error %}: {{ row.error }}{% endif %}.</div>
   {% if embed %}
-  <script>
+  <script nonce="{{ csp_nonce }}">
   // Decided: tell the page holding this pop-up, which closes it. Same origin
   // on both sides, and said so, because a message to '*' is a message to
   // anybody who managed to put this page in a frame.

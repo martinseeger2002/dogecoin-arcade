@@ -15,7 +15,7 @@ a.card:hover { border-color:#f3e3a5; }
 a.card b { display:block; font-family:Fredoka,sans-serif; font-size:18px; margin-bottom:6px; }
 a.card span { color:var(--df-muted); font-size:14px; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Inscribe</h1>
   <p class="note">These use the wallet selected on Profile. An inscription-carrying coin is never spent as a fee.</p>
@@ -29,7 +29,7 @@ a.card span { color:var(--df-muted); font-size:14px; }
   </div>
 </div>
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var note = document.getElementById('inscribe-note');
   var who = document.getElementById('inscribe-for');

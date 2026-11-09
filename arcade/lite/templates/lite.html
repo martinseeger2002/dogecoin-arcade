@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ 'ArcadeCore' if name == 'ARCADE' else name ~ ' · ArcadeCore' }}</title>
-<script>
+<script nonce="{{ csp_nonce }}">
 /* The window in a frame at a page's own path (/me, /me/wallet, /me/backup, /join): the frame wanted that page, and the
    server, unable to tell (app.py _core_window), sent the window. Ask again as a frame, or the Account tab would hold a
    window holding a window (2026-11-08). */
@@ -16,7 +16,7 @@
   location.replace(u.pathname + u.search + u.hash);
 })();
 </script>
-{% if desktop_on %}<script>
+{% if desktop_on %}<script nonce="{{ csp_nonce }}">
 /* A person who wears one of the desktop's looks (View, or Switch Theme there) opens the arcade on that desktop, on a
    computer; a page in one of this window's tabs, or a phone, stays here. */
 (function () {
@@ -291,7 +291,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 {% include "_yourtabs.html" %}
 
 {% if wallet == 'account' %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // The full arcade's key check (base.html), in this window too (2026-11-08): an account whose name or announcement is
 // missing or out of date (a mainnet DigiDollar key it has not published yet, a chain address) finishes it from here,
 // so somebody who only uses ArcadeCore is still found by name. At most once every ten minutes per tab, and only once
@@ -325,7 +325,7 @@ setInterval(() => keyCheck().catch(() => {}), 60e3);
 </script>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var data = null;

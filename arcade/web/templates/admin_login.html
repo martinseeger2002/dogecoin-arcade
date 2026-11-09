@@ -19,7 +19,7 @@
       <button class="btn primary" id="adminopen" type="submit">Open the admin panel</button>
       <p class="msg err" id="admintrouble" hidden></p>
     </form>
-    <script>
+    <script nonce="{{ csp_nonce }}">
     document.getElementById('adminlogin').onsubmit = function () {
       var trouble = document.getElementById('admintrouble');
       trouble.hidden = true;

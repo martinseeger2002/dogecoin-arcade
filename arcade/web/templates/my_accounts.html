@@ -20,7 +20,7 @@
   <a class="btn small" id="node-view" href="/view/node">Show the node's wallet</a>
 </div>
 <p class="msg err" id="accounts-trouble" hidden></p>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 function say(text) { $("accounts-trouble").textContent = text; $("accounts-trouble").hidden = !text; }
 

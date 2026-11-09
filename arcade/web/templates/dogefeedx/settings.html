@@ -20,7 +20,7 @@ button.save { margin-top:12px; background:#f3e3a5; color:#000; border:0; border-
 #said { min-height:1.2em; }
 a { color:#f3e3a5; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Settings</h1>
   <p class="note">Your profile is what you publish on the chain, the same one every arcade shows. Notification choices stay in this browser.</p>
@@ -43,7 +43,7 @@ a { color:#f3e3a5; }
   <p id="said-n" class="note"></p>
 </div>
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // Settings over the arcade (2026-11-03, the operator: "Keep UI/UX elements from DogefeedX wire them into the existing
   // arcade architecture"): the name is the @tag the chain says; bio and website are the arcade's profile
@@ -78,8 +78,8 @@ a { color:#f3e3a5; }
 })();
 </script>
 {% if chain %}
-{% if not public %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
-<script type="module">
+{% if not public %}<script nonce="{{ csp_nonce }}">window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "{{ '/wallet.js' if public else '/node-wallet.js' }}";
 import * as mail from "{{ '/messaging.js' if public else '/node-mail.js' }}";
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};

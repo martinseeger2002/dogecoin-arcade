@@ -16,8 +16,8 @@
       <tbody id="b-people"><tr><td class="muted">Loading…</td></tr></tbody></table>
   </fieldset>
 </section>
-<script>window.ARCADE_ME = {{ me|tojson }};</script>
-<script type="module">
+<script nonce="{{ csp_nonce }}">window.ARCADE_ME = {{ me|tojson }};</script>
+<script type="module" nonce="{{ csp_nonce }}">
 import * as mail from "{{ '/node-mail.js' if wallet == 'node' else '/messaging.js' }}";
 const $ = (id) => document.getElementById(id);
 function tell(text, cls) { const p = $("b-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }

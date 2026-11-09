@@ -80,7 +80,7 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
     <button class="go" id="hop-go"></button>
     <p class="switch small"><a href="#" id="hop-stay"></a></p>
   </div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     {% include "_fastest_arcade.js.html" %}
     (function(){
       var WHICH = {{ which|tojson }};
@@ -101,7 +101,7 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
   {# Sent here by a game moving to this arcade (2026-10-23, the 'access' door's move: ?from=<the arcade left>): what
      signing in here means, said before the password is typed, and the sign-in shown first. #}
   <div class="msg" id="moved" hidden></div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function(){
       var from = new URLSearchParams(location.search).get('from') || '';
       if (!/^[a-z0-9.-]{3,253}(:[0-9]{1,5})?$/i.test(from) || from === location.host) return;
@@ -193,7 +193,7 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
     <a href="/">Learn more</a></p>
 </div>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 
 const $ = (id) => document.getElementById(id);

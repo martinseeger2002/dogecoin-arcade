@@ -64,7 +64,7 @@
     <span><img class="coin unshared" src="{{ coin_icon('main') }}" alt=""> read only: asks the holders, keeps none</span>
   </div>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   function $(id) { return document.getElementById(id); }
   function text(tag, value, cls) {

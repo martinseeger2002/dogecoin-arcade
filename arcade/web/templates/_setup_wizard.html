@@ -36,7 +36,7 @@
 .swz .good{color:var(--ok)}
 .swz .bad{color:var(--warn)}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   window.ARCADE_SETUP = true;            // the welcome panel's first-run sheet gives way to this
   var shown = false, closed = false, back = null, timer = null, mineTimer = null, said = null, typed = '';

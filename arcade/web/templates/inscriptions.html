@@ -203,7 +203,7 @@
   {{ pager(page, pages, "/nfts") }}
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 function priceInscription(input){
   var note = document.getElementById('priced');
   var file = input.files && input.files[0];

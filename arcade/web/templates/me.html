@@ -15,7 +15,7 @@
    the same as it looks on the client side on the operator side"). The node's controls are in Admin. #}
 <p class="sub" id="whoami">This node's own identity. Its keys are in its wallet on this machine; the node's settings
   are in <a href="/admin">Admin</a>.</p>
-<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>
+<script nonce="{{ csp_nonce }}">window.ARCADE_CSRF = {{ csrf|tojson }};</script>
 {% else %}
 <p class="sub" id="whoami">Your keys are in this browser. This node holds
   none of them &mdash; it builds what you ask for, you sign it, and it
@@ -113,7 +113,7 @@
           behind "tap to show".</span></span>
     </label>
   </div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   (function () {
     var box = document.getElementById('show-sensitive');
     try { box.checked = localStorage.getItem('arcade.showSensitive') === 'yes'; } catch (e) {}
@@ -230,7 +230,7 @@
   {% endfor %}
   </div>
   <p class="muted small" id="wallet-chains-said" style="margin:6px 0 0" aria-live="polite"></p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   (function () {
     var said = document.getElementById('wallet-chains-said');
     document.querySelectorAll('.wallet-chain').forEach(function (chip) {
@@ -249,7 +249,7 @@
 </div>
 
 {% include "_arcades_panel.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   function load() {
     fetch('{{ "/admin/api/arcades" if node_side else "/account/arcades" }}', {credentials: 'same-origin', cache: 'no-store'})
@@ -276,7 +276,7 @@
   <div id="homebg-preview" style="margin-top:10px;max-width:220px;aspect-ratio:9/16;border-radius:14px;overflow:hidden;
        border:1px solid var(--line);display:none"></div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var box = document.getElementById('homebg-id'), err = document.getElementById('homebg-err'),
       pre = document.getElementById('homebg-preview'), ID = /^[0-9a-f]{64}i\d{1,6}$/;
@@ -319,7 +319,7 @@
     <button type="button" class="btn small ghost" data-theme-set="dark" role="radio">Dark</button>
   </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var bs = document.querySelectorAll('[data-theme-set]');
   function paint() {
@@ -374,7 +374,7 @@
     <button type="button" class="btn small ghost" data-phone-set="web" role="radio">Website</button>
   </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var box = document.getElementById('phone-theme-pref');
   var installed = window.navigator.standalone === true ||
@@ -410,7 +410,7 @@
   paint();
 })();
 </script>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var box = document.getElementById('desk-theme-pref');
   var installed = window.navigator.standalone === true ||
@@ -467,7 +467,7 @@
     in this browser only.</p>
   <label class="switch"><input type="checkbox" id="helper-on"> Show the arcade helper</label>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var box = document.getElementById('helper-on'), OFF = 'arcade.helper.off';
   try { box.checked = localStorage.getItem(OFF) !== '1'; } catch (e) { box.checked = true; }
@@ -517,7 +517,7 @@
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
 import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
 
@@ -1013,7 +1013,7 @@ document.body.dataset.meReady = "yes";
      everywhere'"). #}
   <button type="button" class="small ghost" id="sign-out-everywhere">Sign out everywhere</button>
 </div>
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
   // Sign out, so somebody can join or sign in as another account here (the operator,
   // 2026-09-28). What this browser holds of the account is saved first, then
   // forgotten; the account itself is on the chain and in its sealed copy.

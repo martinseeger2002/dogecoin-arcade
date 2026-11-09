@@ -713,7 +713,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
   color: var(--df-text-secondary);
 }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -778,7 +778,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
 </div>
 
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var LIMIT = 10000, MAX_IMAGES = 4, MAX_BYTES = 1500000;
   var EMOJI = ['🐕','🐶','🦴','🐾','🚀','🌕','💎','🔥','😂','😍','🥹','😎','🤝','👀','🙏','💰','🎉','✨','❤️','👍','🤣','😤','🫡','🧡'];
@@ -1033,7 +1033,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
 </script>
 {% include "dogefeedx/_arcade_act.html" %}
 {% include "dogefeedx/_chain.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   

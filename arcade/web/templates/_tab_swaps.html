@@ -12,7 +12,7 @@
       <div class="ex-h">Your listed swaps <span class="muted" style="font-weight:500">&middot; your arcade fills them</span></div>
       <div id="tab-orders-list"></div>
     </div>
-    <script type="module">
+    <script type="module" nonce="{{ csp_nonce }}">
     import * as wallet from "/wallet.js";
     const CHAIN = {network: "{{ state.messaging.network }}", version: {{ state.messaging.params.pubkeyhash_version }}};
     const box = document.getElementById("tab-trades"), list = document.getElementById("tab-trades-list");

@@ -25,7 +25,7 @@
   </div>
   <p class="msg" id="editionsaid" hidden></p>
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   document.querySelector('#editionask [data-step]').onclick = function () {
     document.getElementById('editionpick').hidden = true;

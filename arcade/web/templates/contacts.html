@@ -311,7 +311,7 @@
   not visible to anyone you message &mdash; but anyone who can log in here can read it.
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 function copyAddr(el){
   navigator.clipboard.writeText(el.textContent.trim()).then(function(){
     el.classList.add('copied');

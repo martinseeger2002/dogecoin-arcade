@@ -344,7 +344,7 @@ html.indesk body.df-dogefeed .df-wallet-item { background: #0a0a0a !important; }
 html.indesk body.df-dogefeed .df-wallet-stat-value, html.indesk body.df-dogefeed .df-wallet-stat-label { color: #fff6dd !important; }
 html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
 </style>
-<script>document.body.classList.add('df-dogefeed');</script>
+<script nonce="{{ csp_nonce }}">document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -416,7 +416,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
 </div>
 
 {% include "dogefeedx/_wallet.js.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   'use strict';
   

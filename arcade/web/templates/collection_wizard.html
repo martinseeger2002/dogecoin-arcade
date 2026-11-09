@@ -226,7 +226,7 @@
         <a class="btn ghost" href="/inscriptions/collection">Back</a>
       </div>
     </form>
-    <script>
+    <script nonce="{{ csp_nonce }}">
     function padFields(box){
       document.getElementById('pad-fields').hidden = !box.checked;
       // The price is required exactly while it is being asked for. Without

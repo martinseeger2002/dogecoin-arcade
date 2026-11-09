@@ -193,7 +193,7 @@
   <div class="msg err" id="trouble" hidden style="margin-top:10px"></div>
 </div>
 
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 const $ = (id) => document.getElementById(id);
 const name = {{ my_name|tojson }};
 const REAL = {{ real_chains|tojson }};

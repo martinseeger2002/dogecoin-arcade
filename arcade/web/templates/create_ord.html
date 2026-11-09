@@ -109,7 +109,7 @@
 </style>
 {% if account_here %}
 {% include "_picture_details.html" %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "/wallet.js";
 
 const $ = (id) => document.getElementById(id);

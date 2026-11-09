@@ -6,7 +6,7 @@
     input field it zoomed in. I don't like that"). iOS still lets a person pinch to zoom. #}
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1{% if fullscreen %},viewport-fit=cover{% endif %}">
 <title>{% block title %}{{ brand.name }}{% endblock %}</title>
-<script>
+<script nonce="{{ csp_nonce }}">
 /* Inside the ARCADE Lite window (arcade/lite/templates/lite.html; 2026-11-04, SadFrog: "one cohesive application"): a page
    in one of its tabs is drawn without its own bar, and a link that belongs in another of the window's tabs opens there.
    On any arcade, not only one whose look is ArcadeCore: a person may wear ArcadeCore on an arcade that opens in another
@@ -77,7 +77,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
     start page, a notification, a link) it goes there and opens that page in a window. A page inside one of its windows
     hides its tabs, and an app link or Home goes back to the home screen instead of a new browser tab. A browser tab is
     never sent there: it already has tabs of its own. -#}
-<script>
+<script nonce="{{ csp_nonce }}">
 /* LIGHT OR DARK (2026-10-24: "the arcade a dark mode, light mode"): the device's own unless this browser picked
    one (me.html; the footer); kept here, so every page and every window of the home screen follows at once. */
 (function () {
@@ -238,7 +238,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
    element each page has to remember to add: eight templates had one and the
    rest sat stale until somebody pressed reload (the operator, D-142). #}
 <body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %}{% if edition_lite %} data-lite{% endif %} data-generation="{{ state.generation }}">
-{% if not edition_lite %}<script>if (document.documentElement.classList.contains('in-window')) document.body.setAttribute('data-lite', '');</script>{% endif %}
+{% if not edition_lite %}<script nonce="{{ csp_nonce }}">if (document.documentElement.classList.contains('in-window')) document.body.setAttribute('data-lite', '');</script>{% endif %}
 {% if not embed %}
 <header><div class="bar">
   <span class="brand">{% if edition_lite %}<a href="/">{{ 'ArcadeCore' if brand.name == 'ARCADE' else brand.name ~ ' · ArcadeCore' }}</a>{% else %}{{ brand.name }}{% endif %}</span>
@@ -270,7 +270,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
   </nav>
   {%- if tabs_kept is defined and not tabs_kept %}
   {#- Your tabs (/look, _yourtabs.html): a visitor's choice is kept in this browser, and hides the same tabs here. #}
-  <script>(function () {
+  <script nonce="{{ csp_nonce }}">(function () {
     var hid = []; try { hid = JSON.parse(localStorage.getItem('lite_tabs_hidden') || '[]'); } catch (e) {}
     hid.forEach(function (id) {
       document.querySelectorAll('header nav a[data-module="' + String(id).replace(/[^\w-]/g, '') + '"]')
@@ -296,7 +296,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
   <a class="signbar-new" href="/join?next={{ path|urlencode }}#make">Create a new account</a>
   <span class="signbar-said" id="signbar-said" role="status" hidden></span>
 </form>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
   const $ = (id) => document.getElementById(id);
   $("signbar").addEventListener("submit", async (event) => {
     // Never a real submit: the password stays in this tab. Its boxes have no names, so even with no script running
@@ -317,7 +317,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
   });
 </script>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // A box for finding somebody else must never start with your own name in it
 // (2026-09-27: the address book's "add somebody" box came pre-filled
 // with his username). That is the browser's password AutoFill: every page has
@@ -344,7 +344,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
 })();
 </script>
 {% if not embed %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // A mintpad inscription asks the page it is framed in to buy one listing
 // (arcade/mintpad.py account_page): the sandbox holds no key and cannot reach
 // the wallet. Only a frame of an inscription on THIS page may ask, one at a
@@ -818,7 +818,7 @@ window.addEventListener("message", async (e) => {
 </script>
 {% endif %}
 {% if not embed %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // Share a piece to the feed, with something said about it (2026-09-27).
 // Any [data-share-nft] button on any page: one sheet with the piece, an
 // optional note, and Post. The post is an ordinary one, signed in this tab,
@@ -903,7 +903,7 @@ document.addEventListener("click", async (event) => {
 </style>
 {% endif %}
 {% if account_here and not embed %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // "Take it back": an accepted offer binds until the coins it was signed over
 // are spent (2026-09-27, "Always binding"), so taking it back is one
 // small transaction back to yourself, signed here like any other.
@@ -945,7 +945,7 @@ document.addEventListener("click", async (event) => {
   }
 });
 </script>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // Accepted offers finish themselves (2026-09-26: "when it is accepted, it
 // should just automatically be signed and sent"). An offer is a message, so the
 // seller's answer is half a trade -- their signature over the piece -- and the
@@ -1007,7 +1007,7 @@ document.addEventListener("click", async (event) => {
   <span>Your wallet is locked.</span>
   <button type="button" class="small" id="unlockbar-go">Unlock</button>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 // Shown the moment the page draws when this tab holds no open wallet (2026-10-20: "it takes about three
 // seconds before the unlock button even appears ... The unlock button should appear as soon as the page opens").
 // The wait was wallet.js loading, then asking the other tabs for an open wallet (0.4 s, then 1.5 s more); the
@@ -1024,7 +1024,7 @@ document.addEventListener("click", async (event) => {
   };
 })();
 </script>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
   const w = await import("/wallet.js");
   const keys = await w.opened(ARCADE_CHAIN);
   const bar = document.getElementById("unlockbar");
@@ -1042,7 +1042,7 @@ document.addEventListener("click", async (event) => {
   <a class="btn small" id="shortpw-go" href="/restore">Set a new password</a>
   <button type="button" class="small" id="shortpw-later">Not now</button>
 </div>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var who = "", bar = document.getElementById("shortpwbar");
   try { who = sessionStorage.getItem("arcade-short-password") || ""; } catch (e) {}
@@ -1075,7 +1075,7 @@ document.addEventListener("click", async (event) => {
 })();
 </script>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var h = document.querySelector('header');
   if (!h) return;
@@ -1108,7 +1108,7 @@ document.addEventListener("click", async (event) => {
 {% block body %}{% endblock %}
 </main>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 // Formatting for the two figures every composer quotes: a file's size and what
 // it will cost in dust. Defined once here because both composers quote both,
 // and both got them wrong in the same way.
@@ -2519,7 +2519,7 @@ function arcadeFileCost(bytes){
   window.arcadePatch = apply;   // for tests/test_live_update.py
 })();
 </script>
-<script>
+<script nonce="{{ csp_nonce }}">
 // Content screening's covers on pictures (arcade/moderation.py). The /content
 // route already serves a sensitive picture blurred and an unchecked one as
 // "checking"; this labels them and lets the viewer lift a cover. Nothing here
@@ -2654,7 +2654,7 @@ details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;paddin
   border:1px dashed var(--line);border-radius:10px;list-style:none}
 details.covered[open]>summary{margin-bottom:6px}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 // Blocked people (2026-09-25): kept in this browser only, like the
 // address book, so this node never learns who anybody blocked. Pages read it to
 // hide what those people post and send; the address book lists and undoes it.
@@ -2693,7 +2693,7 @@ window.arcadeBlocked = (function () {
 })();
 </script>
 {% if account_here and not embed and path not in ('/me', '/join') %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // Nobody can write to an account that has not published its messaging key, so
 // signup publishes it straight after claiming the name. When that fails -- no
 // coins yet, the first transaction still settling -- /me used to be the only
@@ -2732,7 +2732,7 @@ window.arcadeBlocked = (function () {
 })().catch(() => {});
 </script>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // The installable app (2026-09-25): register the service worker that keeps
 // an offline page and shows Messenger notifications. It caches no pages
 // (sw.js), so the live, in-place refresh above is untouched. Not in an embed:
@@ -2761,7 +2761,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
       Console and Build. Inside the window each opens the window's own (base.html's click above). #}
   &middot; <a href="/look">theme and tabs</a> &middot; <a href="/console">console</a> &middot; <a href="/build">build</a>
 </footer>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   var a = document.getElementById('theme-pick'), NAMES = {auto: 'Auto', light: 'Light', dark: 'Dark'};
   function label() { a.textContent = 'Theme: ' + NAMES[window.arcadeTheme()]; }
@@ -2776,7 +2776,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 </script>
 {% endif %}
 {% if not embed and not fullscreen %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // Add to Home Screen (2026-10-05, the operator: "add a pop-up ... when it is not opened as
 // a PWA telling them to add it to their home screen ... or just a button that will
 // add it ... on both android and Apple phones and whatever other cell phones").
@@ -2876,7 +2876,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 </script>
 {% endif %}
 {% if not embed and not fullscreen %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // Pull to refresh in the installed app (2026-09-27: "When I'm in the
 // PWA on my iPhone, if I scroll all the way to the top and I pull down ... it
 // would refresh the page. I would like it to have the same behavior in the
@@ -2935,7 +2935,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 })();
 </script>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // A node with no operator yet (or one whose operator is only a username and
 // password), opened on its own machine by a signed-in account: say where to
 // make it theirs (2026-09-30: bringing an account over to run a new node).
@@ -2954,7 +2954,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   }).catch(function () {});
 })();
 </script>
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 // Trades run on every arcade page, background tabs too (2026-10-13): one tab at a
 // time runs them (wallet.js startTradeRunner). Nothing happens for a locked wallet.
 if (typeof ARCADE_SIGNED !== "undefined" && (ARCADE_SIGNED || ARCADE_ME)) {
@@ -2968,7 +2968,7 @@ if (typeof ARCADE_SIGNED !== "undefined" && (ARCADE_SIGNED || ARCADE_ME)) {
 }
 </script>
 {% include "_helper.html" %}
-<script>
+<script nonce="{{ csp_nonce }}">
 /* RINGING IN AN OPEN PAGE (2026-10-31: "If I have the arcade desktop open in my browser and somebody is trying to get a hold
    of me, I want them to be able to call me and my arcade start ringing"). Every page of a signed-in account checks in
    (arcade/ring.py's rules stay the node's: a contact, an app with Notifications on, a proved caller). One ring on screen

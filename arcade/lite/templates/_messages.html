@@ -35,8 +35,8 @@
   {% endif %}
 </section>
 {% if wallet %}
-{% if wallet == 'node' %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
-<script type="module">
+{% if wallet == 'node' %}<script nonce="{{ csp_nonce }}">window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module" nonce="{{ csp_nonce }}">
 import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
 import * as mail from "{{ '/node-mail.js' if wallet == 'node' else '/messaging.js' }}";
 const NODE = {{ 'true' if wallet == 'node' else 'false' }};
