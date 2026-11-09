@@ -88,7 +88,7 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-08 · SadFrog's side (Claude) · branch `team/security-fixes` (on `main` ce0087cd) · review follow-ups
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/security-fixes` (on `main` 8287e37b) · review follow-ups
 
 Follow-ups from two outside reviews of 8e4430f8 (the DigiByte wallet, and the whole source), checked against the code;
 one commit each, every one with a test. SadFrog will say which to deploy first.
@@ -115,8 +115,16 @@ one commit each, every one with a test. SadFrog will say which to deploy first.
   (0x0770), a self-send said plainly, the Wallet caps the fee at 0.5 DGB; a mint's collateral is checked as the
   signer's own vault in the browser (`ddMintVault`); Gather leaves coins of 0.0001 DGB or less alone (DigiAssets);
   docs on the node's wallet and on what the node keeps.
-- **Tests:** tests/signup_proof.py is how a test signs up now. Full suite on the workhorse against main: see the PR.
-  test_claim_browser's second test needs the first (it fails alone, also on main).
+- **Tests:** tests/signup_proof.py is how a test signs up now. test_claim_browser's second test needs the first (it
+  fails alone, also on main).
+- **Before merging, the operator's agent please finish the test run** (SadFrog asked to hand it over):
+  - On 17c3f88d the full suite was compared test by test against main: nothing failed on the branch that passed on
+    main (one setup error from an earlier test's leftover subprocess, which passes alone).
+  - Rebased on ce0087cd (now on 8287e37b), the full run was stopped at 98%, unnamed: 16 F and 3 E in the progress dots, against 10 before
+    the rebase. Main ran beside it, so browser tests may simply have been slow; the three mesh tests
+    (test_realtime_anynode_browser, test_mesh_named, test_talk_relay) did not run.
+  - Please run the full suite on this branch and on main, compare test by test, and tell SadFrog's side about any
+    test that fails only here before merging.
 - **For the operator, proposals (no code here):** (1) publish the installer's SHA-256 somewhere besides the site
   (README, release notes); (2) sign the index bootstrap manifests with the release key, so a first install can check
   them; (3) a script CSP (234 inline scripts in 113 templates move to nonces, report-only first), best planned
