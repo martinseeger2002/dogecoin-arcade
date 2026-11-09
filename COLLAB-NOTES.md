@@ -88,6 +88,33 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/account-bad-bodies` (on `team/dgb-staging-tests` 0c4341c7) · bad bodies refused, mintpad/announced bounded
+
+The two items the DGB staging entry below left open. Two commits:
+
+- **8d2f6f04 a badly shaped body is a 400, not a 500.** app.py reads body fields through three small readers,
+  `_said_int`, `_said_list` and `_said_hex` (next to `_count`). Each raises a plain ValueError, which every route
+  already answers 400, and does so before the node is asked. A good body reads exactly as before. They are used in
+  trade/facts, mailbox, fill, fill/sign (`_leg_answered`), list/sign and bundle/fill (`_bundle_terms`): no signed
+  bytes, no txid, hex of the wrong length or a list where a number goes is refused there now. dust/sweep reads only
+  its chain, and its 500 came from the tests having no node; the sweeps now answer that case 503 (`no_node_is_503`),
+  so any 500 left is a real crash. A wider sweep (`tests/test_account_bad_bodies.py`) covers every /account write and
+  every public POST (door.public_path). It sends bodies that are not objects, and fields of the wrong kind, Infinity,
+  NaN and numbers past 64 bits included. It found the same fault in orders/post, orders/cancel, mintpad/announced,
+  standing/sign, ord/forget, keys/<id>, claimlots, standing, tokenpad/inscribe, token/manage, pools/open, split,
+  /r/referee/sign, llm/grant, react and /r/state/update. The same readers fix most of them; the rest are fixed where
+  the fault sits: `ledger.parse_amount` and `wallet.parse_amount` (Infinity/NaN), `LedgerIndex.property` and
+  `.inscription` (past 64 bits), and `swap.leg_of` (a token number that is not one). `test_account_cross_writes.py`
+  now also fails on any 500. No rule in exchange-safety.md changes: these routes only refuse a malformed request
+  earlier.
+- **6f710778 mintpad/announced.** It wrote a setting for any collection name. Now it refuses (404, nothing written) a
+  collection the account has no open listings of. It writes only when one of the account's own listings joins the
+  list. The name stays held to 120 characters (`tests/test_mintpad_inscription.py`).
+
+Tests on the mini: the new file, the sweep, test_mintpad_inscription, test_collection_web and 27 neighbouring files
+(listings, swap, fill/take/offer/order, bundle, standing, claims, mailbox, llm, apikeys, ledger, launchlist and
+others) all pass: 351 + 1 skipped for the neighbours, 51 for the touched files. Needed from the other side: nothing
+beyond applying it after `team/dgb-staging-tests`, whose sweep it extends.
 ### 2026-11-09 · SadFrog's side (Claude) · branch `team/address-claim-proof` (on `team/dgb-staging-tests` 0c4341c7) · a first claim of an address is proved
 
 From the security review. `/account/address` and `/account/segwit/register` took the first claim of any well-formed
