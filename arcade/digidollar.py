@@ -10,7 +10,9 @@ as a coin beside DGB.
 * **The coins** come from this arcade's own index of the chain, as DGB's do (`on_block`, beside utxos.on_block): each
   account that opens DigiDollar is watched from then on (`dd_watched`), and its DigiDollar coins are kept in `dd_coin`,
   journalled, so a reorg gives them back. Coins it got before then are read from the chain's own coin set once
-  (`seed_from_core`), where this arcade runs its Core: a borrowed Core serves no `scantxoutset`.
+  (`seed_from_core`), where this arcade runs its Core. A borrowed Core serves no `scantxoutset`, so there the arcade
+  it borrows from reads its coin set instead (`seed_from_lender`, 2026-11-09). Until then the Wallet says the block
+  its history starts at (`from_block`).
 * **An address** is the account's key's Taproot output in DigiByte Core's encoding (base58.cpp CDigiDollarAddress):
   base58check of `52 85` ("DD...") on mainnet or `b1 29` ("TD...") on the test chain, and the 32-byte output key.
 * **A send** is built by the DigiDollar module's own code (`ddlib.ddtx.send`, the module's lib/ddtx.py byte for
@@ -163,6 +165,59 @@ def seed_from_core(index, rpc, net: str, dd_address: str, upto: int) -> int | No
                     cur = db.conn.execute("INSERT OR IGNORE INTO dd_coin (txid, vout, address, cents, height) "
                                           "VALUES (?,?,?,?,?)", (coin["txid"], vout, dd_address, cents, height))
                     filed += cur.rowcount
+        db.conn.execute("UPDATE dd_watched SET seeded = 1 WHERE address = ?", (dd_address,))
+    return filed
+
+
+def seed_from_lender(index, rpc, net: str, dd_address: str, upto: int) -> int | None:
+    """seed_from_core on a borrowed DigiByte (2026-11-09, security review: its history stayed "not whole" for good):
+    the coin set read by the arcade it is borrowed from (coinscan.Lender, `arcade_coinscan`), as the watcher reads a
+    borrowed chain's DGB coins below its floor (coinscan.collect). `rpc` is the borrowed chain's client.
+
+    The sharer answers at once with what it has read so far. The coins it names, at or below `upto`, are checked against
+    their blocks (proved from their bytes as every borrowed block is): the transaction is there and its "DD" record
+    gives that output dollars to this address. A coin spent since (`gettxout`, the mempool left out) is not filed. That
+    none was left out is the sharer's word, as in coinscan.collect.
+
+    Returns how many coins it filed, and marks the address read whole; None while the sharer has not read it yet (or
+    asks this arcade to wait), to be asked again later. coinscan.NotLent when the sharer reads no coin set for it."""
+    from . import coinscan
+    from .rpc import RpcError
+    try:
+        said = rpc.batch([(coinscan.SCAN_METHOD, [{"addresses": [dd_address]}])])
+    except RpcError as exc:
+        if exc.code == coinscan.NOT_LENT and "too often" not in str(exc.message):
+            raise coinscan.NotLent(str(exc.message)) from exc
+        return None                                        # asked too often (the watcher's own ask): later
+    answer = said[0] if said and isinstance(said[0], dict) else {}
+    if dd_address in (answer.get("waiting") or []):
+        return None
+    if dd_address not in (answer.get("coins") or {}):
+        # A sharer from before DigiDollar addresses were read skips one: neither found nor waiting.
+        raise coinscan.NotLent("the sharer reads no DigiDollar coin set")
+    if int((answer.get("height") or {}).get(dd_address) or 0) < int(upto):
+        return None                                        # read before the address was watched: asked again later
+    key = key_of(net, dd_address)
+    blocks: dict[int, dict] = {}
+    found: list[tuple[str, int, str, int, int]] = []
+    for txid, vout, _sats, height in answer["coins"][dd_address] or []:
+        height, vout = int(height), int(vout)
+        if height <= 0 or height > int(upto):
+            continue                                       # above `upto`: on_block files it
+        if height not in blocks:
+            blocks[height] = rpc.get_block(rpc.get_block_hash(height), 2)
+        tx = next((t for t in blocks[height].get("tx") or [] if isinstance(t, dict) and t.get("txid") == txid), None)
+        cents = next((c for n, c, k in (dollars_out(tx) if tx else []) if n == vout and k == key), None)
+        if cents is None:
+            continue                                       # not in its block, or no dollars of this address's
+        found.append((str(txid), vout, dd_address, cents, height))
+    unspent = rpc.batch([("gettxout", [t, v, False]) for t, v, _a, _c, _h in found]) if found else []
+    filed = 0
+    with index.open() as db:
+        for coin, still in zip(found, unspent):
+            if still:
+                filed += db.conn.execute("INSERT OR IGNORE INTO dd_coin (txid, vout, address, cents, height) "
+                                         "VALUES (?,?,?,?,?)", coin).rowcount
         db.conn.execute("UPDATE dd_watched SET seeded = 1 WHERE address = ?", (dd_address,))
     return filed
 

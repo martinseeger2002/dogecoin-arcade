@@ -18,6 +18,11 @@ So a sharer answers SCAN_METHOD, its own call and not a Core's:
 
 What it costs a borrower's users: the sharer learns which addresses that arcade's accounts hold, where a borrower that
 only reads whole blocks says nothing of them.
+
+DigiDollar addresses too (2026-11-09, security review): on a DigiByte chain a sharer also reads the coin set for a
+DigiDollar address ("DD..." / "TD..."), as its Taproot script (`raw(...)`, what digidollar.seed_from_core asks its own
+Core). Its coins are zero-value outputs, named [txid, vout, 0, height]; the borrower reads their dollars from their
+blocks (digidollar.seed_from_lender). A sharer from before this skips such an address: it is neither found nor waiting.
 """
 from __future__ import annotations
 
@@ -61,6 +66,17 @@ def _address(text: str, params) -> bool:
     return len(payload) == 20 and version in (params.pubkeyhash_version, params.scripthash_version)
 
 
+def _dd_script(text: str, params) -> bytes | None:
+    """The Taproot script a DigiDollar address pays on this DigiByte chain, or None (not one, or not DigiByte)."""
+    from . import digidollar, taproot
+    if params.name not in digidollar.NETS or str(text)[:1] not in ("D", "T"):
+        return None
+    try:
+        return taproot.p2tr(digidollar.key_of(params.name, text))
+    except ValueError:
+        return None
+
+
 class NotLent(Exception):
     """This sharer reads no coin set for borrowers."""
 
@@ -86,7 +102,7 @@ class Lender:
         "waiting": [...], "next": seconds until the next scan may start}. NotLent when this Core has no coin set."""
         asked = asked if isinstance(asked, dict) else {}
         addresses = list(dict.fromkeys(a for a in (str(a) for a in (asked.get("addresses") or []))
-                                       if _address(a, self.params)))[:SCAN_ADDRESSES]
+                                       if _address(a, self.params) or _dd_script(a, self.params)))[:SCAN_ADDRESSES]
         now = self.clock()
         with self.lock:
             if self.none:
@@ -116,19 +132,26 @@ class Lender:
         from .utxos import SPENDABLE
         with self.lock:
             addresses = sorted(self.waiting)
+        dd = {a: script.hex() for a in addresses if (script := _dd_script(a, self.params)) is not None}
+        by_script = {script: a for a, script in dd.items()}
         try:
             with self.rpc() as rpc:
                 held = getattr(rpc, "_timeout", None)
                 if held is not None:
                     rpc._timeout = max(held, SCAN_SECONDS)
                 try:
-                    said = rpc.call("scantxoutset", "start", [f"addr({a})" for a in addresses]) or {}
+                    said = rpc.call("scantxoutset", "start", [f"raw({dd[a]})" if a in dd else f"addr({a})"
+                                                              for a in addresses]) or {}
                 finally:
                     if held is not None:
                         rpc._timeout = held
             height = int(said.get("height") or 0)
             coins: dict[str, list] = {a: [] for a in addresses}
             for coin in said.get("unspents") or []:
+                if str(coin.get("scriptPubKey", "")) in by_script:      # a DigiDollar coin: zero DGB, its dollars in its block
+                    coins[by_script[str(coin["scriptPubKey"])]].append(
+                        [str(coin["txid"]), int(coin["vout"]), 0, int(coin.get("height") or 0)])
+                    continue
                 parsed = parse_output(str(coin.get("scriptPubKey", "")), 0, self.params)
                 if parsed.type not in SPENDABLE or parsed.address not in coins:
                     continue

@@ -78,6 +78,10 @@ coin set for the arcades borrowing from it (`arcade_coinscan`, `arcade/coinscan.
 - **Not every Core has a coin set.** Dogecoin and Pepecoin 1.14 have none, and neither does Kotia, whose
   borrowers use the sharer's whole unspent set instead. An older sharer does not answer `arcade_coinscan`
   at all. The borrower asks such a sharer again after six hours.
+- **DigiDollar addresses too** (2026-11-09). On DigiByte the sharer also reads a DigiDollar address
+  (DD... or TD...) as its Taproot script, so a borrowing arcade's Wallet can read an account's DigiDollar
+  history whole (`digidollar.seed_from_lender`). Each coin's dollars are read from its block's "DD" record
+  and checked as above. Until then, the Wallet says which block the history starts at.
 
 ## Which sharer is asked
 
