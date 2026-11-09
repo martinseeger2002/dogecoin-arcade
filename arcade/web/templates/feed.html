@@ -45,7 +45,7 @@
        node never held. So the second half asks the chain. #}
     {% if (p.mine and not public) or (acts and p.author == mine.address) %}
     <form method="post" action="/feed/{{ p.txid }}/delete" style="margin-left:auto"
-          {% if not acts %}onsubmit="return confirm('Delete this? The words stay on the chain for ever — no arcade will show them.')"{% endif %}>
+          {% if not acts %}data-ask="Delete this? The words stay on the chain for ever — no arcade will show them."{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
       <button class="ghost small" type="submit">Delete</button></form>
@@ -1056,6 +1056,11 @@ document.addEventListener('click', function(e){
   if (!b) return;
   if (b.dataset.fold) foldComments(b, b.dataset.fold);
   else toggle(b.dataset.toggle, b);
+});
+// Delete asks first on the node's own page (the question is the form's data-ask).
+document.addEventListener('submit', function(e){
+  var form = e.target;
+  if (form.matches && form.matches('form[data-ask]') && !confirm(form.dataset.ask)) e.preventDefault();
 });
 
 // Comments fold both ways: a count that only opens is a count you can press
