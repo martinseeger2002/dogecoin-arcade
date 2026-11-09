@@ -141,6 +141,18 @@ def test_unscreened_content_is_served_exactly_as_before(client, monkeypatch):
     assert app.get(f"/moderation/verdicts?ids={KEY}").json() == {"enabled": False, "verdicts": {}}
 
 
+def test_switching_screening_off_shows_what_waited_for_a_model_that_is_gone(client, monkeypatch):
+    app, state = client
+    gone = {"url": "http://127.0.0.1:9/v1", "model": "m", "timeout": 2}
+    state.set_setting("moderation", gone)
+    _holding(state, monkeypatch, "image/png", PICTURE)
+    assert app.get(f"/content/{KEY}").status_code == 503, "checking while the model is on"
+    state.set_setting("moderation", {**gone, "off": True})
+    response = app.get(f"/content/{KEY}")
+    assert response.status_code == 200 and response.content == PICTURE
+    assert app.get(f"/moderation/verdicts?ids={KEY}").json() == {"enabled": False, "verdicts": {}}
+
+
 def test_a_fine_picture_is_served_as_usual(client, monkeypatch, model):
     app, state = client
     _screened(state, model)

@@ -30544,6 +30544,14 @@ def create_app(state: AppState) -> FastAPI:
             out["error"] = str(exc)[:200]
         return out
 
+    def _screen_away() -> bool:
+        """Whether screening is on and its model has not answered lately, so new pieces wait "Checking"."""
+        try:
+            screen = state.screen()
+            return bool(screen.enabled and screen.away())
+        except Exception:                             # noqa: BLE001 -- the panel still loads
+            return False
+
     @app.get("/admin/api/state")
     def admin_state(request: Request):
         who = _admin_check(request)
@@ -30581,7 +30589,8 @@ def create_app(state: AppState) -> FastAPI:
             "moderation": {k: v for k, v in (state.setting("moderation") or {}).items()
                            if k != "key"}
                           | ({"has_key": True} if (state.setting("moderation") or {}).get("key")
-                             else {}),
+                             else {})
+                          | ({"away": True} if _screen_away() else {}),
             "push": {"available": push is not None,
                      "devices": (len(push.subscribed()) if push is not None else 0)},
             "selling": {"auto_update": bool(state.setting("auto_update", True)),
@@ -31962,6 +31971,11 @@ def create_app(state: AppState) -> FastAPI:
                         new["key"] = str(mod["key"]).strip()
                     elif mod.get("clear_key"):
                         new.pop("key", None)
+                    if "on" in mod:                   # the switch: off keeps the address for later
+                        if mod["on"]:
+                            new.pop("off", None)
+                        else:
+                            new["off"] = True
                     state.set_setting("moderation", new)
                 else:
                     # Empty is off: nothing is screened, and everything shows.

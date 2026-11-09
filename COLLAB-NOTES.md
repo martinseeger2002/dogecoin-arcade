@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/screening-switch` · Admin → Safety: a switch that turns screening off
+
+Seen on node 2: its screening model was stopped on purpose, and every new picture and post then waited "Checking" with no way out. Admin → Safety had only the address field ("leave it empty and nothing is screened"), which nobody reads as an off switch, and emptying it loses the address.
+- **Switch (`admin.html`, `app.py` /admin/api/settings):** "Screen pictures and posts before they show". Off saves `"off": true` in the `moderation` setting and keeps the address, model and token for when it goes back on. A page that sends no `on` leaves it as it was. An empty address is still off, as before.
+- **`moderation.Screen.enabled`** is false when `off` is set, so every caller already skips screening (content, covers, verdicts) and what waited shows on its next load.
+- **Panel line:** when screening is on but the model has not answered lately (`Screen.away()`), it says so and points at the switch; `/admin/api/state` carries `moderation.away`.
+- **Tests:** `test_the_screening_switch_turns_it_off_and_keeps_the_address` (tests/test_admin.py), `test_switching_screening_off_shows_what_waited_for_a_model_that_is_gone` (tests/test_moderation.py).
 ### 2026-11-09 · the operator's side (Claude) · merged PR #125 (hardening round 2) onto master
 
 All 57 commits cherry-picked onto master 2d2bfb90. The conflicts were the public mirror's filtered comment wording beside the branch's new `nonce` attributes (base.html, admin.html, exchange.html, ord_collection.html), the DigiAssets import in doginals.py and the bad-bodies change in the trade orders route; each took the branch's code with this repository's own wording. Checked by running the publish filter over the result and comparing it with the branch.
