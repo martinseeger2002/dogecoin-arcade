@@ -474,12 +474,12 @@ def command_ddsend(ctx, address, amount, chain="test"):
         raise ValueError("mainnet DigiDollar sends are off on this arcade: its operator turns them on (ddmainnet)")
     key = dd_key(net, address)
     cents = _cents(amount)
-    _ready(ctx, net)
     pay_address, owner = _owner(ctx, net)
-    # Said plainly (2026-11-08, security review): the Wallet's review refused a send to oneself as "not the send you
-    # typed". The arcade's own send (app.py _dd_send) says the same.
+    # Said plainly, before the chain is asked anything (2026-11-08, security review): the Wallet's review refused a
+    # send to oneself as "not the send you typed". The arcade's own send (app.py _dd_send) says the same.
     if str(address).strip() == dd_address(net, owner):
         raise ValueError("that is your own DigiDollar address: send to somebody else's")
+    _ready(ctx, net)
     held = _holdings(ctx, net, owner)
     coins, script = _coins(ctx, net, pay_address)
     if not coins:

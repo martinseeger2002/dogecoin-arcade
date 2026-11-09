@@ -11,8 +11,18 @@ from test_bells_luckycoin import _with                           # noqa: E402
 import signup_proof as SP                                         # noqa: E402
 
 from arcade import modhost                                        # noqa: E402
+from arcade.lite import commands as cmdlib                        # noqa: E402
+
+PILOT = pathlib.Path(__file__).resolve().parent.parent / "examples" / "packages" / "digidollar"
 from arcade.config import NETWORKS                               # noqa: E402
 from arcade.script import b58check_encode, hash160               # noqa: E402
+
+
+def _module_on(state):
+    """The Wallet's send is the DigiDollar module's `ddsend` (since #116), so the module is on here."""
+    op = cmdlib.Caller(state, "operator", local=True)
+    cmdlib.run_line(op, f"installmodule {PILOT}")
+    cmdlib.run_line(op, "install digidollar")
 
 
 def _ask(app, state, net):
@@ -24,6 +34,7 @@ def _ask(app, state, net):
 def test_a_mainnet_wallet_send_waits_for_ddmainnet(client, monkeypatch):
     app, state = client
     _with(state, monkeypatch, "dgb", "dgbtest")
+    _module_on(state)
     pubkey = _sign_in(app)
     asks = {}
     for net in ("dgb", "dgbtest"):
@@ -48,6 +59,7 @@ def test_a_send_to_ones_own_digidollar_address_is_said_plainly(client, monkeypat
     from arcade import digidollar
     app, state = client
     _with(state, monkeypatch, "dgbtest")
+    _module_on(state)
     pubkey = _sign_in(app)
     priv, pub = SP.coin_key()
     state.set_setting(f"address:dgbtest:{pubkey}", b58check_encode(NETWORKS["dgbtest"].pubkeyhash_version, hash160(pub)))
