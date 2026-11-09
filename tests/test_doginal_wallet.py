@@ -214,7 +214,7 @@ def test_a_coin_carrying_a_doginal_is_held_not_spendable(client, monkeypatch, tm
     page = app.get("/me/wallet").text
     assert 'const inscWord = c.network === "doge" ? "Doginals" : c.network === "main" ? "Pepinals"' in page
     assert "Litecoin inscriptions" not in page, "no ords on Litecoin (2026-11-05)"
-    assert ': c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : c.network === "dgb" ? "DigiByte ordinals" : c.network === "flop" ? "Flopinals" : "inscriptions";' in page
+    assert ': c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : c.network === "dgb" ? "DigiByte ordinals and DigiAssets" : c.network === "dgbtest" ? "DigiAssets" : c.network === "flop" ? "Flopinals" : "inscriptions";' in page
     assert "held in ${inscWord}" in page
 
 
