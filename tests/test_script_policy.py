@@ -30,18 +30,18 @@ TEMPLATE_DIRS = (ROOT / "web" / "templates", ROOT / "lite" / "templates")
 #: mintpad and launchpad are bytes that go on a chain, and the offline recovery page carries its own hash policy.
 NOT_JINJA = {"mintpad.html", "tokenpad.html", "recover.html"}
 
-#: Inline on...= handlers in the templates on 2026-11-09 (68 in 32 files). Phase 2 moves them into the pages' scripts;
-#: until then this number may only go down. Lower it when you move one; never raise it -- add a listener instead.
-INLINE_HANDLERS_AT_MOST = 68
+#: Inline on...= handlers in the templates: 68 in 32 files on 2026-11-09, all moved into the pages' nonced scripts by
+#: phase 2 the same day. None may come back: an enforced script policy would stop it -- add a listener instead.
+INLINE_HANDLERS_AT_MOST = 0
 
 #: Pages whose inline scripts carry no nonce: the wizards' previews, drawn as the page that will be inscribed (chain
 #: bytes, its scripts included). They belong under the inscription sandbox's own policy, not the page policy:
 #: team/innerhtml-audit sends them app._preview_headers() (contentlib.CONTENT_HEADERS + frame-ancestors 'self'), and a
 #: page with a policy of its own gets no script policy beside it. Once that is merged, this set is empty.
-UNNONCED_PAGES = {"/tokens/launchpad/preview", "/inscriptions/collection/preview"}
+UNNONCED_PAGES: set = set()   # empty since team/innerhtml-audit: the previews send the sandbox policy
 
 SCRIPT_TAG = re.compile(r"<script\b[^>]*>", re.I)
-HANDLER = re.compile(r"\son[a-z]+=")
+HANDLER = re.compile(r"(?:[\s\"'%}>])on[a-z]+=")  # also one right after a Jinja tag: {% if %}onsubmit=
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.S)
 
 
