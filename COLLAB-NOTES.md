@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · the operator's side (Claude) · Core copies are served faster: 6 pieces at once, 240 a minute per asker
+
+Asked by the boxb-Arcade V1.0 session, approved by the operator. V1.0 fetched Strawberry's Pepecoin mainnet copy (2132 pieces of 8 MiB) at about 6 MB/s, held by `arcade/mesh/coreboot.py`'s `SERVING_AT_ONCE = 2` (everybody together) and `PIECES_PER_MINUTE = 60` (per asker, about 8 MiB/s).
+- **New limits:** 6 and 240, up to about 32 MiB/s to one asker.
+- **Unchanged:** our own fetcher still asks `core_copy.IN_FLIGHT` (4) of each holder. The ledger share (`ledgershare.py`) keeps its own limits.
+- **Not done (needs new code, the operator's call):** more holders of one copy. An arcade serves only copies it made from its own Core; a synced arcade never fetches one, and a fetched copy is never served on.
+
 ### 2026-11-09 · the operator's side (Claude) · merged PR #97 (nodes globe) onto master
 
 The operator chose to merge it as is, with the members' places in the public `/globe.json` (city or country, as the PR has them).

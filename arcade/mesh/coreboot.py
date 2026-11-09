@@ -32,8 +32,10 @@ from .. import core_copy as cc
 log = logging.getLogger("arcade.mesh")
 
 PART = 60 * 1024
-SERVING_AT_ONCE = 2
-PIECES_PER_MINUTE = 60                  # 8 MB each: up to 8 MB/s to one asker
+# Raised 2026-11-09 (the operator: Arcade V1.0 fetched Strawberry's Pepecoin mainnet copy at about 6 MB/s, held by the old
+# 2 and 60). SERVING_AT_ONCE is for everybody together; PIECES_PER_MINUTE is per asker.
+SERVING_AT_ONCE = 6
+PIECES_PER_MINUTE = 240                 # 8 MB each: up to 32 MB/s to one asker
 MANIFEST_MAX = 64 * 1024 * 1024
 WAIT_SECONDS = 300
 HEARD_FRESH = 600
