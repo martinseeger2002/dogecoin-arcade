@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-09 · SadFrog's side (Claude) · branch `team/frame-ancestors` (on `main` 50182a46) · every page says who may frame it
+
+Found while checking #121's fixes on the live arcades: pages drawn outside `render()` sent no Content-Security-Policy at all, so any site could frame them. On a live arcade that includes `/lite`, the ArcadeCore window, which holds the wallet once it is unlocked (clickjacking).
+- **Fix (`arcade/web/app.py`):** `_SafeHeaders` adds `PAGE_CSP` (`frame-ancestors 'self'; object-src 'none'; base-uri 'self'`, the policy `render()` already sends, now named once) to every `text/html` answer that sets no policy of its own. Content, module pages and `/recover` keep theirs.
+- **Test (`tests/test_safe_headers.py`):** walks every GET route without a path parameter and fails on any HTML page with no `frame-ancestors`. On `main` it names ten: `/lite`, `/globe`, `/browser`, `/meshweb`, `/offline`, `/terms`, `/terms/left`, `/admin/terms/preview`, `/tokens/launchpad/preview` and `/dogefeedx/network`. A second test checks `/recover` keeps its single `frame-ancestors 'none'` policy.
+- Nothing frames these pages from another origin today (the launchpad preview is framed by the arcade's own token page), so `'self'` changes nothing a visitor sees.
+
 ### 2026-11-09 · the operator's side (Claude) · merged PRs #121 #122 #123 onto master
 
 All applied cleanly, in order. SadFrog asked for #121 first (sign-up, git-update and swap fixes); the operator chose to deploy all three together.
