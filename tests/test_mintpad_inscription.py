@@ -102,3 +102,39 @@ def test_a_token_mintpad_is_found_from_its_token_page(client):
     # Nothing on its book, so it is finished and off the Mintpads list (Robin,
     # 2026-09-28) -- still found from its token and its pair, as above.
     assert f"/content/{real}" not in app.get("/exchange?tab=mintpads").text
+
+
+def test_announced_keeps_only_a_collection_the_account_has_listings_of(app_state):
+    """/account/mintpad/announced wrote a setting for any collection name it was sent, so one account could grow this
+    node's settings without end (2026-11-09, security review). A name the account has no open listings of is refused
+    now and writes nothing, and a real one is written only when one of its own listings joins the list."""
+    from fastapi.testclient import TestClient
+
+    from arcade.web.app import create_app
+    from test_account_cross_writes import LOCAL, _sign_in
+    from test_collection_web import index_with_a_collection
+    from test_launchlist import _a_piece_on_the_pad
+    (app_state.home / "tokens-chain").write_text("main\n")      # test_collection_web.on_mainnet
+    app_state._token_chain = None
+    app_state.set_setting("node_trades", True)
+    index_with_a_collection(app_state.home)
+    _a_piece_on_the_pad(app_state, f"{1:064x}")              # listing "padpiece" of Doge Punks #1, sold by nMe
+    client = TestClient(create_app(app_state))
+    pub = _sign_in(client, LOCAL)
+    for key in (f"address:{pub}", f"address:main:{pub}"):         # the seller's, on Pepecoin main
+        app_state.set_setting(key, "nMe")
+
+    def kept() -> dict:
+        return {k: v for k, v in app_state.settings().items() if k.startswith("announced:")}
+
+    for name in ("No Such Set", "Doge Punks" + "x" * 5000, "", ["Doge Punks"]):
+        r = client.post("/account/mintpad/announced", json={"collection": name, "ids": ["padpiece"], "chain": "main"})
+        assert r.status_code in (400, 404), (name, r.text)
+    assert kept() == {}, "nothing written for a collection that is not the account's"
+    r = client.post("/account/mintpad/announced", json={"collection": "Doge Punks", "ids": ["another's"],
+                                                        "chain": "main"})
+    assert r.status_code == 200 and r.json()["left"] == 1 and kept() == {}, "nor for a listing that is not its own"
+    r = client.post("/account/mintpad/announced", json={"collection": "Doge Punks", "ids": ["padpiece", "padpiece"],
+                                                        "chain": "main"})
+    assert r.status_code == 200 and r.json()["left"] == 0, r.text
+    assert list(kept().values()) == [["padpiece"]]
