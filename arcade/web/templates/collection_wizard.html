@@ -145,7 +145,7 @@
       <div class="panel" style="margin:0 0 14px">
         <label class="row" style="gap:8px;align-items:flex-start">
           <input type="checkbox" name="launchpad" value="yes" id="launchpad"
-                 {{ 'checked' if pad_on }} onchange="padFields(this)">
+                 {{ 'checked' if pad_on }}>
           <span><strong>Also sell it from a mintpad</strong>
             <span class="muted">&mdash; optional, and off unless you ask.
             A page, inscribed for you when the last item is on its way, that
@@ -167,8 +167,7 @@
                      value="{{ pad_amount or '' }}"
                      {{ 'required' if pad_on }}></div>
             <div style="flex:0 0 150px">
-              <select autocomplete="off" name="pad_kind" id="pad-kind"
-                      onchange="padToken(this)">
+              <select autocomplete="off" name="pad_kind" id="pad-kind">
                 <option value="coins" {{ 'selected' if pad_kind != 'token' }}>{{ chain.label }} coins</option>
                 <option value="token" {{ 'selected' if pad_kind == 'token' }}>a token</option>
               </select></div>
@@ -240,6 +239,11 @@
     function padToken(sel){
       document.getElementById('pad-token-wrap').hidden = sel.value !== 'token';
     }
+    // Attached here, not written into the markup (the script policy, 2026-11-09).
+    document.addEventListener('change', function(e){
+      if (e.target.id === 'launchpad') { padFields(e.target); }
+      else if (e.target.id === 'pad-kind') { padToken(e.target); }
+    });
 
     // The two substitutions that point the page at the build folder instead
     // of at the chain, handed over by the server (app.py `_preview_swaps`)
