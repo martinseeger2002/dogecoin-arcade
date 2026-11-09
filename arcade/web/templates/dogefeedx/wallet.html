@@ -378,7 +378,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
       <label>Public Dogecoin address (watch-only):</label>
       <div class="df-address-input-row">
         <input type="text" id="address-input" placeholder="D... address" autocomplete="off">
-        <button class="df-lookup-btn" onclick="lookupAddress()">View</button>
+        <button class="df-lookup-btn" id="lookup-btn">View</button>
       </div>
     </div>
     
@@ -514,6 +514,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
     if (box && address) box.value = address;
     loadHoldings(address);
   };
+  document.getElementById('lookup-btn').addEventListener('click', function() { window.lookupAddress(); });
   
   // Chain selector
   document.querySelectorAll('.df-chain-btn').forEach(function(btn) {

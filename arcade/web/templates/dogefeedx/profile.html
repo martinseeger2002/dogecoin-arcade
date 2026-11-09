@@ -414,7 +414,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     <button type="button" class="df-dogear" id="df-dogear" aria-label="Address book"><span>Book</span></button>
     <div id="df-face-profile">
     <div class="df-topbar">
-      <button class="df-back-btn" onclick="history.back()">
+      <button class="df-back-btn" data-go-back>
         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
       </button>
       <div class="df-topbar-info">
@@ -513,6 +513,15 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
   'use strict';
   
   var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
+
+  // A picture that will not load hides: one listener, not an inline handler (the script policy, 2026-11-09).
+  document.addEventListener('error', function(e) {
+    var img = e.target;
+    if (img && img.tagName === 'IMG' && img.getAttribute('data-broken') === 'hide') img.style.display = 'none';
+  }, true);
+
+  var back = document.querySelector('[data-go-back]');
+  if (back) back.addEventListener('click', function() { history.back(); });
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function readingLine(data) {
@@ -540,7 +549,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     
     var html = '<article class="df-post" data-post="' + esc(post.id || '') + '">';
     html += '<div class="df-post-avatar">';
-    html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.style.display=\'none\'">';
+    html += '<img src="' + esc(avatarUrl) + '" alt="" data-broken="hide">';
     html += '</div>';
     html += '<div class="df-post-content">';
     html += '<div class="df-post-header">';
