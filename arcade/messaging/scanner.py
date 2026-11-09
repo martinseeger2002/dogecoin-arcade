@@ -516,6 +516,16 @@ class Scanner:
                 if claimed_hash:
                     address = b58check_encode(self.params.pubkeyhash_version,
                                               claimed_hash)
+                    if not atx.signed_by(address):
+                        # 2026-11-08: a profile speaks for the address it names
+                        # only when that address signed it -- one of its coins is
+                        # an input. The newest profile for an address is where its
+                        # @name is paid and the key its messages are sealed to, so
+                        # it has to come from that address. Every real profile was
+                        # already paid for from its own address.
+                        result.errors.append(
+                            f"{atx.txid}: a profile for {address} that {address} did not sign; ignored")
+                        continue
                 mine = (self.identity is not None
                         and pubkey == self.identity.public_bytes)
                 if claimed_hash and not mine:
@@ -967,6 +977,8 @@ def find_own_announcements(rpc, params, pubkey: bytes, limit: int = 400):
         address = atx.sender
         if claimed_hash:
             address = b58check_encode(params.pubkeyhash_version, claimed_hash)
+            if not atx.signed_by(address):
+                continue          # not signed by the address it names: not a profile of ours (2026-11-08)
         found.append((txid, address, height, int(raw.get("blocktime") or 0),
                       bool(claimed_hash), claimed_name, parse_announced_extras(body)))
     found.sort(key=lambda row: (row[2] or 1 << 62))
