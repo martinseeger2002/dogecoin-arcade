@@ -14,6 +14,9 @@
 .mb-mono{font-family:ui-monospace,monospace;font-size:.82rem}
 .mb-sec{margin:26px 0 10px;font-size:1.1rem}
 .mb-no{color:var(--muted)}
+.mb-find{display:flex;gap:8px;max-width:900px;margin:10px 0 18px}
+.mb-find input{flex:1;padding:8px 10px;font-size:1rem}
+.mb-hit{border-left:3px solid var(--accent)}
 </style>
 <h1>MoonBrix</h1>
 <p class="sub">tbuuol's protocol on Kotia: TLDs and their spaces, folders and files, inscriptions, tokens, NFTs and
@@ -22,11 +25,30 @@ offers for KOT, all in OP_RETURN outputs.</p>
 {% macro ref(r, label) %}{% if r.checked %}<a href="/moonbrix/content/{{ r.txid }}" rel="noopener">{{ label or "open" }}</a>{% else %}{{ label ~ " → " if label }}<span class="mb-mono">{{ r.chain }}:{{ r.txid[:16] }}…</span> (not read here){% endif %}{% endmacro %}
 {% macro data(d) %}{% if d is none %}<span class="mb-no">–</span>{% elif d.text is defined %}{{ d.text }}{% else %}{{ ref(d.ref) }}{% endif %}{% endmacro %}
 
-{% macro tree(children) %}
+{% macro tree(children, at="") %}
 <ul>{% for name, node in children|dictsort %}
-  {% if "dir" in node %}<li>{{ name }}/{{ tree(node.dir) }}</li>
+  {% if "dir" in node %}<li>{% if at %}<a href="/moonbrix?q={{ (at ~ '/' ~ name)|urlencode }}">{{ name }}/</a>{% else %}{{ name }}/{% endif %}{{ tree(node.dir, at ~ '/' ~ name if at else "") }}</li>
   {% else %}<li>{{ ref(node.file, name) }}</li>{% endif %}
 {% endfor %}</ul>
+{% endmacro %}
+{% macro find_link(q, label) %}<a href="/moonbrix?q={{ q|urlencode }}">{{ label or q }}</a>{% endmacro %}
+{% macro space_name(key, sp) %}{{ sp.name ~ "." ~ sp.tld if sp.name else key }}{% endmacro %}
+{% macro prop_card(ticker, p) %}
+  <div class="panel mb-card">
+    <h3>{{ ticker }} · {{ p.name }}</h3>
+    <p class="who">{{ p.kind }}{{ ", locked" if p.locked and p.kind != "fixed" }} · supply {{ units(p.supply, p.decimals) }}
+      {% set sp = doc.spaces.get(p.space) %}· in {{ find_link(space_name(p.space, sp) if sp else p.space) }} · owner {{ find_link(p.owner) }}</p>
+    {% if p.grant %}<p class="who">Grant data: {{ data(p.grant) }}</p>{% endif %}
+    <table>
+      {% if p.kind == "nft" %}<tr><th>Item</th><th>Holder</th><th>Grant</th><th>Issuer</th><th>Holder's</th></tr>
+        {% for i, thing in p["items"].items() %}<tr><td>#{{ i }}</td>
+          <td class="mb-mono">{{ find_link(thing.holder) if thing.holder else "in an offer" }}</td><td>{{ data(thing.grant) }}</td>
+          <td>{{ data(thing.issuer) }}</td><td>{{ data(thing.holder_data) }}</td></tr>{% endfor %}
+      {% else %}<tr><th>Holder</th><th>Amount</th></tr>
+        {% for who, amount in p.holders.items() %}<tr><td class="mb-mono">{{ find_link(who) }}</td><td>{{ units(amount, p.decimals) }}</td></tr>{% endfor %}
+      {% endif %}
+    </table>
+  </div>
 {% endmacro %}
 
 {% if why %}
@@ -34,6 +56,75 @@ offers for KOT, all in OP_RETURN outputs.</p>
 {% else %}
 <p class="who">Read to Kotia block {{ height if height is not none else "…" }}.
   <a href="/moonbrix.json">As data</a> · <a href="/docs/moonbrix">The protocol</a></p>
+
+<form class="mb-find" method="get" action="/moonbrix">
+  <input name="q" value="{{ q }}" placeholder="lwq · rpg.lwq · rpg.lwq/www/index.html · MBX · txid · address" aria-label="Search MoonBrix">
+  <button class="btn" type="submit">Search</button>
+</form>
+
+{% if q %}
+<h2 class="mb-sec">{{ q }}</h2>
+<div class="mb-grid">
+  {% for f in found %}
+  {% if f.kind == "tld" %}
+  <div class="panel mb-card mb-hit">
+    <h3>.{{ f.id }}</h3>
+    <p class="who">TLD · owner {{ find_link(f.it.owner) }} · claimed in block {{ f.it.height }} · {{ f.it.mode }}
+      {% if f.it.list %}({{ f.it.list|length }} on the list){% endif %}</p>
+    {% if f.it.message %}<p>“{{ f.it.message }}”</p>{% endif %}
+    <table><tr><th>Space</th><th>Number</th><th>Owner</th></tr>
+      {% for key, sp in f.spaces %}<tr><td>{{ find_link(space_name(key, sp)) }}</td><td class="mb-mono">{{ key }}</td>
+        <td class="mb-mono">{{ find_link(sp.owner) }}</td></tr>
+      {% else %}<tr><td colspan="3" class="mb-no">No spaces claimed yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+  {% elif f.kind == "space" %}
+  <div class="panel mb-card mb-hit">
+    <h3>{{ f.id }}</h3>
+    <p class="who">Space {{ f.key }} in {{ find_link(f.it.tld, "." ~ f.it.tld) }} · owner {{ find_link(f.it.owner) }}
+      · claimed in block {{ f.it.height }}</p>
+    {% if f.it.root %}{{ tree(f.it.root, f.id) }}{% else %}<p class="mb-no">No folders or files yet.</p>{% endif %}
+  </div>
+  {% for ticker, p in f.properties %}{{ prop_card(ticker, p) }}{% endfor %}
+  {% elif f.kind == "path" %}
+  <div class="panel mb-card mb-hit">
+    <h3>{{ f.id }}</h3>
+    {% if "dir" in f.it %}<p class="who">Folder</p>{{ tree(f.it.dir, f.id) if f.it.dir else "" }}{% if not f.it.dir %}<p class="mb-no">Empty.</p>{% endif %}
+    {% else %}<p class="who">File · {{ ref(f.it.file) }}</p>
+      {% set ins = doc.inscriptions.get(f.it.file.txid) %}{% if ins %}<p class="who">{{ ins.type }} · {{ ins.size }} bytes</p>{% endif %}
+    {% endif %}
+  </div>
+  {% elif f.kind == "property" %}{{ prop_card(f.id, f.it) }}
+  {% elif f.kind == "inscription" %}
+  <div class="panel mb-card mb-hit">
+    <h3>{{ f.it.name or "(no name)" }}</h3>
+    <p class="who">Inscription · {{ f.it.type }} · {{ f.it.size }} bytes{% if f.it.parts %} in {{ f.it.parts|length }} parts{% endif %}
+      · by {{ find_link(f.it.by) }} · block {{ f.it.height }} · <a href="/moonbrix/content/{{ f.id }}" rel="noopener">open</a></p>
+  </div>
+  {% elif f.kind == "offer" %}
+  <div class="panel mb-card mb-hit">
+    <h3>Offer: {% if f.it.item %}{{ f.it.ticker }} #{{ f.it.item }}{% else %}{{ f.it.amount }} {{ f.it.ticker }}{% endif %}</h3>
+    <p class="who">{{ f.it.left }} left · {{ units(f.it.price, 8) }} KOT · {{ f.it.window }} blocks to pay · seller {{ find_link(f.it.seller) }}{{ " · cancelled" if not f.it.open }}</p>
+  </div>
+  {% elif f.kind == "reservation" %}
+  <div class="panel mb-card mb-hit">
+    <h3>Reservation of {{ f.it.amount }}</h3>
+    <p class="who">Offer {{ find_link(f.it.offer, f.it.offer[:16] ~ "…") }} · buyer {{ find_link(f.it.buyer) }} · {{ units(f.it.due - f.it.paid, 8) }} KOT due until block {{ f.it.expires }}</p>
+  </div>
+  {% elif f.kind == "address" %}
+  <div class="panel mb-card mb-hit">
+    <h3 class="mb-mono">{{ f.id }}</h3>
+    <p class="who">Owns: {% for t in f.owns.tlds %}{{ find_link(t, "." ~ t) }} {% endfor %}{% for k in f.owns.spaces %}{{ find_link(k) }} {% endfor %}{% for t in f.owns.properties %}{{ find_link(t) }} {% endfor %}{% if not (f.owns.tlds or f.owns.spaces or f.owns.properties) %}nothing{% endif %}</p>
+    <table><tr><th>Ticker</th><th>Held</th></tr>
+      {% for h in f.held %}<tr><td>{{ find_link(h.ticker) }}</td><td>{% if h.kind == "nft" %}{% for i in h["items"] %}#{{ i }} {% endfor %}{% else %}{{ units(h.amount, h.decimals) }}{% endif %}</td></tr>
+      {% else %}<tr><td colspan="2" class="mb-no">No tokens.</td></tr>{% endfor %}
+    </table>
+  </div>
+  {% endif %}
+  {% else %}<p class="mb-no">Nothing on MoonBrix is called {{ q }}.</p>{% endfor %}
+</div>
+<p><a href="/moonbrix">← Everything</a></p>
+{% else %}
 
 {% if account_signed %}
 <h2 class="mb-sec">Yours</h2>
@@ -52,22 +143,7 @@ offers for KOT, all in OP_RETURN outputs.</p>
 
 <h2 class="mb-sec">Properties</h2>
 <div class="mb-grid">
-  {% for ticker, p in doc.properties|dictsort %}
-  <div class="panel mb-card">
-    <h3>{{ ticker }} · {{ p.name }}</h3>
-    <p class="who">{{ p.kind }}{{ ", locked" if p.locked and p.kind != "fixed" }} · supply {{ units(p.supply, p.decimals) }}
-      · in {{ p.space }} · owner <span class="mb-mono">{{ p.owner }}</span></p>
-    {% if p.grant %}<p class="who">Grant data: {{ data(p.grant) }}</p>{% endif %}
-    <table>
-      {% if p.kind == "nft" %}<tr><th>Item</th><th>Holder</th><th>Grant</th><th>Issuer</th><th>Holder's</th></tr>
-        {% for i, thing in p["items"].items() %}<tr><td>#{{ i }}</td>
-          <td class="mb-mono">{{ thing.holder or "in an offer" }}</td><td>{{ data(thing.grant) }}</td>
-          <td>{{ data(thing.issuer) }}</td><td>{{ data(thing.holder_data) }}</td></tr>{% endfor %}
-      {% else %}<tr><th>Holder</th><th>Amount</th></tr>
-        {% for who, amount in p.holders.items() %}<tr><td class="mb-mono">{{ who }}</td><td>{{ units(amount, p.decimals) }}</td></tr>{% endfor %}
-      {% endif %}
-    </table>
-  </div>
+  {% for ticker, p in doc.properties|dictsort %}{{ prop_card(ticker, p) }}
   {% else %}<p class="mb-no">No properties yet.</p>{% endfor %}
 </div>
 
@@ -94,13 +170,13 @@ offers for KOT, all in OP_RETURN outputs.</p>
 <div class="mb-grid">
   {% for tld, t in doc.tlds|dictsort %}
   <div class="panel mb-card">
-    <h3>.{{ tld }}</h3>
+    <h3>{{ find_link(tld, "." ~ tld) }}</h3>
     <p class="who">Owner <span class="mb-mono">{{ t.owner }}</span> · claimed in block {{ t.height }} · {{ t.mode }}
       {% if t.list %}({{ t.list|length }} on the list){% endif %}</p>
     {% if t.message %}<p>“{{ t.message }}”</p>{% endif %}
     {% for key, s in doc.spaces|dictsort if s.tld == tld %}
-      <p><b>{{ key }}</b>{% if s.name %} · {{ s.name }}{% endif %} · <span class="mb-mono">{{ s.owner }}</span></p>
-      {% if s.root %}{{ tree(s.root) }}{% endif %}
+      <p><b>{{ find_link(space_name(key, s)) }}</b>{% if s.name %} · {{ key }}{% endif %} · <span class="mb-mono">{{ s.owner }}</span></p>
+      {% if s.root %}{{ tree(s.root, space_name(key, s)) }}{% endif %}
     {% endfor %}
   </div>
   {% else %}<p class="mb-no">No TLD claimed yet.</p>{% endfor %}
@@ -126,5 +202,6 @@ offers for KOT, all in OP_RETURN outputs.</p>
   </table>
   {% else %}<p class="mb-no">No commands yet.</p>{% endif %}
 </div>
+{% endif %}
 {% endif %}
 {% endblock %}

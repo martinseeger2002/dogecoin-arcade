@@ -301,7 +301,11 @@ def address_of(script: bytes, params) -> str | None:
 
 # --- names -----------------------------------------------------------------------------------------------------
 
+#: Names that address something (TLDs, space names, folders and files) are lowercase only, so `rpg.lwq/www/index.html`
+#: means one thing however it is typed.
 TLD_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,14}[a-z0-9])?")
+SPACE_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?")
+FILE_NAME = re.compile(r"[a-z0-9._-]{1,64}")
 TICKER = re.compile(r"[A-Z][A-Z0-9]{2,7}")
 TYPE = re.compile(r"[ -~]{3,100}")
 
@@ -344,12 +348,19 @@ def type_name(raw: bytes) -> str:
 
 
 def path_names(raw: bytes) -> list[str]:
-    path = text(raw, 255, 1, "a path")
+    path = raw.decode("ascii", "replace")
     names = path.split("/")
-    for name in names:
-        if not 1 <= len(name.encode()) <= 64 or name in (".", ".."):
-            raise Rejected("a path is names of 1 to 64 bytes joined by /, none of them . or ..")
+    if not 1 <= len(raw) <= 255 or not all(FILE_NAME.fullmatch(n) and n not in (".", "..") for n in names):
+        raise Rejected("a path is 1 to 255 bytes: names of 1 to 64 of a-z, 0-9, ., _ and - joined by /, "
+                       "none of them . or ..")
     return names
+
+
+def space_name(raw: bytes) -> str:
+    got = raw.decode("ascii", "replace")
+    if got and not SPACE_NAME.fullmatch(got):
+        raise Rejected("a space's name is 1 to 32 of a-z, 0-9 and -, not starting or ending with -")
+    return got
 
 
 def ip(space: int) -> str:
@@ -478,8 +489,12 @@ class Book:
 
     def op_name_space(self, raw: bytes, space: int, name: bytes) -> str:
         key, got = self._owned_space(raw, space)
-        got["name"] = text(name, 32)
-        return f"{key} named {got['name']!r}"
+        named = space_name(name)
+        others = (s for k, s in self.doc["spaces"].items() if s["tld"] == got["tld"] and k != key)
+        if named and any(s["name"] == named for s in others):
+            raise Rejected(f"{named}.{got['tld']} is taken")
+        got["name"] = named
+        return f"{key} is {named}.{got['tld']}" if named else f"{key}'s name cleared"
 
     # inscriptions ---------------------------------------------------------------------------------------------
 
@@ -1056,6 +1071,65 @@ def content(doc: dict[str, Any], fetch_tx: Callable[[str], rawchain.Tx], txid: s
     if hashlib.sha256(data).hexdigest() != ins["sha256"]:
         raise KeyError(f"{txid}: the data on the chain is not what was read")
     return ins["type"], data
+
+
+def _space_of(doc: dict[str, Any], tld: str, labels: list[str]) -> str | None:
+    """The key of the space `labels` names in `tld`: its name (`rpg`) or its number (`19.55.66.132`)."""
+    if len(labels) == 1:
+        return next((k for k, sp in doc["spaces"].items() if sp["tld"] == tld and sp["name"] == labels[0]), None)
+    if len(labels) == 4 and all(x.isdigit() and int(x) <= 255 for x in labels):
+        key = f"{'.'.join(str(int(x)) for x in labels)}.{tld}"
+        return key if key in doc["spaces"] else None
+    return None
+
+
+def find(doc: dict[str, Any], query: str) -> list[dict[str, Any]]:
+    """What a search names, for the explorer: every match, most specific first.
+    - `lwq`: the TLD and all its spaces; `rpg.lwq` or `19.55.66.132.lwq`: that space, its files and properties;
+      `rpg.lwq/www/index.html`: that folder or file. Names are lowercase, so the search is too.
+    - a ticker (`MBX`, any case), a transaction id (an inscription, offer or reservation), or an address."""
+    q = query.strip()
+    found: list[dict[str, Any]] = []
+    if not q:
+        return found
+    if re.fullmatch(r"[0-9a-fA-F]{64}", q):
+        txid = q.lower()
+        for kind, table in (("inscription", "inscriptions"), ("offer", "offers"), ("reservation", "reservations")):
+            if txid in doc[table]:
+                found.append({"kind": kind, "id": txid, "it": doc[table][txid]})
+        return found
+    lower = q.lower()
+    name, slash, path = lower.partition("/")
+    labels = name.split(".")
+    tld = labels[-1]
+    if tld in doc["tlds"]:
+        if len(labels) == 1 and not slash:
+            spaces = sorted((k, sp) for k, sp in doc["spaces"].items() if sp["tld"] == tld)
+            found.append({"kind": "tld", "id": tld, "it": doc["tlds"][tld], "spaces": spaces})
+        else:
+            key = _space_of(doc, tld, labels[:-1])
+            if key is not None:
+                sp = doc["spaces"][key]
+                address = f"{sp['name']}.{tld}" if sp["name"] else key
+                props = sorted((t, pr) for t, pr in doc["properties"].items() if pr["space"] == key)
+                if path.strip("/"):
+                    names = path.strip("/").split("/")
+                    parent = Book._folder(sp["root"], names[:-1])
+                    node = parent.get(names[-1]) if parent is not None else None
+                    if node is not None:
+                        found.append({"kind": "path", "id": f"{address}/{'/'.join(names)}", "space": key,
+                                      "it": node})
+                else:
+                    found.append({"kind": "space", "id": address, "key": key, "it": sp, "properties": props})
+    ticker = q.upper()
+    if not slash and "." not in q and ticker in doc["properties"]:
+        found.append({"kind": "property", "id": ticker, "it": doc["properties"][ticker]})
+    if not found and re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{25,35}", q):
+        owns = {"tlds": sorted(t for t, v in doc["tlds"].items() if v["owner"] == q),
+                "spaces": sorted(k for k, v in doc["spaces"].items() if v["owner"] == q),
+                "properties": sorted(t for t, v in doc["properties"].items() if v["owner"] == q)}
+        found.append({"kind": "address", "id": q, "held": balances(doc, q), "owns": owns})
+    return found
 
 
 def units(amount: int, decimals: int) -> str:
