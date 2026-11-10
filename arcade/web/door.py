@@ -47,6 +47,9 @@ import urllib.parse
 PUBLIC_PAGES = frozenset({
     "/",                      # the splash: seats, and how to join
     "/explore",               # every chain's ords, tokens and collections, read only (2026-10-25)
+    "/moonbrix",              # MoonBrix on Kotia, read from the chain (moonbrix_web.py, 2026-11-10)
+    "/moonbrix.json",         # ...the same, as data
+    "/account/moonbrix",      # ...what the signed-in account's Kotia address holds (needs a session)
     "/join",
     "/join/keys",
     "/clone",
@@ -283,6 +286,8 @@ PUBLIC_SHAPES = (
     re.compile(r"^/coin-[a-z0-9-]{2,24}\.png$"),
     # One game's discussion: read-only, like the launch thread it is.
     re.compile(r"^/games/[0-9a-f]{64}$"),
+    # A MoonBrix inscription's file (moonbrix_web.py, 2026-11-10): served sandboxed, like /content.
+    re.compile(r"^/moonbrix/content/[0-9a-f]{64}$"),
     re.compile(r"^/games/[0-9a-f]{64}/access$"),   # is a page a game (the wallet gate, base.html arcadeGameGate)
     # A game's own front door: its sign-up, or the game itself once signed in.
     re.compile(r"^/play/[A-Za-z0-9._-]{1,64}$"),

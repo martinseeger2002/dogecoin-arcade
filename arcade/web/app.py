@@ -38068,6 +38068,9 @@ def create_app(state: AppState) -> FastAPI:
     # Restoring without an arcade (recover_web.py, 2026-11-07): the offline /recover page and the backup page's renderer.
     from . import recover_web
     recover_web.register(app, state, versioned=_versioned)
+    # MoonBrix on Kotia (moonbrix_web.py, 2026-11-10): /moonbrix, its data and its inscriptions' files.
+    from . import moonbrix_web
+    moonbrix_web.register(app, state, render=render, signed_in=signed_in, account_address=_account_address)
     # The DigiDollar-test launchpad (ddpadweb.py, 2026-11-07: the Bytelings, "a launch pad that only takes digidollar
     # test"): /bytelings, paid with the Wallet's own DigiDollar send.
     from . import ddpadweb
