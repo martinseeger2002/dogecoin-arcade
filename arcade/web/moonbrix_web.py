@@ -5,6 +5,9 @@
                                       what its own Kotia address holds
     GET /moonbrix?q=rpg.lwq           the explorer: a TLD (`lwq`), a space (`rpg.lwq`, `19.55.66.132.lwq`), a folder or
                                       file in one (`rpg.lwq/www/index.html`), a ticker, a txid or an address
+    GET /moonbrix/explorer            the same explorer as a page of its own, in tbuuol's Syfy-UI look (Atlantis and
+                                      OASIS): an address is dialled like a gate address
+    GET /moonbrix/find.json?q=        what a search names (moonbrix.find), for the explorer
     GET /moonbrix.json                the whole state, with the height it is read to
     GET /moonbrix/content/<txid>      an inscription's file, from the chain and checked against its SHA-256,
                                       sandboxed like /content
@@ -14,6 +17,8 @@ Everything here is read from the public chain; nothing is anybody's secret. Only
 itself has it (the unspent set says which blocks carry data); a borrowing arcade says so.
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -49,6 +54,21 @@ def register(app, state, *, render, signed_in, account_address) -> None:
         return render(request, "moonbrix.html", why=why, height=mb.height if mb is not None else None, doc=doc,
                       events=list(reversed(doc["log"]))[:200], account_signed=account is not None, address=address,
                       held=held, units=moonbrixlib.units, q=q, found=moonbrixlib.find(doc, q) if q else [])
+
+    @app.get("/moonbrix/explorer", response_class=HTMLResponse)
+    def moonbrix_explorer():
+        from .app import nonced
+        # A plain file, not a template: its inline script gets this request's nonce as it is sent.
+        page = Path(__file__).with_name("moonbrix_explorer.html").read_text(encoding="utf-8")
+        return HTMLResponse(nonced(page), headers={"Cache-Control": "no-store"})
+
+    @app.get("/moonbrix/find.json")
+    def moonbrix_find(q: str = ""):
+        chain, mb, why = kotia()
+        if mb is None:
+            return JSONResponse({"error": why, "found": []}, status_code=404)
+        q = q.strip()[:300]
+        return {"q": q, "height": mb.height, "found": moonbrixlib.find(mb.document(), q) if q else []}
 
     @app.get("/moonbrix.json")
     def moonbrix_json():

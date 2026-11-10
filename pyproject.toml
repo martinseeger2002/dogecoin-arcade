@@ -94,7 +94,8 @@ packages = ["arcade", "arcade.ddlib", "arcade.messaging", "arcade.mesh", "arcade
                 "templates/dogefeedx/*.html", "templates/dogefeedx/*.css", "templates/dogefeedx/*.js",
                 "docs/*.md", "docs/*/*.md",
                 "vendor/*.js", "vendor/*/*.js", "vendor/*.md",
-                "browser.html"]                                     # the Browser (meshweb.py, 2026-10-26)
+                "browser.html",                                     # the Browser (meshweb.py, 2026-10-26)
+                "moonbrix_explorer.html"]                           # MoonBrix's explorer (moonbrix_web.py, 2026-11-10)
 "arcade.web.dogefeedx" = ["README.md"]
 
 [tool.pytest.ini_options]

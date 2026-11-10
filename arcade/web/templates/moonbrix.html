@@ -55,7 +55,7 @@ offers for KOT, all in OP_RETURN outputs.</p>
 <div class="panel mb-card"><p>{{ why }}</p></div>
 {% else %}
 <p class="who">Read to Kotia block {{ height if height is not none else "…" }}.
-  <a href="/moonbrix.json">As data</a> · <a href="/docs/moonbrix">The protocol</a></p>
+  <a href="/moonbrix/explorer{{ '?q=' ~ q|urlencode if q }}">Explorer</a> · <a href="/moonbrix.json">As data</a> · <a href="/docs/moonbrix">The protocol</a></p>
 
 <form class="mb-find" method="get" action="/moonbrix">
   <input name="q" value="{{ q }}" placeholder="lwq · rpg.lwq · rpg.lwq/www/index.html · MBX · txid · address" aria-label="Search MoonBrix">

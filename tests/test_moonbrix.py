@@ -545,11 +545,34 @@ def test_the_moonbrix_page_and_its_data_show_the_state(client, monkeypatch, tmp_
     assert app.get("/moonbrix.json").status_code == 404
 
 
+def test_the_explorer_is_a_page_of_its_own_and_asks_find_json(client, monkeypatch, tmp_path):
+    from arcade.web.state import ChainContext
+    app, state = client
+    kot = ChainContext(network="kot", role="ledger", label="Kotia", conf=pathlib.Path("/nonexistent/kotia.conf"))
+    monkeypatch.setattr(state, "more", {"kot": kot}, raising=False)
+    built = Chain(tmp_path)
+    space(built, tld="lwq")
+    built.one(E("name space", "lwq", HOME, "rpg"))
+    mb = state.moonbrix(kot)
+    with mb.conn:
+        mb._set(built.mb.height, "ab" * 32, built.doc)
+    page = app.get("/moonbrix/explorer")
+    assert page.status_code == 200 and "MoonBrix Explorer" in page.text
+    assert "fonts.googleapis" not in page.text, "no visitor's address goes to a font host"
+    assert "/moonbrix/find.json" in page.text and "esc(" in page.text
+    found = app.get("/moonbrix/find.json", params={"q": "RPG.lwq"}).json()
+    assert [(f["kind"], f["id"]) for f in found["found"]] == [("space", "rpg.lwq")]
+    assert app.get("/moonbrix/find.json").json()["found"] == []
+    kot.borrowed = True
+    assert app.get("/moonbrix/find.json", params={"q": "lwq"}).status_code == 404
+
+
 def test_moonbrix_is_public_and_claimed_by_the_tokens_module():
     from arcade import modules
     from arcade.web import door
-    for path in ("/moonbrix", "/moonbrix.json", "/moonbrix/content/" + "ab" * 32):
+    for path in ("/moonbrix", "/moonbrix.json", "/moonbrix/content/" + "ab" * 32, "/moonbrix/explorer",
+                 "/moonbrix/find.json"):
         assert door.public_path(path), path
     assert not door.public_path("/moonbrix/content/../admin")
     claimed = {r for m in modules._MODULES if m.id == "tokens" for r in m.routes}
-    assert {"/moonbrix", "/moonbrix.json", "/account/moonbrix"} <= claimed
+    assert {"/moonbrix", "/moonbrix.json", "/account/moonbrix", "/moonbrix/explorer", "/moonbrix/find.json"} <= claimed

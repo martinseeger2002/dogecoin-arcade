@@ -101,7 +101,10 @@ is uppercase only. The name of a property or an inscription is free text, becaus
 | `19.55.66.132.lwq` | the same space, by its number |
 | `rpg.lwq/www/index.html` | a folder or file in it |
 
-The arcade's explorer (`/moonbrix?q=...`) takes these, a ticker, a transaction id or an address.
+The arcade's explorer takes these, a ticker, a transaction id or an address. It comes in two forms:
+- **`/moonbrix?q=...`** in the arcade's own look.
+- **`/moonbrix/explorer`** as a page of its own in tbuuol's Syfy-UI look, Atlantis or OASIS. An address is dialled like
+  a gate address: each part locks one chevron, and the gate opens on what it names.
 
 ## Commands
 
