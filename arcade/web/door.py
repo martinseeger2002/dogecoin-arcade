@@ -49,6 +49,8 @@ PUBLIC_PAGES = frozenset({
     "/explore",               # every chain's ords, tokens and collections, read only (2026-10-25)
     "/moonbrix",              # MoonBrix on Kotia, read from the chain (moonbrix_web.py, 2026-11-10)
     "/moonbrix.json",         # ...the same, as data
+    "/moonbrix/explorer",     # ...the same as a page of its own (Syfy-UI)
+    "/moonbrix/find.json",    # ...what the explorer's search names
     "/account/moonbrix",      # ...what the signed-in account's Kotia address holds (needs a session)
     "/join",
     "/join/keys",

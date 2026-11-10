@@ -108,6 +108,7 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
     - folder join.
   - Names that address something are lowercase only, and a space's name is unique in its TLD: TLDs, space names, folders and files.
   - `/moonbrix?q=` is an explorer. It takes `lwq` (a TLD and its spaces), `rpg.lwq` or `19.55.66.132.lwq` (a space, its files and properties), `rpg.lwq/www/index.html`, a ticker, a txid, or an address (`moonbrix.find`).
+  - `/moonbrix/explorer` is the explorer as a page of its own, built from tbuuol's Syfy-UI (github.com/tbuuol/Syfy-UI): Atlantis and OASIS themes, and an address dialled like a gate address. It is a plain file beside `browser.html`, `web/moonbrix_explorer.html`. It is served with `nonced()` like the globe, and listed in pyproject's package-data. It reads `/moonbrix.json` and `/moonbrix/find.json` and fetches no web fonts.
   - Pointers (`ref`) name their chain's ticker (`kot`, `ltc` ...), so MoonBrix on another chain can point at Kotia's content later. A pointer to another chain is kept unchecked.
 - **`arcade/moonbrix.py`:**
   - `OPS` is one table that drives both `decode` and `encode` (`encode` is for the sending stage and the tests).
@@ -126,7 +127,7 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
 - **For later:** the arcade's own Kotia asset format (KOTIA-PLAN Phase 3) should become MoonBrix 2 inscriptions (`20`, or `21` + `22`).
 - **Open questions, written on the protocol page:** a price for claiming a TLD, and bids, which need KOT locked in a script.
 - **Tests:**
-  - `tests/test_moonbrix.py` (46).
+  - `tests/test_moonbrix.py` (47).
   - The prototype's fixture is gone.
   - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is `chains.<net>.params.moonbrix`.
 - **Needs from the operator:** a review and merge. Nothing to set on a node.
