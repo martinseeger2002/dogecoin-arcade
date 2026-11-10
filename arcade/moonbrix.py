@@ -40,6 +40,11 @@ U64 = 1 << 64
 #: Kotia's Core relays an OP_RETURN script of at most 15,000 bytes: OP_RETURN, OP_PUSHDATA2 and its length, the data.
 MAX_PUSH = 15_000 - 4
 MAX_PARTS = 10_000
+#: The chain this reader reads (a `ref` naming it, or naming no chain, points here) and how a chain is named in one.
+HOME_CHAIN = "kot"
+CHAIN = re.compile(r"[a-z0-9]{2,8}")
+#: The most text a `data` field holds inline; more goes into an inscription it points to.
+MAX_DATA_TEXT = 1024
 #: The longest payment window an offer may give a reservation, in blocks.
 MAX_WINDOW = 10_000
 
@@ -49,7 +54,7 @@ KINDS = {FIXED: "fixed", MANAGED: "managed", NFT: "nft"}
 
 #: op -> (name, fields, target). target: None, "need" (rejected without one) or "maybe" (else the sender).
 OPS: dict[int, tuple[str, tuple[str, ...], str | None]] = {
-    0x01: ("claim tld", ("str", "u8"), None),
+    0x01: ("claim tld", ("str", "u8", "str"), None),
     0x02: ("give tld", ("str",), "need"),
     0x03: ("set list mode", ("str", "u8"), None),
     0x04: ("list add", ("str",), "need"),
@@ -60,20 +65,23 @@ OPS: dict[int, tuple[str, tuple[str, ...], str | None]] = {
     0x12: ("name space", ("str", "u32", "str"), None),
     0x20: ("inscribe", ("str", "str", "rest"), None),
     0x21: ("part", ("rest",), None),
-    0x22: ("assemble", ("str", "str", "var", "id", "ids"), None),
+    0x22: ("assemble", ("str", "str", "var", "id", "refs"), None),
     0x30: ("make folder", ("str", "u32", "str"), None),
-    0x31: ("put file", ("str", "u32", "str", "id"), None),
-    0x32: ("replace file", ("str", "u32", "str", "id"), None),
+    0x31: ("put file", ("str", "u32", "str", "ref"), None),
+    0x32: ("replace file", ("str", "u32", "str", "ref"), None),
     0x33: ("remove", ("str", "u32", "str"), None),
     0x34: ("move", ("str", "u32", "str", "str"), None),
-    0x40: ("create property", ("str", "u32", "str", "str", "u8", "u8", "var"), None),
+    0x35: ("join", ("str", "u32", "str", "str"), None),
+    0x40: ("create property", ("str", "u32", "str", "str", "u8", "u8", "var", "data"), None),
     0x41: ("give property", ("str",), "need"),
     0x42: ("lock property", ("str",), None),
     0x43: ("mint", ("str", "var"), "maybe"),
     0x44: ("send", ("str", "var"), "need"),
     0x45: ("burn", ("str", "var"), None),
-    0x46: ("mint nft", ("str", "opt"), "maybe"),
+    0x46: ("mint nft", ("str", "data"), "maybe"),
     0x47: ("send nft", ("str", "var"), "need"),
+    0x48: ("set issuer data", ("str", "var", "data"), None),
+    0x49: ("set holder data", ("str", "var", "data"), None),
     0x50: ("offer", ("str", "var", "var", "var", "var"), None),
     0x51: ("cancel", ("id",), None),
     0x52: ("reserve", ("id", "var"), None),
@@ -94,12 +102,12 @@ class Rejected(ValueError):
 
 class _Fields:
     def __init__(self, data: bytes) -> None:
-        self.data, self.at = data, 0
+        self.buf, self.at = data, 0
 
     def take(self, n: int) -> bytes:
-        if self.at + n > len(self.data):
+        if self.at + n > len(self.buf):
             raise Rejected("the payload ends too early")
-        got = self.data[self.at:self.at + n]
+        got = self.buf[self.at:self.at + n]
         self.at += n
         return got
 
@@ -131,23 +139,31 @@ class _Fields:
     def id(self) -> str:
         return self.take(32).hex()
 
-    def ids(self) -> list[str]:
+    def ref(self) -> tuple[bytes, str]:
+        """(the chain's ticker as written, empty for this chain; a transaction id)."""
+        return self.str(), self.id()
+
+    def refs(self) -> list[tuple[bytes, str]]:
         n = self.var()
         if not 1 <= n <= MAX_PARTS:
-            raise Rejected(f"a list of {n} ids (1 to {MAX_PARTS})")
-        return [self.id() for _ in range(n)]
+            raise Rejected(f"a list of {n} pointers (1 to {MAX_PARTS})")
+        return [self.ref() for _ in range(n)]
 
-    def opt(self) -> str | None:
-        flag = self.u8()
-        if flag not in (0, 1):
-            raise Rejected("an optional id flagged neither 00 nor 01")
-        return self.id() if flag else None
+    def data(self) -> tuple[str, Any] | None:
+        form = self.u8()
+        if form == 0:
+            return None
+        if form == 1:
+            return "text", self.str()
+        if form == 2:
+            return "ref", self.ref()
+        raise Rejected("a data field is 00 (empty), 01 (text) or 02 (a pointer)")
 
     def rest(self) -> bytes:
-        if self.at >= len(self.data):
+        if self.at >= len(self.buf):
             raise Rejected("no data")
-        got = self.data[self.at:]
-        self.at = len(self.data)
+        got = self.buf[self.at:]
+        self.at = len(self.buf)
         return got
 
 
@@ -160,7 +176,7 @@ def decode(payload: bytes) -> tuple[int, list[Any]]:
         raise Rejected(f"op {op:02x} is not MoonBrix 2's")
     r = _Fields(payload[len(MAGIC) + 1:])
     values = [getattr(r, kind)() for kind in OPS[op][1]]
-    if r.at != len(r.data):
+    if r.at != len(r.buf):
         raise Rejected("bytes after the last field")
     return op, values
 
@@ -176,9 +192,15 @@ def _var(n: int) -> bytes:
             return bytes(out)
 
 
+def _ref(value: tuple[str, str]) -> bytes:
+    chain = value[0].encode()
+    return _var(len(chain)) + chain + bytes.fromhex(value[1])
+
+
 def encode(name: str, *values: Any) -> bytes:
-    """The payload of command `name` (OPS) with these fields: str as text or bytes, id as hex, ids as a list, opt as
-    hex or None. For the arcade's own sends and the tests; what it builds is what `decode` reads."""
+    """The payload of command `name` (OPS) with these fields: str as text or bytes, id as hex, ref as (chain, txid)
+    with "" for this chain, refs as a list of them, data as None, text, or a ref. For the arcade's own sends and the
+    tests; what it builds is what `decode` reads."""
     op = CODES[name]
     kinds = OPS[op][1]
     if len(values) != len(kinds):
@@ -196,10 +218,18 @@ def encode(name: str, *values: Any) -> bytes:
             out += _var(len(raw)) + raw
         elif kind == "id":
             out += bytes.fromhex(value)
-        elif kind == "ids":
-            out += _var(len(value)) + b"".join(bytes.fromhex(v) for v in value)
-        elif kind == "opt":
-            out += b"\x00" if value is None else b"\x01" + bytes.fromhex(value)
+        elif kind == "ref":
+            out += _ref(value)
+        elif kind == "refs":
+            out += _var(len(value)) + b"".join(_ref(v) for v in value)
+        elif kind == "data":
+            if value is None:
+                out += b"\x00"
+            elif isinstance(value, tuple):
+                out += b"\x02" + _ref(value)
+            else:
+                raw = value.encode() if isinstance(value, str) else bytes(value)
+                out += b"\x01" + _var(len(raw)) + raw
         elif kind == "rest":
             out += bytes(value)
     return bytes(out)
@@ -280,14 +310,14 @@ def _control(ch: str) -> bool:
     return ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F
 
 
-def text(raw: bytes, most: int, least: int = 0, what: str = "a name") -> str:
+def text(raw: bytes, most: int, least: int = 0, what: str = "a name", lines: bool = False) -> str:
     if not least <= len(raw) <= most:
         raise Rejected(f"{what} of {len(raw)} bytes ({least} to {most})")
     try:
         got = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise Rejected(f"{what} that is not UTF-8") from None
-    if any(_control(ch) for ch in got):
+    if any(_control(ch) and not (lines and ch in "\n\t") for ch in got):
         raise Rejected(f"{what} with a control character")
     return got
 
@@ -378,12 +408,12 @@ class Book:
             raise Rejected(f"the sender does not own {tld}")
         return tld, got
 
-    def op_claim_tld(self, raw: bytes, mode: int) -> str:
+    def op_claim_tld(self, raw: bytes, mode: int, message: bytes) -> str:
         tld = tld_name(raw)
         if tld in self.doc["tlds"]:
             raise Rejected(f"{tld} is taken")
         self.doc["tlds"][tld] = {"owner": self.sender, "mode": self._mode(mode), "list": [], "height": self.height,
-                                 "txid": self.txid}
+                                 "txid": self.txid, "message": text(message, 80, what="a message")}
         return f"{tld} claimed"
 
     def op_give_tld(self, raw: bytes) -> str:
@@ -466,8 +496,14 @@ class Book:
         self.doc["parts"][self.txid] = [self.height, self.position, len(data)]
         return f"{len(data)} bytes"
 
-    def op_assemble(self, kind: bytes, name: bytes, size: int, sha: str, parts: list[str]) -> str:
+    def op_assemble(self, kind: bytes, name: bytes, size: int, sha: str, refs: list[tuple[bytes, str]]) -> str:
         type_name(kind), text(name, 64)
+        parts = []
+        for ref in refs:
+            got = self._ref(ref, known=False)
+            if got["chain"] != HOME_CHAIN:
+                raise Rejected(f"a part on {got['chain']}: parts on another chain are not read here")
+            parts.append(got["txid"])
         total = 0
         for part in parts:
             got = self.doc["parts"].get(part)
@@ -507,9 +543,25 @@ class Book:
             raise Rejected(f"no folder {'/'.join(names[:-1])} in {key}")
         return key, parent, names[-1]
 
-    def _known(self, inscription: str) -> None:
-        if inscription not in self.doc["inscriptions"]:
-            raise Rejected(f"no inscription {inscription}")
+    def _ref(self, ref: tuple[bytes, str], known: bool = True) -> dict:
+        """A pointer as kept: {chain, txid, checked}. One to this chain must name an inscription it has (with
+        `known`); one to another chain is kept as it is, unchecked, until a reader that reads both can check it."""
+        chain_raw, txid = ref
+        chain = chain_raw.decode("ascii", "replace") or HOME_CHAIN
+        if not CHAIN.fullmatch(chain):
+            raise Rejected("a chain in a pointer is 2 to 8 of a-z and 0-9 (its ticker), or empty for this chain")
+        home = chain == HOME_CHAIN
+        if home and known and txid not in self.doc["inscriptions"]:
+            raise Rejected(f"no inscription {txid}")
+        return {"chain": chain, "txid": txid, "checked": home}
+
+    def _data(self, got: tuple[str, Any] | None) -> dict | None:
+        """A data field as kept: None, {text}, or {ref: a pointer}."""
+        if got is None:
+            return None
+        if got[0] == "text":
+            return {"text": text(got[1], MAX_DATA_TEXT, what="data", lines=True)}
+        return {"ref": self._ref(got[1])}
 
     def op_make_folder(self, raw: bytes, space: int, path: bytes) -> str:
         key, parent, name = self._spot(raw, space, path)
@@ -518,20 +570,18 @@ class Book:
         parent[name] = {"dir": {}}
         return f"folder {path.decode()} in {key}"
 
-    def op_put_file(self, raw: bytes, space: int, path: bytes, inscription: str) -> str:
+    def op_put_file(self, raw: bytes, space: int, path: bytes, ref: tuple[bytes, str]) -> str:
         key, parent, name = self._spot(raw, space, path)
         if name in parent:
             raise Rejected(f"something is at {path.decode()} already")
-        self._known(inscription)
-        parent[name] = {"file": inscription}
+        parent[name] = {"file": self._ref(ref)}
         return f"file {path.decode()} in {key}"
 
-    def op_replace_file(self, raw: bytes, space: int, path: bytes, inscription: str) -> str:
+    def op_replace_file(self, raw: bytes, space: int, path: bytes, ref: tuple[bytes, str]) -> str:
         key, parent, name = self._spot(raw, space, path)
         if "file" not in parent.get(name, {}):
             raise Rejected(f"no file at {path.decode()}")
-        self._known(inscription)
-        parent[name] = {"file": inscription}
+        parent[name] = {"file": self._ref(ref)}
         return f"file {path.decode()} in {key} replaced"
 
     def op_remove(self, raw: bytes, space: int, path: bytes) -> str:
@@ -560,6 +610,25 @@ class Book:
         new_parent[new[-1]] = old_parent.pop(old[-1])
         return f"{source.decode()} moved to {to.decode()} in {key}"
 
+    def op_join(self, raw: bytes, space: int, source: bytes, into: bytes) -> str:
+        key, got = self._owned_space(raw, space)
+        old, new = path_names(source), path_names(into)
+        old_parent = self._folder(got["root"], old[:-1])
+        moving = self._folder(got["root"], old)
+        target = self._folder(got["root"], new)
+        if moving is None:
+            raise Rejected(f"no folder {source.decode()} in {key}")
+        if target is None:
+            raise Rejected(f"no folder {into.decode()} in {key}")
+        if new[:len(old)] == old:
+            raise Rejected("a folder cannot be joined into itself or a folder inside it")
+        clash = sorted(set(moving) & set(target))
+        if clash:
+            raise Rejected(f"{into.decode()} has {clash[0]} already")
+        target.update(moving)
+        del old_parent[old[-1]]
+        return f"{source.decode()} joined into {into.decode()} in {key}"
+
     # properties -----------------------------------------------------------------------------------------------
 
     def _property(self, raw: bytes, owned: bool = False) -> tuple[str, dict]:
@@ -586,7 +655,7 @@ class Book:
             del holders[who]
 
     def op_create_property(self, raw: bytes, space: int, ticker_raw: bytes, name: bytes, kind: int, decimals: int,
-                           supply: int) -> str:
+                           supply: int, grant: tuple[str, Any] | None) -> str:
         key, _got = self._owned_space(raw, space)
         ticker = ticker_name(ticker_raw)
         if ticker in self.doc["properties"]:
@@ -598,8 +667,8 @@ class Book:
         if (kind == FIXED) != (supply > 0):
             raise Rejected("a fixed property has a supply of 1 or more, any other a supply of 0")
         prop = {"name": text(name, 32, 1), "kind": KINDS[kind], "decimals": decimals, "owner": self.sender,
-                "space": key, "supply": supply, "locked": kind == FIXED, "holders": {}, "items": {}, "minted": 0,
-                "height": self.height, "txid": self.txid}
+                "space": key, "supply": supply, "locked": kind == FIXED, "grant": self._data(grant), "holders": {},
+                "items": {}, "minted": 0, "height": self.height, "txid": self.txid}
         if supply:
             prop["holders"][self.sender] = supply
         self.doc["properties"][ticker] = prop
@@ -647,17 +716,17 @@ class Book:
         got["supply"] -= amount
         return f"{amount} {ticker} burnt"
 
-    def op_mint_nft(self, raw: bytes, inscription: str | None) -> str:
+    def op_mint_nft(self, raw: bytes, grant: tuple[str, Any] | None) -> str:
         ticker, got = self._property(raw, owned=True)
         if got["kind"] != "nft":
             raise Rejected(f"{ticker} is no NFT")
         if got["locked"]:
             raise Rejected(f"{ticker} is locked")
-        if inscription is not None:
-            self._known(inscription)
+        kept = self._data(grant)
         got["minted"] += 1
         got["supply"] += 1
-        got["items"][str(got["minted"])] = {"holder": self.target, "inscription": inscription}
+        got["items"][str(got["minted"])] = {"holder": self.target, "grant": kept, "issuer": None,
+                                            "holder_data": None}
         return f"{ticker} #{got['minted']} to {self.target}"
 
     def _item(self, raw: bytes, item: int) -> tuple[str, dict]:
@@ -673,6 +742,21 @@ class Book:
         ticker, thing = self._item(raw, item)
         thing["holder"] = self.target
         return f"{ticker} #{item} to {self.target}"
+
+    def op_set_issuer_data(self, raw: bytes, item: int, data: tuple[str, Any] | None) -> str:
+        ticker, got = self._property(raw, owned=True)
+        if got["kind"] != "nft":
+            raise Rejected(f"{ticker} is no NFT")
+        thing = got["items"].get(str(item))
+        if thing is None:
+            raise Rejected(f"no {ticker} #{item}")
+        thing["issuer"] = self._data(data)
+        return f"{ticker} #{item}: issuer data set"
+
+    def op_set_holder_data(self, raw: bytes, item: int, data: tuple[str, Any] | None) -> str:
+        ticker, thing = self._item(raw, item)
+        thing["holder_data"] = self._data(data)
+        return f"{ticker} #{item}: holder data set"
 
     # DEX ------------------------------------------------------------------------------------------------------
     # As on Omni's DEX: a buyer first reserves (52), and the reserved tokens are theirs to pay for (53) until the

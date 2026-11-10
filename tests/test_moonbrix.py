@@ -78,7 +78,7 @@ def chain(tmp_path):
 
 
 def space(chain, tld="moon", at=HOME, by=FROM_A):
-    assert chain.ok(E("claim tld", tld, M.WHITELIST), by)
+    assert chain.ok(E("claim tld", tld, M.WHITELIST, ""), by)
     assert chain.ok(E("claim space", tld, at), by)
     return M.space_key(tld, at)
 
@@ -86,17 +86,18 @@ def space(chain, tld="moon", at=HOME, by=FROM_A):
 # --- which transaction is a command ------------------------------------------------------------------------------
 
 def test_only_magic_and_version_2_make_a_command_and_reading_starts_at_the_activation(chain):
-    chain.mb.connect(H - 1, "00" * 32, [command_tx(E("claim tld", "early", 0), FROM_A)], Coins())
+    chain.mb.connect(H - 1, "00" * 32, [command_tx(E("claim tld", "early", 0, ""), FROM_A)], Coins())
     assert chain.doc["tlds"] == {}
-    other = E("claim tld", "later", 0).replace(b"MB\x02", b"MB\x03", 1)
+    other = E("claim tld", "later", 0, "").replace(b"MB\x02", b"MB\x03", 1)
     prototype = bytes.fromhex("004d6f6f6e4272697800000000000000")         # the prototype's TLD claim
     assert chain.block(command_tx(other, FROM_A), command_tx(prototype, FROM_A)) == []
     assert chain.doc["tlds"] == {}
 
 
 def test_every_command_of_a_block_counts_in_block_order(chain):
-    log = chain.block(command_tx(E("claim tld", "moon", 0), FROM_A), command_tx(E("claim tld", "moon", 0), FROM_B),
-                      command_tx(E("claim tld", "sun", 0), FROM_B))
+    log = chain.block(command_tx(E("claim tld", "moon", 0, ""), FROM_A),
+                      command_tx(E("claim tld", "moon", 0, ""), FROM_B),
+                      command_tx(E("claim tld", "sun", 0, ""), FROM_B))
     assert [e["ok"] for e in log] == [True, False, True]
     assert log[1]["why"] == "moon is taken"
     assert chain.doc["tlds"]["moon"]["owner"] == A and chain.doc["tlds"]["sun"]["owner"] == B
@@ -112,13 +113,13 @@ def test_the_payload_runs_on_over_every_data_output(chain):
 
 
 def test_a_data_output_that_is_not_data_pushes_only_rejects_the_command(chain):
-    good = M.data_scripts(E("claim tld", "moon", 0))[0]
+    good = M.data_scripts(E("claim tld", "moon", 0, ""))[0]
     entry, _t = chain.one(b"", scripts=[good, b"\x6a\x51"])                  # OP_RETURN OP_1
     assert not entry["ok"] and "data pushes" in entry["why"] and chain.doc["tlds"] == {}
 
 
 def test_the_target_is_the_first_output_paying_someone_but_the_sender(chain):
-    chain.one(E("claim tld", "moon", 0))
+    chain.one(E("claim tld", "moon", 0, ""))
     entry, _t = chain.one(E("give tld", "moon"), pays=(B, C), change_first=True)
     assert entry["ok"] and chain.doc["tlds"]["moon"]["owner"] == B
     entry, _t = chain.one(E("give tld", "moon"), FROM_B)
@@ -127,9 +128,9 @@ def test_the_target_is_the_first_output_paying_someone_but_the_sender(chain):
 
 
 @pytest.mark.parametrize("data,why", [
-    (E("claim tld", "moon", 0) + b"\x00", "bytes after the last field"),
-    (E("claim tld", "MoonBrix", 0), "a TLD is"),
-    (E("claim tld", "moon", 2), "a list mode is"),
+    (E("claim tld", "moon", 0, "") + b"\x00", "bytes after the last field"),
+    (E("claim tld", "MoonBrix", 0, ""), "a TLD is"),
+    (E("claim tld", "moon", 2, ""), "a list mode is"),
     (b"MB\x02\x01\x84\x00", "shortest form"),
     (b"MB\x02\x01\x09moon", "ends too early"),
     (b"MB\x02\x99", "not MoonBrix 2's"),
@@ -143,7 +144,7 @@ def test_a_command_that_breaks_a_rule_is_rejected_whole_and_logged(chain, data, 
 # --- TLDs and spaces ---------------------------------------------------------------------------------------------
 
 def test_a_whitelist_lets_its_list_claim_and_a_blacklist_everybody_else(chain):
-    chain.one(E("claim tld", "moon", M.WHITELIST))
+    chain.one(E("claim tld", "moon", M.WHITELIST, ""))
     assert not chain.ok(E("claim space", "moon", 1), FROM_B)
     chain.one(E("list add", "moon"), pays=(B,))
     assert chain.ok(E("claim space", "moon", 1), FROM_B)
@@ -158,7 +159,7 @@ def test_a_whitelist_lets_its_list_claim_and_a_blacklist_everybody_else(chain):
 
 
 def test_only_the_tlds_owner_changes_its_list(chain):
-    chain.one(E("claim tld", "moon", 0))
+    chain.one(E("claim tld", "moon", 0, ""))
     assert not chain.ok(E("list add", "moon"), FROM_B, pays=(C,))
     assert chain.ok(E("list add", "moon"), pays=(C,))
     assert not chain.ok(E("list add", "moon"), pays=(C,)), "on the list already"
@@ -170,20 +171,20 @@ def test_only_the_tlds_owner_changes_its_list(chain):
 
 def test_only_the_spaces_owner_creates_a_property_and_a_fixed_one_is_never_minted(chain):
     key = space(chain)
-    assert not chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 1000), FROM_B)
-    assert chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 1000))
+    assert not chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 1000, None), FROM_B)
+    assert chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 1000, None))
     prop = chain.doc["properties"]["MBX"]
     assert prop["space"] == key and prop["holders"] == {A: 1000} and prop["locked"]
     entry = chain.one(E("mint", "MBX", 5))[0]
     assert not entry["ok"] and "only a managed property is minted" in entry["why"]
-    assert not chain.ok(E("create property", "moon", HOME, "MBX", "Again", M.MANAGED, 0, 0)), "a ticker is had once"
-    assert not chain.ok(E("create property", "moon", HOME, "ZZZ", "Zero", M.FIXED, 0, 0))
-    assert not chain.ok(E("create property", "moon", HOME, "NFTX", "Bad", M.NFT, 2, 0))
+    assert not chain.ok(E("create property", "moon", HOME, "MBX", "Again", M.MANAGED, 0, 0, None)), "had once"
+    assert not chain.ok(E("create property", "moon", HOME, "ZZZ", "Zero", M.FIXED, 0, 0, None))
+    assert not chain.ok(E("create property", "moon", HOME, "NFTX", "Bad", M.NFT, 2, 0, None))
 
 
 def test_a_managed_property_is_minted_by_its_owner_until_locked(chain):
     space(chain)
-    chain.one(E("create property", "moon", HOME, "ORE", "Iron ore", M.MANAGED, 0, 0))
+    chain.one(E("create property", "moon", HOME, "ORE", "Iron ore", M.MANAGED, 0, 0, None))
     assert chain.ok(E("mint", "ORE", 50), pays=(B,))
     assert chain.ok(E("mint", "ORE", 7)), "no target: to the sender"
     assert not chain.ok(E("mint", "ORE", 1), FROM_B), "only the owner mints"
@@ -195,7 +196,7 @@ def test_a_managed_property_is_minted_by_its_owner_until_locked(chain):
 
 def test_tokens_are_sent_and_burnt_only_from_what_the_sender_holds(chain):
     space(chain)
-    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
+    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100, None))
     assert chain.ok(E("send", "MBX", 60), pays=(B,))
     assert not chain.ok(E("send", "MBX", 41), pays=(B,))
     assert not chain.ok(E("send", "MBX", 0), pays=(B,))
@@ -207,16 +208,55 @@ def test_tokens_are_sent_and_burnt_only_from_what_the_sender_holds(chain):
 def test_an_nft_has_numbered_items_that_move_whole_and_are_never_burnt(chain):
     space(chain)
     picture = chain.one(E("inscribe", "image/png", "sword", b"\x89PNG..."))[1].txid
-    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0))
-    assert chain.ok(E("mint nft", "SWORD", picture), pays=(B,))
+    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0, None))
+    assert chain.ok(E("mint nft", "SWORD", ("", picture)), pays=(B,))
     assert chain.ok(E("mint nft", "SWORD", None))
-    assert not chain.ok(E("mint nft", "SWORD", "ab" * 32)), "an inscription that exists"
+    assert not chain.ok(E("mint nft", "SWORD", ("", "ab" * 32))), "an inscription that exists"
     assert not chain.ok(E("send nft", "SWORD", 1), pays=(C,)), "A does not hold #1"
     assert chain.ok(E("send nft", "SWORD", 1), FROM_B, pays=(C,))
     assert not chain.ok(E("burn", "SWORD", 1), FROM_C)
     items = chain.doc["properties"]["SWORD"]["items"]
-    assert items == {"1": {"holder": C, "inscription": picture}, "2": {"holder": A, "inscription": None}}
+    assert items["1"] == {"holder": C, "grant": {"ref": {"chain": "kot", "txid": picture, "checked": True}},
+                          "issuer": None, "holder_data": None}
+    assert items["2"]["holder"] == A and items["2"]["grant"] is None
     assert M.balances(chain.doc, C) == [{"ticker": "SWORD", "name": "Swords", "kind": "nft", "items": [1]}]
+
+
+def test_a_tld_keeps_the_message_it_was_claimed_with(chain):
+    assert chain.ok(E("claim tld", "moon", 0, "Mono was here"))
+    assert chain.doc["tlds"]["moon"]["message"] == "Mono was here"
+    assert not chain.ok(E("claim tld", "sun", 0, "x" * 81))
+
+
+def test_grant_data_is_set_once_at_creation_and_can_point_to_another_chain(chain):
+    space(chain)
+    logo = chain.one(E("inscribe", "image/png", "logo", b"\x89PNG"))[1].txid
+    assert chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 1, ("", logo)))
+    assert chain.ok(E("create property", "moon", HOME, "ORE", "Ore", M.MANAGED, 0, 0, "line one\nline two"))
+    assert chain.ok(E("create property", "moon", HOME, "LTCX", "Over there", M.MANAGED, 0, 0, ("ltc", "ab" * 32)))
+    assert not chain.ok(E("create property", "moon", HOME, "NOPE", "Missing", M.MANAGED, 0, 0, ("kot", "ab" * 32)))
+    assert not chain.ok(E("create property", "moon", HOME, "BAD", "Bad chain", M.MANAGED, 0, 0, ("L", "ab" * 32)))
+    props = chain.doc["properties"]
+    assert props["MBX"]["grant"] == {"ref": {"chain": "kot", "txid": logo, "checked": True}}
+    assert props["ORE"]["grant"] == {"text": "line one\nline two"}
+    assert props["LTCX"]["grant"] == {"ref": {"chain": "ltc", "txid": "ab" * 32, "checked": False}}
+    assert not any(name.startswith("set") and "grant" in name for name in M.CODES), "no command changes grant data"
+
+
+def test_an_nft_item_has_grant_issuer_and_holder_data_and_keeps_them_when_it_moves(chain):
+    space(chain)
+    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0, None))
+    assert chain.ok(E("mint nft", "SWORD", "steel"), pays=(B,))
+    assert chain.ok(E("set issuer data", "SWORD", 1, "damage 12"))
+    assert not chain.ok(E("set issuer data", "SWORD", 1, "damage 99"), FROM_B), "only the property's owner"
+    assert chain.ok(E("set holder data", "SWORD", 1, "Biter"), FROM_B)
+    assert not chain.ok(E("set holder data", "SWORD", 1, "Mine"), FROM_A), "only the item's holder"
+    assert chain.ok(E("send nft", "SWORD", 1), FROM_B, pays=(C,))
+    item = chain.doc["properties"]["SWORD"]["items"]["1"]
+    assert item == {"holder": C, "grant": {"text": "steel"}, "issuer": {"text": "damage 12"},
+                    "holder_data": {"text": "Biter"}}
+    assert chain.ok(E("set holder data", "SWORD", 1, None), FROM_C)
+    assert chain.doc["properties"]["SWORD"]["items"]["1"]["holder_data"] is None
 
 
 # --- inscriptions, folders and files -----------------------------------------------------------------------------
@@ -227,12 +267,13 @@ def test_an_assembled_inscription_needs_parts_from_before_of_the_size_and_hash_i
     p2 = chain.one(E("part", two), FROM_B)[1].txid
     whole = one + two + one
     sha = hashlib.sha256(whole).hexdigest()
-    assert not chain.ok(E("assemble", "text/plain", "x", len(whole), "00" * 32, [p1, p2, p1]))
-    assert not chain.ok(E("assemble", "text/plain", "x", len(whole) + 1, sha, [p1, p2, p1]))
+    assert not chain.ok(E("assemble", "text/plain", "x", len(whole), "00" * 32, [("", p1), ("", p2), ("", p1)]))
+    assert not chain.ok(E("assemble", "text/plain", "x", len(whole) + 1, sha, [("", p1), ("", p2), ("", p1)]))
     late = command_tx(E("part", b"late"), FROM_C)
-    early = command_tx(E("assemble", "text/plain", "x", 4, hashlib.sha256(b"late").hexdigest(), [late.txid]), FROM_A)
+    late_sha = hashlib.sha256(b"late").hexdigest()
+    early = command_tx(E("assemble", "text/plain", "x", 4, late_sha, [("", late.txid)]), FROM_A)
     assert [e["ok"] for e in chain.block(early, late)] == [False, True], "a part comes before its assemble"
-    entry, t = chain.one(E("assemble", "text/plain", "story", len(whole), sha, [p1, p2, p1]))
+    entry, t = chain.one(E("assemble", "text/plain", "story", len(whole), sha, [("", p1), ("", p2), ("", p1)]))
     assert entry["ok"]
     assert M.content(chain.doc, chain.txs.__getitem__, t.txid) == ("text/plain", whole)
 
@@ -243,23 +284,44 @@ def test_folders_and_files_are_never_overwritten_but_by_a_replace(chain):
     b = chain.one(E("inscribe", "text/html", "b", b"<p>b"))[1].txid
     assert chain.ok(E("make folder", "moon", HOME, "www"))
     assert not chain.ok(E("make folder", "moon", HOME, "www"))
-    assert not chain.ok(E("put file", "moon", HOME, "nope/index.html", a)), "a parent folder that exists"
-    assert chain.ok(E("put file", "moon", HOME, "www/index.html", a))
-    assert not chain.ok(E("put file", "moon", HOME, "www/index.html", b))
-    assert chain.ok(E("replace file", "moon", HOME, "www/index.html", b))
+    assert not chain.ok(E("put file", "moon", HOME, "nope/index.html", ("", a))), "a parent folder that exists"
+    assert chain.ok(E("put file", "moon", HOME, "www/index.html", ("", a)))
+    assert not chain.ok(E("put file", "moon", HOME, "www/index.html", ("", b)))
+    assert chain.ok(E("replace file", "moon", HOME, "www/index.html", ("", b)))
     assert not chain.ok(E("remove", "moon", HOME, "www")), "not empty"
     assert not chain.ok(E("move", "moon", HOME, "www", "www/inner"))
     assert chain.ok(E("move", "moon", HOME, "www", "site"))
-    assert not chain.ok(E("put file", "moon", HOME, "x", a), FROM_B), "only the space's owner"
+    assert not chain.ok(E("put file", "moon", HOME, "x", ("", a)), FROM_B), "only the space's owner"
     assert not chain.ok(E("make folder", "moon", HOME, "a/../b"))
-    assert chain.doc["spaces"][key]["root"] == {"site": {"dir": {"index.html": {"file": b}}}}
+    assert chain.doc["spaces"][key]["root"] == {
+        "site": {"dir": {"index.html": {"file": {"chain": "kot", "txid": b, "checked": True}}}}}
+
+
+def test_a_join_moves_a_folders_contents_into_another_without_overwriting(chain):
+    key = space(chain)
+    a = chain.one(E("inscribe", "text/plain", "a", b"a"))[1].txid
+    for path in ("old", "new", "old/sub"):
+        assert chain.ok(E("make folder", "moon", HOME, path))
+    assert chain.ok(E("put file", "moon", HOME, "old/a.txt", ("", a)))
+    assert chain.ok(E("put file", "moon", HOME, "new/a.txt", ("", a)))
+    assert not chain.ok(E("join", "moon", HOME, "old", "new")), "a.txt is in both"
+    assert chain.ok(E("remove", "moon", HOME, "new/a.txt"))
+    assert not chain.ok(E("join", "moon", HOME, "old", "old/sub")), "not into itself"
+    assert chain.ok(E("join", "moon", HOME, "old", "new"))
+    assert set(chain.doc["spaces"][key]["root"]) == {"new"}
+    assert set(chain.doc["spaces"][key]["root"]["new"]["dir"]) == {"a.txt", "sub"}
+
+
+def test_parts_on_another_chain_are_not_read_here_yet(chain):
+    entry = chain.one(E("assemble", "text/plain", "x", 1, "00" * 32, [("ltc", "ab" * 32)]))[0]
+    assert not entry["ok"] and "another chain" in entry["why"]
 
 
 # --- the DEX -----------------------------------------------------------------------------------------------------
 
 def offered(chain, amount=30, price=3_000_000, window=10, deposit=300_000):
     space(chain)
-    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
+    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100, None))
     return chain.one(E("offer", "MBX", amount, price, window, deposit))[1].txid
 
 
@@ -308,14 +370,14 @@ def test_a_payment_in_the_last_block_of_the_window_counts(chain):
 ])
 def test_an_offer_has_a_price_a_window_and_a_deposit_within_it(chain, fields, why):
     space(chain)
-    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
+    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100, None))
     entry = chain.one(E("offer", "MBX", *fields))[0]
     assert not entry["ok"] and why in entry["why"]
 
 
 def test_an_nft_offer_is_reserved_whole_and_its_cancel(chain):
     space(chain)
-    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0))
+    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0, None))
     chain.one(E("mint nft", "SWORD", None))
     offer = chain.one(E("offer", "SWORD", 1, 100, 5, 0))[1].txid
     assert not chain.ok(E("send nft", "SWORD", 1), pays=(B,)), "the offer holds it"
@@ -328,11 +390,11 @@ def test_an_nft_offer_is_reserved_whole_and_its_cancel(chain):
 # --- following the chain -----------------------------------------------------------------------------------------
 
 def test_a_reorg_rolls_the_document_back(chain):
-    chain.one(E("claim tld", "moon", 0))
+    chain.one(E("claim tld", "moon", 0, ""))
     chain.mb.roll_back(H - 1, "00" * 32)
     assert chain.doc["tlds"] == {} and chain.mb.height == H - 1
     chain.height = H - 1
-    chain.one(E("claim tld", "moon", 0), FROM_B)
+    chain.one(E("claim tld", "moon", 0, ""), FROM_B)
     assert chain.doc["tlds"]["moon"]["owner"] == B
 
 
@@ -347,7 +409,7 @@ def test_a_prototype_document_is_read_again(tmp_path):
 
 def test_a_part_the_node_cannot_give_keeps_nothing_of_the_block(chain):
     part = chain.one(E("part", b"data"))[1]
-    assemble = command_tx(E("assemble", "text/plain", "x", 4, hashlib.sha256(b"data").hexdigest(), [part.txid]),
+    assemble = command_tx(E("assemble", "text/plain", "x", 4, hashlib.sha256(b"data").hexdigest(), [("", part.txid)]),
                           FROM_A)
     before = chain.mb.height
     with pytest.raises(M.MoonBrixError):
@@ -356,8 +418,8 @@ def test_a_part_the_node_cannot_give_keeps_nothing_of_the_block(chain):
 
 
 def test_follow_reads_the_sets_data_blocks_and_rolls_back_a_reorg(tmp_path):
-    claim_a = command_tx(E("claim tld", "moon", 0), FROM_A)
-    claim_b = command_tx(E("claim tld", "moon", 0), FROM_B)
+    claim_a = command_tx(E("claim tld", "moon", 0, ""), FROM_A)
+    claim_b = command_tx(E("claim tld", "moon", 0, ""), FROM_B)
     hashes = {H: "aa" * 32, H + 1: "bb" * 32, H + 2: "cc" * 32}
     raws = {t.txid: t.raw.hex() for t in (claim_a, claim_b)}
 
@@ -400,12 +462,13 @@ def test_units_write_whole_tokens(amount, decimals, want):
 
 
 def test_encode_and_decode_agree_on_every_op():
-    samples = {"str": "moon", "u8": 1, "u32": 7, "var": 300, "id": "ab" * 32, "ids": ["cd" * 32], "opt": "ef" * 32,
-               "rest": b"data"}
+    samples = {"str": "moon", "u8": 1, "u32": 7, "var": 300, "id": "ab" * 32, "ref": ("ltc", "cd" * 32),
+               "refs": [("", "cd" * 32)], "data": "hi", "rest": b"data"}
+    decoded = {"str": b"moon", "ref": (b"ltc", "cd" * 32), "refs": [(b"", "cd" * 32)], "data": ("text", b"hi")}
     for op, (name, kinds, _t) in M.OPS.items():
         values = [samples[k] for k in kinds]
         got_op, got = M.decode(E(name, *values))
-        want = [v.encode() if k == "str" else v for k, v in zip(kinds, values)]
+        want = [decoded.get(k, v) for k, v in zip(kinds, values)]
         assert (got_op, got) == (op, want), name
 
 
@@ -421,7 +484,7 @@ def test_the_moonbrix_page_and_its_data_show_the_state(client, monkeypatch, tmp_
     monkeypatch.setattr(state, "more", {"kot": kot}, raising=False)
     built = Chain(tmp_path)
     space(built)
-    built.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 150_000_000))
+    built.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 150_000_000, None))
     built.one(E("name space", "moon", HOME, "<b>home</b>"))
     mb = state.moonbrix(kot)
     with mb.conn:
