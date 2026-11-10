@@ -573,7 +573,7 @@ def test_moonbrix_is_public_and_claimed_by_the_tokens_module():
     from arcade import modules
     from arcade.web import door
     for path in ("/moonbrix", "/moonbrix.json", "/moonbrix/content/" + "ab" * 32, "/moonbrix/explorer",
-                 "/moonbrix/find.json"):
+                 "/moonbrix/find.json", "/moonbrix/tx/" + "ab" * 32):
         assert door.public_path(path), path
     assert not door.public_path("/moonbrix/content/../admin")
     claimed = {r for m in modules._MODULES if m.id == "tokens" for r in m.routes}

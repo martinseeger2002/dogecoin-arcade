@@ -71,6 +71,22 @@ def register(app, state, *, render, signed_in, account_address, build=None, paye
         page = Path(__file__).with_name("moonbrix_explorer.html").read_text(encoding="utf-8")
         return HTMLResponse(nonced(page), headers={"Cache-Control": "no-store"})
 
+    @app.get("/moonbrix/tx/{txid}")
+    def moonbrix_tx(txid: str):
+        """How deep a Kotia transaction is (0: waiting in the mempool). The inscribe of a big file waits on it: each
+        part is up to 80 kB, and Kotia's mempool takes no more than 101 kB of unconfirmed ancestors."""
+        chain, mb, why = kotia()
+        if chain is None or chain.borrowed:
+            raise HTTPException(404, why or "Kotia is not read here")
+        if len(txid) != 64 or any(ch not in "0123456789abcdef" for ch in txid):
+            raise HTTPException(400, "a transaction id is 64 hex characters")
+        try:
+            with chain.rpc() as rpc:
+                got = rpc.call("getrawtransaction", txid, 1)
+        except Exception:
+            raise HTTPException(404, "this node does not know that transaction") from None
+        return {"txid": txid, "confirmations": int(got.get("confirmations") or 0)}
+
     @app.get("/moonbrix/find.json")
     def moonbrix_find(q: str = ""):
         chain, mb, why = kotia()
