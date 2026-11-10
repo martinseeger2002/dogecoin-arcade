@@ -47,6 +47,11 @@ import urllib.parse
 PUBLIC_PAGES = frozenset({
     "/",                      # the splash: seats, and how to join
     "/explore",               # every chain's ords, tokens and collections, read only (2026-10-25)
+    "/moonbrix",              # MoonBrix on Kotia, read from the chain (moonbrix_web.py, 2026-11-10)
+    "/moonbrix.json",         # ...the same, as data
+    "/moonbrix/explorer",     # ...the same as a page of its own (Syfy-UI)
+    "/moonbrix/find.json",    # ...what the explorer's search names
+    "/account/moonbrix",      # ...what the signed-in account's Kotia address holds (needs a session)
     "/join",
     "/join/keys",
     "/clone",
@@ -235,6 +240,7 @@ PUBLIC_TREES = (
     "/peer/address/",         # one bare address's coins, for a signed mesh arcade only (peer_address.py)
     "/coins/walk/",           # the shared walk: whether this arcade reads a chain for others, a job's state (2026-10-25)
     "/vendor/",               # the two vendored crypto libraries
+    "/fonts/",                # the arcade's own web fonts (web/fonts/PROVENANCE.md)
     "/docs/",                 # the whole written record, as shipped
     "/account/who/",          # where to write to somebody, from the chain
     "/bootstrap/",            # a copy of the index, and its manifest
@@ -283,6 +289,9 @@ PUBLIC_SHAPES = (
     re.compile(r"^/coin-[a-z0-9-]{2,24}\.png$"),
     # One game's discussion: read-only, like the launch thread it is.
     re.compile(r"^/games/[0-9a-f]{64}$"),
+    # A MoonBrix inscription's file (moonbrix_web.py, 2026-11-10): served sandboxed, like /content.
+    re.compile(r"^/moonbrix/content/[0-9a-f]{64}$"),
+    re.compile(r"^/moonbrix/tx/[0-9a-f]{64}$"),             # how deep a Kotia transaction is (MoonBrix's big inscribe)
     re.compile(r"^/games/[0-9a-f]{64}/access$"),   # is a page a game (the wallet gate, base.html arcadeGameGate)
     # A game's own front door: its sign-up, or the game itself once signed in.
     re.compile(r"^/play/[A-Za-z0-9._-]{1,64}$"),
@@ -436,6 +445,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # how the account's own mintpad page looks (presentation only)
                "/account/mintpad", "/account/mintpad/inscribe", "/account/tokenpad/inscribe", "/account/mintpad/announce", "/account/mintpad/announced",
                "/account/claim", "/account/send", "/account/inscribe", "/account/inscribe/abandon",
+               # a MoonBrix command on Kotia, built as an offer the browser checks and signs; broadcasts nothing
+               # (moonbrix_web.py, 2026-11-10)
+               "/account/moonbrix/offer",
                "/account/run/start", "/account/run/plan", "/account/run", "/account/run/piece",
                "/account/run/stop",
                # a folder bigger than one request, in batches; and an item of

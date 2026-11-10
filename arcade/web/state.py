@@ -1684,6 +1684,18 @@ class AppState:
             kept[chain.network] = UtxoSet(Path(self.home) / f"{chain.network}-utxoset.sqlite", chain.params)
         return kept[chain.network]
 
+    def moonbrix(self, chain: ChainContext):
+        """MoonBrix's state on the chain (arcade/moonbrix.py) in <home>/<net>-moonbrix.sqlite, or None. KOTIA ONLY
+        (Params.moonbrix, 2026-11-10): followed by the watcher right after the unspent set, whose data blocks it
+        reads."""
+        if not getattr(chain.params, "moonbrix", False) or getattr(self, "home", None) is None:
+            return None
+        kept = self.__dict__.setdefault("_moonbrix", {})
+        if chain.network not in kept:
+            from ..moonbrix import MoonBrix
+            kept[chain.network] = MoonBrix(Path(self.home) / f"{chain.network}-moonbrix.sqlite", chain.params)
+        return kept[chain.network]
+
     #: A sharer's lent set counts as the borrowed wallet's source while its last answer is younger than this.
     UTXOSET_LENT_FRESH = 300.0
 

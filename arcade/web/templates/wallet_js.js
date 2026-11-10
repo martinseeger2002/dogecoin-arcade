@@ -5362,3 +5362,166 @@ export async function openImports(wallet, password) {
     throw new Error("That is not your password.");
   }
 }
+
+/* --- MoonBrix on Kotia (moonbrix.py, docs/moonbrix.md, tbuuol 2026-11-10) ----------------------------------------
+ *
+ * A command's bytes are written here, from this table (the same as moonbrix.OPS; tests/test_moonbrix.py holds the
+ * two to each other), and a transaction is signed only when its OP_RETURNs are exactly those bytes and it pays
+ * nobody but the target the node named and this key. The node builds; it never decides what is said.
+ */
+export const MB_OPS = {
+  "claim tld": [0x01, ["str", "u8", "str"]], "give tld": [0x02, ["str"]], "set list mode": [0x03, ["str", "u8"]],
+  "list add": [0x04, ["str"]], "list remove": [0x05, ["str"]], "list clear": [0x06, ["str"]],
+  "claim space": [0x10, ["str", "u32"]], "give space": [0x11, ["str", "u32"]], "name space": [0x12, ["str", "u32", "str"]],
+  "inscribe": [0x20, ["str", "str", "rest"]], "part": [0x21, ["rest"]], "assemble": [0x22, ["str", "str", "var", "id", "refs"]],
+  "make folder": [0x30, ["str", "u32", "str"]], "put file": [0x31, ["str", "u32", "str", "ref"]],
+  "replace file": [0x32, ["str", "u32", "str", "ref"]], "remove": [0x33, ["str", "u32", "str"]],
+  "move": [0x34, ["str", "u32", "str", "str"]], "join": [0x35, ["str", "u32", "str", "str"]],
+  "create property": [0x40, ["str", "u32", "str", "str", "u8", "u8", "var", "data"]], "give property": [0x41, ["str"]],
+  "lock property": [0x42, ["str"]], "mint": [0x43, ["str", "var"]], "send": [0x44, ["str", "var"]],
+  "burn": [0x45, ["str", "var"]], "mint nft": [0x46, ["str", "data"]], "send nft": [0x47, ["str", "var"]],
+  "set issuer data": [0x48, ["str", "var", "data"]], "set holder data": [0x49, ["str", "var", "data"]],
+  "offer": [0x50, ["str", "var", "var", "var", "var"]], "cancel": [0x51, ["id"]], "reserve": [0x52, ["id", "var"]],
+  "pay": [0x53, ["id"]],
+};
+const MB_MAGIC = [0x4d, 0x42, 0x02];
+//: moonbrix.MAX_SEND: the most payload one transaction carries; a bigger file goes as parts and an assemble.
+export const MB_MAX_SEND = 80000;
+const MB_PUSH = 15000 - 4;
+
+function mbVar(n) {
+  let v = BigInt(n);
+  if (v < 0n || v >= (1n << 64n)) throw new Error("a number from 0 to 2^64-1. Nothing was signed.");
+  const out = [];
+  for (;;) {
+    const b = Number(v & 0x7fn); v >>= 7n;
+    out.push(b | (v ? 0x80 : 0));
+    if (!v) return out;
+  }
+}
+function mbRef(value) {
+  if (!Array.isArray(value) || value.length !== 2 || !/^[0-9a-f]{64}$/.test(String(value[1]))) {
+    throw new Error("a pointer is a chain and a 64-character txid. Nothing was signed.");
+  }
+  const chain = [...new TextEncoder().encode(String(value[0]))];
+  return [...mbVar(chain.length), ...chain, ...unhex(value[1])];
+}
+
+/** The payload of command `name` with these fields, as moonbrix.encode writes it (the JSON the node is sent). */
+export function mbEncode(name, values) {
+  const op = MB_OPS[name];
+  if (!op) throw new Error(`${name} is not a MoonBrix command`);
+  if (!Array.isArray(values) || values.length !== op[1].length) throw new Error(`${name} takes ${op[1].length} fields`);
+  const out = [...MB_MAGIC, op[0]];
+  op[1].forEach((kind, i) => {
+    const v = values[i];
+    if (kind === "u8") out.push(Number(v) & 0xff);
+    else if (kind === "u32") { const n = Number(v) >>> 0; out.push(n >>> 24, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff); }
+    else if (kind === "var") out.push(...mbVar(v));
+    else if (kind === "str") { const b = [...new TextEncoder().encode(String(v))]; out.push(...mbVar(b.length), ...b); }
+    else if (kind === "id") out.push(...unhex(String(v)));
+    else if (kind === "ref") out.push(...mbRef(v));
+    else if (kind === "refs") { out.push(...mbVar(v.length)); v.forEach((r) => out.push(...mbRef(r))); }
+    else if (kind === "data") {
+      if (v == null) out.push(0);
+      else if (Array.isArray(v)) out.push(2, ...mbRef(v));
+      else { const b = [...new TextEncoder().encode(String(v))]; out.push(1, ...mbVar(b.length), ...b); }
+    } else if (kind === "rest") out.push(...unhex(String(v)));
+  });
+  return new Uint8Array(out);
+}
+
+/** The OP_RETURN scripts that carry `payload` on Kotia, in order (moonbrix.data_scripts). */
+export function mbDataScripts(payload) {
+  const scripts = [];
+  for (let at = 0; at < payload.length; at += MB_PUSH) {
+    const piece = payload.slice(at, at + MB_PUSH);
+    const push = piece.length < 0x4c ? [piece.length] : piece.length <= 0xff ? [0x4c, piece.length]
+      : [0x4d, piece.length & 0xff, piece.length >> 8];
+    scripts.push(new Uint8Array([0x6a, ...push, ...piece]));
+  }
+  return scripts;
+}
+
+/** The script that pays a Kotia address, from the address alone: its checksum is checked here. */
+async function kotiaScript(address) {
+  const raw = coins.unbase58(String(address || ""));
+  if (raw.length !== 25 || await coins.base58check(raw[0], raw.slice(1, 21)) !== address) {
+    throw new Error("the node named a target that is not a Kotia address. Nothing was signed.");
+  }
+  if (raw[0] === 46) return coins.p2pkh(raw.slice(1, 21));
+  if (raw[0] === 45) return new Uint8Array([0xa9, 0x14, ...raw.slice(1, 21), 0x87]);
+  throw new Error("the node named a target on another chain. Nothing was signed.");
+}
+
+/** Send one MoonBrix command from this key's Kotia address. `ask`: {op, fields, to?, pay_all?}. `onWarn(text)`
+ *  is asked when MoonBrix, as this node reads it, would reject the command: true sends it anyway. The sent
+ *  transaction ({txid, ...}). */
+export async function sendMoonBrix(keys, ask, onWarn = null) {
+  const payload = mbEncode(ask.op, ask.fields);
+  if (payload.length > MB_MAX_SEND) throw new Error("that is more than one transaction carries: send it as parts");
+  const offer = await working(async () => {
+    const asked = await fetch("/account/moonbrix/offer", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({chain: "kot", op: ask.op, fields: ask.fields, to: ask.to || "", pay_all: !!ask.pay_all}),
+    });
+    const said = await asked.json().catch(() => ({}));
+    if (!asked.ok) throw new Error(said.detail || `the node would not build it (HTTP ${asked.status})`);
+    return said;
+  });
+  if (offer.warning && !(onWarn && await onWarn(offer.warning))) {
+    throw new Error(`Not sent: MoonBrix would reject it (${offer.warning}). Nothing was signed.`);
+  }
+  const pays = [];
+  if (offer.target) {
+    const typed = String(ask.to || "").trim();
+    if (typed && !typed.startsWith("@") && typed !== offer.target) {
+      throw new Error("the node built it for somebody other than the address you typed. Nothing was signed.");
+    }
+    pays.push({script: await kotiaScript(offer.target), value: offer.target_value, what: "target"});
+  } else if (["give tld", "list add", "list remove", "give space", "give property", "send", "send nft"].includes(ask.op)) {
+    throw new Error("that command needs somebody to go to, and the node named nobody. Nothing was signed.");
+  }
+  await checkFunding(offer, keys, {data: mbDataScripts(payload), pays}, "kot");
+  return working(() => signOffer(null, offer, keys));
+}
+
+/** Until Kotia has `txid` in a block (/moonbrix/tx): a part of up to 80 kB waits for the one before, because Kotia's
+ *  mempool takes no more than 101 kB of unconfirmed ancestors (found in the live test, 2026-11-10). */
+async function mbInBlock(txid, onStep) {
+  for (let tries = 0; tries < 720; tries++) {
+    try {
+      const got = await (await fetch(`/moonbrix/tx/${txid}`, {cache: "no-store"})).json();
+      if (got.confirmations >= 1) return;
+    } catch (e) {}
+    onStep("Waiting for the part before to reach a block\u2026");
+    await new Promise((r) => setTimeout(r, 10000));
+  }
+  throw new Error("the part before has not reached a block in two hours; send the rest later");
+}
+
+/** Inscribe a file: in one transaction when it fits, else as parts (each sent on the change of the one before, so
+ *  they reach a block in order, and each after the one before is in a block) and an assemble naming their size and
+ *  SHA-256. `onStep(text)` says how far. The inscription's txid. */
+export async function inscribeMoonBrix(keys, file, onStep = () => {}, onWarn = null) {
+  const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
+  const one = ["inscribe", [file.type, file.name || "", coinsHex(bytes)]];
+  if (mbEncode(...one).length <= MB_MAX_SEND) {
+    onStep("Inscribing…");
+    return (await sendMoonBrix(keys, {op: one[0], fields: one[1]}, onWarn)).txid;
+  }
+  const size = MB_MAX_SEND - 16;
+  const count = Math.ceil(bytes.length / size);
+  if (count > 20) throw new Error(`that file needs ${count} parts; 20 (about 1.5 MB) go in one run`);
+  const parts = [];
+  for (let i = 0; i < count; i++) {
+    if (parts.length) await mbInBlock(parts[parts.length - 1][1], onStep);
+    onStep(`Part ${i + 1} of ${count}…`);
+    const sent = await sendMoonBrix(keys, {op: "part", fields: [coinsHex(bytes.slice(i * size, (i + 1) * size))]});
+    parts.push(["", sent.txid]);
+  }
+  await mbInBlock(parts[parts.length - 1][1], onStep);
+  onStep("Putting the parts together…");
+  const sha = coinsHex(await coins.sha256Of(bytes));
+  return (await sendMoonBrix(keys, {op: "assemble", fields: [file.type, file.name || "", bytes.length, sha, parts]})).txid;
+}

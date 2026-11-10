@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% block title %}MoonBrix · {{ brand.name }}{% endblock %}
+{% block body %}
+{# MoonBrix 2 on Kotia (arcade/moonbrix.py, docs/moonbrix.md, tbuuol 2026-11-10): what this arcade reads from the
+   chain. Every name here was written by whoever sent the command: plain text through autoescaping only. #}
+<style>
+.mb-grid{display:grid;gap:12px;max-width:900px}
+.mb-card{padding:14px 18px;overflow-wrap:anywhere}
+.mb-card h3{margin:0 0 6px;font-size:1.05rem;color:var(--accent)}
+.mb-card .who{font-size:.85rem;color:var(--muted)}
+.mb-card table{width:100%;border-collapse:collapse;margin-top:8px;font-size:.88rem}
+.mb-card td,.mb-card th{padding:3px 6px;text-align:left;border-top:1px solid var(--line, rgba(127,127,127,.25))}
+.mb-card ul{margin:4px 0;padding-left:18px}
+.mb-mono{font-family:ui-monospace,monospace;font-size:.82rem}
+.mb-sec{margin:26px 0 10px;font-size:1.1rem}
+.mb-no{color:var(--muted)}
+.mb-find{display:flex;gap:8px;max-width:900px;margin:10px 0 18px}
+.mb-find input{flex:1;padding:8px 10px;font-size:1rem}
+.mb-hit{border-left:3px solid var(--accent)}
+</style>
+<h1>MoonBrix</h1>
+<p class="sub">tbuuol's protocol on Kotia: TLDs and their spaces, folders and files, inscriptions, tokens, NFTs and
+offers for KOT, all in OP_RETURN outputs.</p>
+
+{% macro ref(r, label) %}{% if r.checked %}<a href="/moonbrix/content/{{ r.txid }}" rel="noopener">{{ label or "open" }}</a>{% else %}{{ label ~ " → " if label }}<span class="mb-mono">{{ r.chain }}:{{ r.txid[:16] }}…</span> (not read here){% endif %}{% endmacro %}
+{% macro data(d) %}{% if d is none %}<span class="mb-no">–</span>{% elif d.text is defined %}{{ d.text }}{% else %}{{ ref(d.ref) }}{% endif %}{% endmacro %}
+
+{% macro tree(children, at="") %}
+<ul>{% for name, node in children|dictsort %}
+  {% if "dir" in node %}<li>{% if at %}<a href="/moonbrix?q={{ (at ~ '/' ~ name)|urlencode }}">{{ name }}/</a>{% else %}{{ name }}/{% endif %}{{ tree(node.dir, at ~ '/' ~ name if at else "") }}</li>
+  {% else %}<li>{{ ref(node.file, name) }}</li>{% endif %}
+{% endfor %}</ul>
+{% endmacro %}
+{% macro find_link(q, label) %}<a href="/moonbrix?q={{ q|urlencode }}">{{ label or q }}</a>{% endmacro %}
+{% macro space_name(key, sp) %}{{ sp.name ~ "." ~ sp.tld if sp.name else key }}{% endmacro %}
+{% macro prop_card(ticker, p) %}
+  <div class="panel mb-card">
+    <h3>{{ ticker }} · {{ p.name }}</h3>
+    <p class="who">{{ p.kind }}{{ ", locked" if p.locked and p.kind != "fixed" }} · supply {{ units(p.supply, p.decimals) }}
+      {% set sp = doc.spaces.get(p.space) %}· in {{ find_link(space_name(p.space, sp) if sp else p.space) }} · owner {{ find_link(p.owner) }}</p>
+    {% if p.grant %}<p class="who">Grant data: {{ data(p.grant) }}</p>{% endif %}
+    <table>
+      {% if p.kind == "nft" %}<tr><th>Item</th><th>Holder</th><th>Grant</th><th>Issuer</th><th>Holder's</th></tr>
+        {% for i, thing in p["items"].items() %}<tr><td>#{{ i }}</td>
+          <td class="mb-mono">{{ find_link(thing.holder) if thing.holder else "in an offer" }}</td><td>{{ data(thing.grant) }}</td>
+          <td>{{ data(thing.issuer) }}</td><td>{{ data(thing.holder_data) }}</td></tr>{% endfor %}
+      {% else %}<tr><th>Holder</th><th>Amount</th></tr>
+        {% for who, amount in p.holders.items() %}<tr><td class="mb-mono">{{ find_link(who) }}</td><td>{{ units(amount, p.decimals) }}</td></tr>{% endfor %}
+      {% endif %}
+    </table>
+  </div>
+{% endmacro %}
+
+{% if why %}
+<div class="panel mb-card"><p>{{ why }}</p></div>
+{% else %}
+<p class="who">Read to Kotia block {{ height if height is not none else "…" }}.
+  <a href="/moonbrix/explorer{{ '?q=' ~ q|urlencode if q }}">Explorer</a> · <a href="/moonbrix.json">As data</a> · <a href="/docs/moonbrix">The protocol</a></p>
+
+<form class="mb-find" method="get" action="/moonbrix">
+  <input name="q" value="{{ q }}" placeholder="lwq · rpg.lwq · rpg.lwq/www/index.html · MBX · txid · address" aria-label="Search MoonBrix">
+  <button class="btn" type="submit">Search</button>
+</form>
+
+{% if q %}
+<h2 class="mb-sec">{{ q }}</h2>
+<div class="mb-grid">
+  {% for f in found %}
+  {% if f.kind == "tld" %}
+  <div class="panel mb-card mb-hit">
+    <h3>.{{ f.id }}</h3>
+    <p class="who">TLD · owner {{ find_link(f.it.owner) }} · claimed in block {{ f.it.height }} · {{ f.it.mode }}
+      {% if f.it.list %}({{ f.it.list|length }} on the list){% endif %}</p>
+    {% if f.it.message %}<p>“{{ f.it.message }}”</p>{% endif %}
+    <table><tr><th>Space</th><th>Number</th><th>Owner</th></tr>
+      {% for key, sp in f.spaces %}<tr><td>{{ find_link(space_name(key, sp)) }}</td><td class="mb-mono">{{ key }}</td>
+        <td class="mb-mono">{{ find_link(sp.owner) }}</td></tr>
+      {% else %}<tr><td colspan="3" class="mb-no">No spaces claimed yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+  {% elif f.kind == "space" %}
+  <div class="panel mb-card mb-hit">
+    <h3>{{ f.id }}</h3>
+    <p class="who">Space {{ f.key }} in {{ find_link(f.it.tld, "." ~ f.it.tld) }} · owner {{ find_link(f.it.owner) }}
+      · claimed in block {{ f.it.height }}</p>
+    {% if f.it.root %}{{ tree(f.it.root, f.id) }}{% else %}<p class="mb-no">No folders or files yet.</p>{% endif %}
+  </div>
+  {% for ticker, p in f.properties %}{{ prop_card(ticker, p) }}{% endfor %}
+  {% elif f.kind == "path" %}
+  <div class="panel mb-card mb-hit">
+    <h3>{{ f.id }}</h3>
+    {% if "dir" in f.it %}<p class="who">Folder</p>{{ tree(f.it.dir, f.id) if f.it.dir else "" }}{% if not f.it.dir %}<p class="mb-no">Empty.</p>{% endif %}
+    {% else %}<p class="who">File · {{ ref(f.it.file) }}</p>
+      {% set ins = doc.inscriptions.get(f.it.file.txid) %}{% if ins %}<p class="who">{{ ins.type }} · {{ ins.size }} bytes</p>{% endif %}
+    {% endif %}
+  </div>
+  {% elif f.kind == "property" %}{{ prop_card(f.id, f.it) }}
+  {% elif f.kind == "inscription" %}
+  <div class="panel mb-card mb-hit">
+    <h3>{{ f.it.name or "(no name)" }}</h3>
+    <p class="who">Inscription · {{ f.it.type }} · {{ f.it.size }} bytes{% if f.it.parts %} in {{ f.it.parts|length }} parts{% endif %}
+      · by {{ find_link(f.it.by) }} · block {{ f.it.height }} · <a href="/moonbrix/content/{{ f.id }}" rel="noopener">open</a></p>
+  </div>
+  {% elif f.kind == "offer" %}
+  <div class="panel mb-card mb-hit">
+    <h3>Offer: {% if f.it.item %}{{ f.it.ticker }} #{{ f.it.item }}{% else %}{{ f.it.amount }} {{ f.it.ticker }}{% endif %}</h3>
+    <p class="who">{{ f.it.left }} left · {{ units(f.it.price, 8) }} KOT · {{ f.it.window }} blocks to pay · seller {{ find_link(f.it.seller) }}{{ " · cancelled" if not f.it.open }}</p>
+  </div>
+  {% elif f.kind == "reservation" %}
+  <div class="panel mb-card mb-hit">
+    <h3>Reservation of {{ f.it.amount }}</h3>
+    <p class="who">Offer {{ find_link(f.it.offer, f.it.offer[:16] ~ "…") }} · buyer {{ find_link(f.it.buyer) }} · {{ units(f.it.due - f.it.paid, 8) }} KOT due until block {{ f.it.expires }}</p>
+  </div>
+  {% elif f.kind == "address" %}
+  <div class="panel mb-card mb-hit">
+    <h3 class="mb-mono">{{ f.id }}</h3>
+    <p class="who">Owns: {% for t in f.owns.tlds %}{{ find_link(t, "." ~ t) }} {% endfor %}{% for k in f.owns.spaces %}{{ find_link(k) }} {% endfor %}{% for t in f.owns.properties %}{{ find_link(t) }} {% endfor %}{% if not (f.owns.tlds or f.owns.spaces or f.owns.properties) %}nothing{% endif %}</p>
+    <table><tr><th>Ticker</th><th>Held</th></tr>
+      {% for h in f.held %}<tr><td>{{ find_link(h.ticker) }}</td><td>{% if h.kind == "nft" %}{% for i in h["items"] %}#{{ i }} {% endfor %}{% else %}{{ units(h.amount, h.decimals) }}{% endif %}</td></tr>
+      {% else %}<tr><td colspan="2" class="mb-no">No tokens.</td></tr>{% endfor %}
+    </table>
+  </div>
+  {% endif %}
+  {% else %}<p class="mb-no">Nothing on MoonBrix is called {{ q }}.</p>{% endfor %}
+</div>
+<p><a href="/moonbrix">← Everything</a></p>
+{% else %}
+
+{% if account_signed %}
+<h2 class="mb-sec">Yours</h2>
+<div class="panel mb-card">
+  {% if not address %}<p>Your account has no Kotia address on this arcade yet.</p>
+  {% elif not held %}<p>{{ address }} holds no MoonBrix tokens or NFTs.</p>
+  {% else %}
+  <p class="who mb-mono">{{ address }}</p>
+  <table><tr><th>Ticker</th><th>Name</th><th>Held</th></tr>
+    {% for h in held %}<tr><td>{{ h.ticker }}</td><td>{{ h.name }}</td>
+      <td>{% if h.kind == "nft" %}{% for i in h["items"] %}#{{ i }} {% endfor %}{% else %}{{ units(h.amount, h.decimals) }}{% endif %}</td></tr>{% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if account_signed and can_send and address %}
+<h2 class="mb-sec" id="send">Send a command</h2>
+<div class="panel mb-card mb-send">
+  <p class="who">From your Kotia address <span class="mb-mono">{{ address }}</span>. This arcade builds the transaction;
+    your browser writes the command's bytes itself, checks them and signs. <a href="/docs/moonbrix">What each command does</a></p>
+  <form id="mb-form" autocomplete="off">
+    <label>Command <select id="mb-op">{% for name in form %}<option>{{ name }}</option>{% endfor %}</select></label>
+    <div id="mb-fields"></div>
+    <label id="mb-to-row" hidden>To <input id="mb-to" placeholder="@name or a Kotia address"></label>
+    <label id="mb-payall-row" hidden><input type="checkbox" id="mb-payall"> Pay the whole price now, not only the deposit</label>
+    <button class="btn" type="submit" id="mb-go">Send</button>
+    <p class="who" id="mb-said" aria-live="polite"></p>
+  </form>
+</div>
+<style>
+.mb-send label{display:block;margin:8px 0;font-size:.9rem}
+.mb-send input:not([type=checkbox]),.mb-send select,.mb-send textarea{display:block;width:100%;max-width:520px;margin-top:3px}
+</style>
+<script type="module" nonce="{{ csp_nonce }}">
+import * as wallet from "/wallet.js";
+const FORM = {{ form|tojson }}, TARGETS = {{ targets|tojson }};
+const KOT = {network: "kot", version: 46};
+const $ = (id) => document.getElementById(id);
+let state = null;
+async function doc() {
+  if (!state) state = await (await fetch("/moonbrix.json", {cache: "no-store"})).json();
+  return state;
+}
+function field(label, kind, i) {
+  const row = document.createElement("label");
+  row.textContent = label + " ";
+  let input;
+  if (kind === "mode") { input = document.createElement("select"); input.innerHTML = "<option value=0>whitelist</option><option value=1>blacklist</option>"; }
+  else if (kind === "kind") { input = document.createElement("select"); input.innerHTML = "<option value=0>fixed</option><option value=1>managed</option><option value=2>NFT</option>"; }
+  else if (kind === "file") { input = document.createElement("input"); input.type = "file"; }
+  else if (kind === "data") { input = document.createElement("textarea"); input.rows = 2; input.placeholder = "text, or a pointer: kot:<txid> (empty: none)"; }
+  else {
+    input = document.createElement("input");
+    input.placeholder = {tld: "lowercase, e.g. lwq", space: "a number (19.55.66.132) or its name (rpg)", tokens: "in whole tokens, e.g. 1.5",
+      kot: "KOT, e.g. 0.5", int: "a whole number", txid: "64 hex characters", ref: "<txid>, or chain:<txid>",
+      path: "lowercase, e.g. www/index.html", text: ""}[kind] || "";
+  }
+  input.dataset.kind = kind; input.dataset.i = i; input.className = "mb-in";
+  row.appendChild(input);
+  return row;
+}
+function draw() {
+  const op = $("mb-op").value;
+  $("mb-fields").replaceChildren(...FORM[op].map(([label, kind], i) => field(label, kind, i)));
+  $("mb-to-row").hidden = !TARGETS[op] || ["reserve", "pay"].includes(op);
+  $("mb-payall-row").hidden = op !== "reserve";
+  $("mb-said").textContent = TARGETS[op] === "maybe" ? "To: leave it empty and it goes to you." : "";
+}
+$("mb-op").addEventListener("change", draw);
+draw();
+function decimal(text, places) {
+  const m = String(text).trim().match(/^(\d*)(?:\.(\d*))?$/);
+  if (!m || (m[1] === "" && !m[2])) throw new Error(`${text || "nothing"} is not an amount`);
+  const frac = (m[2] || "");
+  if (frac.length > places) throw new Error(`${text} has more than ${places} decimals`);
+  return (BigInt(m[1] || "0") * 10n ** BigInt(places) + BigInt((frac + "0".repeat(places)).slice(0, places) || "0")).toString();
+}
+async function read(op) {
+  const d = await doc(), inputs = [...document.querySelectorAll(".mb-in")];
+  const val = (k) => inputs.find((x) => x.dataset.kind === k);
+  const out = [];
+  for (const input of inputs) {
+    const kind = input.dataset.kind, v = input.value.trim();
+    if (kind === "mode" || kind === "kind") out.push(Number(v));
+    else if (kind === "int") { if (!/^\d+$/.test(v)) throw new Error(`${v || "nothing"} is not a whole number`); out.push(v); }
+    else if (kind === "kot") out.push(decimal(v, 8));
+    else if (kind === "tokens") {
+      const ticker = (inputs[0].value || "").trim().toUpperCase();
+      const prop = d.properties && d.properties[ticker];
+      const places = op === "create property" ? Number((inputs.find((x) => x.dataset.i === "5") || {}).value || 0)
+        : op === "reserve" ? (() => { const o = d.offers[inputs[0].value.trim()]; return o && !o.item ? (d.properties[o.ticker] || {}).decimals || 0 : 0; })()
+        : prop && prop.kind !== "nft" ? prop.decimals : 0;
+      out.push(decimal(v || "0", places));
+    } else if (kind === "space") {
+      const tld = (val("tld") || {}).value.trim();
+      const dotted = v.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+      if (dotted) out.push(dotted.slice(1).reduce((n, x) => n * 256 + Number(x), 0));
+      else if (/^\d+$/.test(v)) out.push(Number(v));
+      else {
+        const hit = Object.values(d.spaces || {}).find((s) => s.tld === tld && s.name === v);
+        if (!hit) throw new Error(`no space ${v}.${tld}: give its number`);
+        out.push(hit.space);
+      }
+    } else if (kind === "ref" || kind === "data") {
+      if (kind === "data" && !v) { out.push(null); continue; }
+      const m = v.match(/^(?:([a-z0-9]{2,8}):)?([0-9a-f]{64})$/);
+      if (m) out.push([m[1] || "", m[2]]);
+      else if (kind === "ref") throw new Error("a pointer is <txid> or chain:<txid>");
+      else out.push(v);
+    } else if (kind === "file") {
+      const f = input.files[0];
+      if (!f) throw new Error("pick a file");
+      out.push({file: f});
+    } else out.push(v);
+  }
+  return out;
+}
+$("mb-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const op = $("mb-op").value, said = $("mb-said"), go = $("mb-go");
+  go.disabled = true;
+  try {
+    const fields = await read(op);
+    const keys = (await wallet.opened(KOT)) || await arcadeKeys(KOT, "Sending a MoonBrix command needs your key.");
+    if (!keys) throw new Error("your wallet is not open");
+    const warn = async (why) => arcadeAsk("MoonBrix would reject this", `${why}. Send it anyway? The fee is spent either way.`);
+    let txid;
+    if (op === "inscribe") {
+      const f = fields[2].file, bytes = new Uint8Array(await f.arrayBuffer());
+      txid = await wallet.inscribeMoonBrix(keys, {type: fields[0] || f.type || "application/octet-stream", name: fields[1], bytes},
+                                           (t) => { said.textContent = t; }, warn);
+    } else {
+      txid = (await wallet.sendMoonBrix(keys, {op, fields, to: $("mb-to").value.trim(), pay_all: $("mb-payall").checked}, warn)).txid;
+    }
+    said.textContent = `Sent: ${txid}. It counts once it is in a block.`;
+    state = null;
+  } catch (err) {
+    said.textContent = String(err.message || err);
+  } finally {
+    go.disabled = false;
+  }
+});
+</script>
+{% endif %}
+
+<h2 class="mb-sec">Properties</h2>
+<div class="mb-grid">
+  {% for ticker, p in doc.properties|dictsort %}{{ prop_card(ticker, p) }}
+  {% else %}<p class="mb-no">No properties yet.</p>{% endfor %}
+</div>
+
+<h2 class="mb-sec">Offers</h2>
+<div class="panel mb-card">
+  {% if doc.offers %}
+  <table><tr><th>Offer</th><th>What</th><th>Left</th><th>Price</th><th>Window</th><th>Seller</th></tr>
+    {% for oid, o in doc.offers.items() %}{% set p = doc.properties[o.ticker] %}<tr><td class="mb-mono">{{ oid[:16] }}…</td>
+      <td>{% if o.item %}{{ o.ticker }} #{{ o.item }}{% else %}{{ units(o.amount, p.decimals) }} {{ o.ticker }}{% endif %}{{ " (cancelled)" if not o.open }}</td>
+      <td>{% if o.item %}{{ o.left }}{% else %}{{ units(o.left, p.decimals) }}{% endif %}</td>
+      <td>{{ units(o.price, 8) }} KOT{% if o.deposit %}, deposit {{ units(o.deposit, 8) }}{% endif %}</td>
+      <td>{{ o.window }} blocks</td><td class="mb-mono">{{ o.seller }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<p class="mb-no">No open offers.</p>{% endif %}
+  {% if doc.reservations %}
+  <table><tr><th>Reserved</th><th>Buyer</th><th>Due</th><th>Until block</th></tr>
+    {% for rid, r in doc.reservations.items() %}<tr><td class="mb-mono">{{ r.amount }} of {{ r.offer[:16] }}…</td>
+      <td class="mb-mono">{{ r.buyer }}</td><td>{{ units(r.due - r.paid, 8) }} KOT</td><td>{{ r.expires }}</td></tr>{% endfor %}
+  </table>
+  {% endif %}
+</div>
+
+<h2 class="mb-sec">TLDs and spaces</h2>
+<div class="mb-grid">
+  {% for tld, t in doc.tlds|dictsort %}
+  <div class="panel mb-card">
+    <h3>{{ find_link(tld, "." ~ tld) }}</h3>
+    <p class="who">Owner <span class="mb-mono">{{ t.owner }}</span> · claimed in block {{ t.height }} · {{ t.mode }}
+      {% if t.list %}({{ t.list|length }} on the list){% endif %}</p>
+    {% if t.message %}<p>“{{ t.message }}”</p>{% endif %}
+    {% for key, s in doc.spaces|dictsort if s.tld == tld %}
+      <p><b>{{ find_link(space_name(key, s)) }}</b>{% if s.name %} · {{ key }}{% endif %} · <span class="mb-mono">{{ s.owner }}</span></p>
+      {% if s.root %}{{ tree(s.root, space_name(key, s)) }}{% endif %}
+    {% endfor %}
+  </div>
+  {% else %}<p class="mb-no">No TLD claimed yet.</p>{% endfor %}
+</div>
+
+<h2 class="mb-sec">Inscriptions</h2>
+<div class="mb-grid">
+  {% for txid, i in doc.inscriptions.items() %}
+  <div class="panel mb-card">
+    <h3>{{ i.name or "(no name)" }}</h3>
+    <p class="who">{{ i.type }} · {{ i.size }} bytes{% if i.parts %} in {{ i.parts|length }} parts{% endif %}
+      · <a href="/moonbrix/content/{{ txid }}" rel="noopener">open</a> · <span class="mb-mono">{{ txid }}</span></p>
+  </div>
+  {% else %}<p class="mb-no">No inscriptions yet.</p>{% endfor %}
+</div>
+
+<h2 class="mb-sec">Log</h2>
+<div class="panel mb-card">
+  {% if events %}
+  <table><tr><th>Block</th><th>Command</th><th>What</th></tr>
+    {% for e in events %}<tr><td>{{ e.height }}</td><td>{{ e.op or "?" }}</td>
+      <td>{% if e.ok %}{{ e.what }}{% else %}<span class="mb-no">rejected: {{ e.why }}</span>{% endif %}</td></tr>{% endfor %}
+  </table>
+  {% else %}<p class="mb-no">No commands yet.</p>{% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

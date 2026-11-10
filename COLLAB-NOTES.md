@@ -88,6 +88,70 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-10 · SadFrog's side (Claude, for tbuuol) · branch `team/kotia-moonbrix` (on master 440b1e2f) · MoonBrix 2 on Kotia (KOTIA ONLY)
+
+tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with all its functions: tokens and the DEX too. #81 cleared the way. A first commit copied the C++ prototype's Kurator 1:1. tbuuol then asked for the protocol itself to be redone, clean and robust: his commands on Kotia were tests and need not be kept. **This branch is MoonBrix 2**, and the protocol is `arcade/web/docs/moonbrix.md` (`/docs/moonbrix`). This stage reads it. Building and sending commands from the wallet comes next.
+- **What changed from the prototype:**
+  - A command starts with `MB` 02, in the first OP_RETURN. The payload runs on over every OP_RETURN output, about 89 kB in six outputs on Kotia.
+  - Every command of a block counts, in block order.
+  - The target is the first output that pays someone other than the sender.
+  - Fields are typed and length-prefixed. A name that breaks a rule rejects the command and is never trimmed.
+  - A command is applied whole or rejected whole, and every rejection is logged with its reason. Nothing stops the reader except a part the node cannot give, and then the block is read again later.
+  - A fixed property is never minted. Only a space's owner creates a property in it. Folders and files are never overwritten except by a replace.
+  - NFTs have numbered items.
+  - The DEX works as Omni's does. An offer holds the tokens, and has a price, a payment window and a deposit. A buyer reserves (`52`, paying the deposit's share), then pays (`53`) within the window. Reserved tokens are certain for the buyer. Unpaid reservations go back when the window closes, and the deposit stays with the seller.
+  - Large inscriptions are parts, put together by an assemble that names the size and SHA-256.
+  - From v1, also kept:
+    - a TLD's claim message;
+    - grant data, set once, on a property and on each NFT item;
+    - an item's issuer data (set by the property's owner) and holder data (set by its holder, kept when it moves);
+    - folder join.
+  - Tickers are letters only, 3 to 8 of A-Z (tbuuol), so `G0LD` can never pass for `GOLD`.
+  - Names that address something are lowercase only, and a space's name is unique in its TLD: TLDs, space names, folders and files.
+  - `/moonbrix?q=` is an explorer. It takes `lwq` (a TLD and its spaces), `rpg.lwq` or `19.55.66.132.lwq` (a space, its files and properties), `rpg.lwq/www/index.html`, a ticker, a txid, or an address (`moonbrix.find`).
+  - `/moonbrix/explorer` is the explorer as a page of its own, built from tbuuol's Syfy-UI (github.com/tbuuol/Syfy-UI): Atlantis and OASIS themes, and an address dialled like a gate address. It is a plain file beside `browser.html`, `web/moonbrix_explorer.html`. It is served with `nonced()` like the globe, and listed in pyproject's package-data. It reads `/moonbrix.json` and `/moonbrix/find.json`.
+  - **Web fonts for the whole arcade** (tbuuol: fetch them once, and every page may use them). `arcade/web/fonts/` holds Orbitron, Rajdhani and Share Tech Mono: the latin subset, as Google Fonts serves it, about 86 kB in all, SIL OFL 1.1 with each licence beside it.
+    - `GET /fonts/<file>` serves them (public in door.py, the core module). A `.woff2` is immutable, `fonts.css` is kept a day, and nothing else in the folder is served.
+    - `fonts.css` declares them.
+    - `PROVENANCE.md` gives each file's address and sha256, and `tests/test_fonts.py` pins the sums.
+    - No page sends a visitor's address to Google.
+  - **Sending** (stage 2), from a signed-in account's Kotia address, on `/moonbrix`:
+    - `POST /account/moonbrix/offer` builds the transaction like `/account/send`: data OP_RETURNs first, then the target (dust), then enough self outputs for Kotia's half-data rule, then change. A reserve or pay goes to the seller with what is due.
+    - It dry-runs the command against the state read so far. If MoonBrix would reject it, that comes back as a `warning`, never a refusal (tbuuol: no checks on what is sent on KOT).
+    - `wallet.js` `mbEncode` and `mbDataScripts` write the bytes in the browser, and `checkFunding` signs only those exact OP_RETURNs plus the target.
+    - A Playwright test holds the JS and Python encodings byte for byte to each other.
+    - `inscribeMoonBrix` sends files over 80 kB as parts chained on change, then an assemble.
+    - `/account/moonbrix/offer` is in `door.PUBLIC_POST`.
+  - **Live test on Kotia, 2026-11-10** (tbuuol: "get the TLD claude").
+    - Two senders: @liteworldsquest's Kotia key and a fresh address of the VPS node's wallet, 30 KOT each.
+    - They sent 59 commands, plus one more after the DEX window, all built with this branch's code. Of them, 48 were meant to apply and 11 to be rejected.
+    - `moonbrix.follow` over the real chain read every one of them as meant. The end states matched, and the inscriptions came back byte for byte with their SHA-256: 222 B, 70 kB in one transaction, and 172 kB in three parts and an assemble.
+    - An unpaid reservation ended at the first data block after its window.
+    - Fees came to 0.05 KOT for 258 kB.
+    - From it: `GET /moonbrix/tx/<txid>` (how deep a Kotia transaction is). `inscribeMoonBrix` waits for each 80 kB part's block, because Kotia's mempool takes 101 kB of unconfirmed ancestors at most.
+  - Pointers (`ref`) name their chain's ticker (`kot`, `ltc` ...), so MoonBrix on another chain can point at Kotia's content later. A pointer to another chain is kept unchecked.
+- **`arcade/moonbrix.py`:**
+  - `OPS` is one table that drives both `decode` and `encode` (`encode` is for the sending stage and the tests).
+  - `data_scripts` cuts a payload into OP_RETURNs that Kotia relays. `Book` holds the rules.
+  - `MoonBrix` keeps the document in `<net>-moonbrix.sqlite`, with an undo for each changed block. A document from the prototype is reset and read again.
+  - `follow` reads `utxoset.data_blocks` from block 1,236,675 on. `content` gives an inscription checked against its SHA-256.
+- **Wiring:** unchanged from the first commit.
+  - `Params.moonbrix`, Kotia only.
+  - `state.moonbrix(chain)`.
+  - `watcher.moonbrix_pass`, after the unspent set.
+  - `web/moonbrix_web.py`: `/moonbrix`, `/moonbrix.json`, `/moonbrix/content/<txid>` (with `CONTENT_HEADERS`), `/account/moonbrix`.
+  - `door.py` and the `tokens` module.
+- **Docs:**
+  - `docs/moonbrix.md` is new and offered in the guide.
+  - `docs/kotia.md` *MoonBrix* points to it.
+- **For later:** the arcade's own Kotia asset format (KOTIA-PLAN Phase 3) should become MoonBrix 2 inscriptions (`20`, or `21` + `22`).
+- **Open questions, written on the protocol page:** a price for claiming a TLD, and bids, which need KOT locked in a script.
+- **Tests:**
+  - `tests/test_moonbrix.py` (54).
+  - The prototype's fixture is gone.
+  - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is `chains.<net>.params.moonbrix`.
+- **Needs from the operator:** a review and merge. Nothing to set on a node.
+
 ### 2026-11-09 · the operator's side (Claude) · merged PR #125 (hardening round 2) onto master
 
 All 57 commits cherry-picked onto master 2d2bfb90. The conflicts were the public mirror's filtered comment wording beside the branch's new `nonce` attributes (base.html, admin.html, exchange.html, ord_collection.html), the DigiAssets import in doginals.py and the bad-bodies change in the trade orders route; each took the branch's code with this repository's own wording. Checked by running the publish filter over the result and comparing it with the branch.

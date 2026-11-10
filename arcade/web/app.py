@@ -12344,6 +12344,19 @@ def create_app(state: AppState) -> FastAPI:
                         media_type="text/plain; charset=utf-8",
                         headers={"Cache-Control": "public, max-age=604800"})
 
+    @app.get("/fonts/{name}")
+    def font_file(name: str):
+        """The arcade's own web fonts and the stylesheet that declares them (web/fonts/PROVENANCE.md, 2026-11-10):
+        served from here so no page sends a visitor's address to a font host. `tests/test_fonts.py` pins the sums."""
+        kinds = {".woff2": "font/woff2", ".css": "text/css; charset=utf-8"}
+        root = Path(__file__).parent / "fonts"
+        target = root / name
+        if "/" in name or name.startswith(".") or target.suffix not in kinds or not target.is_file():
+            raise HTTPException(404, "no such font")
+        # A font is pinned by its sum, so it never changes under its name; the stylesheet may, so it is kept a day.
+        cache = "public, max-age=31536000, immutable" if target.suffix == ".woff2" else "public, max-age=86400"
+        return Response(target.read_bytes(), media_type=kinds[target.suffix], headers={"Cache-Control": cache})
+
     @app.get("/vendor/{name:path}")
     def vendored(name: str):
         """The two libraries WebCrypto cannot replace.
@@ -38068,6 +38081,28 @@ def create_app(state: AppState) -> FastAPI:
     # Restoring without an arcade (recover_web.py, 2026-11-07): the offline /recover page and the backup page's renderer.
     from . import recover_web
     recover_web.register(app, state, versioned=_versioned)
+    # MoonBrix on Kotia (moonbrix_web.py, 2026-11-10): /moonbrix, its data and its inscriptions' files.
+    def _moonbrix_build(account, chain, payload_outputs: list, what: str) -> dict:
+        """An unsigned MoonBrix command for a signed-in account (moonbrix_web.py, 2026-11-10): built the way
+        /account/send builds a payment -- its own coins and its change not yet in a block, change back to it, held as
+        an offer the browser checks and signs. Raises funding.FundingError or ValueError."""
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            raise ValueError(f"this account has no {chain.label} address yet")
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            unsigned = fundinglib.build(
+                db, chain.params, address, payload_outputs, rate=fees.MIN_FEE_PER_KB, what=what,
+                exclude=_flights.spent_by(account.pubkey, chain.network),
+                extra=[c for c in _flights.change_for(account.pubkey, chain.network)
+                       if c.get("address", address) == address])
+        _quota(account, "send")
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return {"offer": offer.id, "chain": chain.network, "label": chain.label, **unsigned.as_json()}
+
+    from . import moonbrix_web
+    moonbrix_web.register(app, state, render=render, signed_in=signed_in, account_address=_account_address,
+                          build=_moonbrix_build, payee=_payee, pay_script=_pay_script)
     # The DigiDollar-test launchpad (ddpadweb.py, 2026-11-07: the Bytelings, "a launch pad that only takes digidollar
     # test"): /bytelings, paid with the Wallet's own DigiDollar send.
     from . import ddpadweb

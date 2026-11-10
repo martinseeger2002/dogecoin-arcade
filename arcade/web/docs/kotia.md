@@ -9,6 +9,9 @@ until its node has synced.
 inscriptions (`Params.class_b`, as on Litecoin): the index reads its coins only, and nothing is checked
 when you send.
 
+**MoonBrix (2026-11-10).** Kotia's own token protocol is tbuuol's **MoonBrix 2**, read on its own page, `/moonbrix`
+(see *MoonBrix* below, and the protocol on *MoonBrix 2*).
+
 **Status:**
 - **In the wallet,** on the same key as PEP, DOGE and LTC: receive and send KOT. The operator's sends
   from the node key (Admin, when Kotia is borrowed or its Core has no wallet) write the transaction
@@ -99,3 +102,14 @@ in `<net>-utxoset.sqlite`:
   them, because it signs only ordinary address coins.
 - **Kotia only for now.** Another chain would need adapting first: its size, how its headers are named, its
   block-file magic, and what its transactions carry.
+
+## MoonBrix
+
+MoonBrix 2 is tbuuol's protocol on Kotia: TLDs with white- and blacklists, spaces, inscriptions up to about 90 kB a
+transaction, folders and files, tokens of fixed or managed supply, NFTs, and a DEX that sells them for KOT. Its rules,
+byte by byte, are on their own page: *MoonBrix 2* (`/docs/moonbrix`). The arcade reads it on **`/moonbrix`**, with an explorer: search `lwq`, `rpg.lwq`, `rpg.lwq/www/index.html`, a ticker, a txid or an address. The same explorer is a page of its own at **`/moonbrix/explorer`**, in the Syfy-UI look. Signed in, `/moonbrix` also sends MoonBrix commands from your Kotia address: claim a TLD, make a token, inscribe a file, sell and buy. Signed
+in, the page also shows what your Kotia address holds. The whole state is at `/moonbrix.json`, an inscription's file
+at `/moonbrix/content/<txid>`, and your holdings at `/account/moonbrix`.
+
+Only an arcade that runs Kotia's Core itself reads MoonBrix: its unspent set says which blocks carry data, and the
+watcher reads those right after it. A borrowing arcade says so on the page.

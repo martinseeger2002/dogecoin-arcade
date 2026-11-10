@@ -117,7 +117,7 @@ _MODULES = (
                    "/clone", "/source.rev",
                    "/source.tar.gz", "/source.tar.gz.sha256", "/openapi.json", "/.well-known", "/base.css",
                    "/favicon.ico", "/icon-32.png", "/icon-180.png", "/icon-192.png", "/icon-512.png",
-                   "/manifest.webmanifest", "/sw.js", "/vendor", "/coins.js", "/coin-{name}.png", "/qrscan.js",
+                   "/manifest.webmanifest", "/sw.js", "/vendor", "/fonts", "/coins.js", "/coin-{name}.png", "/qrscan.js",
                    "/bip39-english.txt", "/admin/terms", "/admin/login", "/admin/logout", "/admin/api/state",
                    "/admin/api/release", "/admin/api/settings", "/admin/api/cores", "/admin/api/restart",
                    "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules",
@@ -192,7 +192,11 @@ _MODULES = (
     Module("tokens", "app", "Tokens", "The arcade's own tokens, and DRC-20 / PRC-20 balances.",
            routes=("/tokens", "/wallet/tokens", "/me/wallet/tokens", "/node/wallet/tokens", "/node/wallet/token",
                    "/account/token", "/account/token20", "/account/tokens", "/account/tokenpad", "/r/token",
-                   "/r/tokens"), group="creating"),
+                   "/r/tokens",
+                   # MoonBrix on Kotia (moonbrix_web.py, 2026-11-10): its TLDs, properties, tokens and inscriptions
+                   "/moonbrix", "/moonbrix.json", "/account/moonbrix",
+                   "/moonbrix/explorer", "/moonbrix/find.json", "/account/moonbrix/offer",
+                   "/moonbrix/tx"), group="creating"),
     Module("exchange", "app", "Exchange", "The market: listings, swaps, buy orders, escrow, cross-chain orders and "
            "this node's trades.",
            routes=("/exchange", "/listings", "/swap", "/doginals", "/settings/cut", "/settings/filling",
