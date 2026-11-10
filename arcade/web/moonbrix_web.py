@@ -3,6 +3,8 @@
     GET /moonbrix                     the TLDs and their spaces, folders and files, the properties and who holds
                                       them, the open offers, the inscriptions and the log; a signed-in account sees
                                       what its own Kotia address holds
+    GET /moonbrix?q=rpg.lwq           the explorer: a TLD (`lwq`), a space (`rpg.lwq`, `19.55.66.132.lwq`), a folder or
+                                      file in one (`rpg.lwq/www/index.html`), a ticker, a txid or an address
     GET /moonbrix.json                the whole state, with the height it is read to
     GET /moonbrix/content/<txid>      an inscription's file, from the chain and checked against its SHA-256,
                                       sandboxed like /content
@@ -39,13 +41,14 @@ def register(app, state, *, render, signed_in, account_address) -> None:
         return account, address, (moonbrixlib.balances(mb.document(), address) if address else [])
 
     @app.get("/moonbrix", response_class=HTMLResponse)
-    def moonbrix_page(request: Request):
+    def moonbrix_page(request: Request, q: str = ""):
         chain, mb, why = kotia()
         doc = mb.document() if mb is not None else moonbrixlib.empty()
+        q = q.strip()[:300]
         account, address, held = holdings(request, chain, mb)
         return render(request, "moonbrix.html", why=why, height=mb.height if mb is not None else None, doc=doc,
                       events=list(reversed(doc["log"]))[:200], account_signed=account is not None, address=address,
-                      held=held, units=moonbrixlib.units)
+                      held=held, units=moonbrixlib.units, q=q, found=moonbrixlib.find(doc, q) if q else [])
 
     @app.get("/moonbrix.json")
     def moonbrix_json():

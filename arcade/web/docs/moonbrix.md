@@ -68,8 +68,9 @@ Every field must be there and well formed, and nothing may follow the last field
 |---|---|
 | TLD | 1 to 16 of `a-z`, `0-9` and `-`, not starting or ending with `-` |
 | Ticker | 3 to 8 of `A-Z` and `0-9`, starting with a letter |
-| Text: a space's name, a property's or an inscription's name | valid UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F), at most 32 bytes (an inscription's name 64) |
-| Path | 1 to 255 bytes, names joined by `/`. Each name is text of 1 to 64 bytes, without `/` and not `.` or `..` |
+| Space name | 1 to 32 of `a-z`, `0-9` and `-`, not starting or ending with `-`. It is unique within its TLD |
+| Path | 1 to 255 bytes, names joined by `/`. Each name is 1 to 64 of `a-z`, `0-9`, `.`, `_` and `-`, and not `.` or `..` |
+| Text: a property's or an inscription's name | valid UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F), at most 32 bytes (an inscription's name 64) |
 | Type | 3 to 100 bytes of printable ASCII (space to `~`) with a `/` in it, such as `image/png` |
 | A TLD's message | text of at most 80 bytes, may be empty |
 | A chain in a `ref` | 2 to 8 of `a-z` and `0-9`, or empty |
@@ -86,6 +87,21 @@ another's.
 - **Parts:** an assemble's parts must be on this chain for now. Only there are their size and SHA-256 checked.
 
 A name is never changed to make it fit: a name that breaks the rule rejects the command.
+
+**Names that address something are lowercase only:** TLDs, space names, folders and files. So
+`rpg.lwq/www/index.html` means one thing, however it is typed, and two names can never differ only in case. A ticker
+is uppercase only. The name of a property or an inscription is free text, because it is shown and never looked up.
+
+### Addresses
+
+| Address | Names |
+|---|---|
+| `lwq` | the TLD, with all its spaces |
+| `rpg.lwq` | the space named `rpg` in `lwq` |
+| `19.55.66.132.lwq` | the same space, by its number |
+| `rpg.lwq/www/index.html` | a folder or file in it |
+
+The arcade's explorer (`/moonbrix?q=...`) takes these, a ticker, a transaction id or an address.
 
 ## Commands
 
@@ -109,7 +125,7 @@ is none.
 |---|---|---|---|
 | `10` | claim space | `str` tld, `u32` space | The TLD exists and the space is free. The TLD's owner may always claim. Otherwise, under a whitelist only an address on the list may, under a blacklist every address that is not on it. The sender owns the space, with an empty root folder. |
 | `11` | give space | `str` tld, `u32` space → | The sender owns the space. Its folders and files go with it. |
-| `12` | name space | `str` tld, `u32` space, `str` name | The sender owns the space. An empty name clears it. |
+| `12` | name space | `str` tld, `u32` space, `str` name | The sender owns the space, and no other space of the TLD has the name. An empty name clears it. |
 
 ### Inscriptions
 

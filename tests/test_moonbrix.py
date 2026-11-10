@@ -259,6 +259,44 @@ def test_an_nft_item_has_grant_issuer_and_holder_data_and_keeps_them_when_it_mov
     assert chain.doc["properties"]["SWORD"]["items"]["1"]["holder_data"] is None
 
 
+def test_a_space_name_is_lowercase_and_had_once_in_its_tld(chain):
+    space(chain)
+    chain.one(E("claim space", "moon", 7))
+    assert not chain.ok(E("name space", "moon", HOME, "RPG")), "lowercase only"
+    assert not chain.ok(E("name space", "moon", HOME, "my rpg"))
+    assert chain.ok(E("name space", "moon", HOME, "rpg"))
+    assert not chain.ok(E("name space", "moon", 7, "rpg")), "rpg.moon is taken"
+    assert chain.ok(E("name space", "moon", HOME, ""))
+    assert chain.ok(E("name space", "moon", 7, "rpg")), "free again"
+
+
+def test_folder_and_file_names_are_lowercase(chain):
+    space(chain)
+    assert not chain.ok(E("make folder", "moon", HOME, "WWW"))
+    assert not chain.ok(E("make folder", "moon", HOME, "my site"))
+    assert chain.ok(E("make folder", "moon", HOME, "my-site_2.0"))
+
+
+def test_find_names_a_tld_a_space_a_path_a_ticker_or_an_address(chain):
+    key = space(chain, tld="lwq")
+    chain.one(E("name space", "lwq", HOME, "rpg"))
+    page = chain.one(E("inscribe", "text/html", "index", b"<p>hi"))[1].txid
+    chain.one(E("make folder", "lwq", HOME, "www"))
+    chain.one(E("put file", "lwq", HOME, "www/index.html", ("", page)))
+    chain.one(E("create property", "lwq", HOME, "LWQ", "Coins", M.FIXED, 0, 10, None))
+    doc = chain.doc
+    kinds = lambda q: [(f["kind"], f["id"]) for f in M.find(doc, q)]
+    assert kinds("lwq") == [("tld", "lwq"), ("property", "LWQ")]
+    assert M.find(doc, "LWQ")[0]["spaces"][0][0] == key
+    assert kinds("rpg.lwq") == kinds(" RPG.LWQ ") == kinds("19.55.66.132.lwq") == [("space", "rpg.lwq")]
+    assert kinds("rpg.lwq/www/index.html") == [("path", "rpg.lwq/www/index.html")]
+    assert M.find(doc, "rpg.lwq/www")[0]["it"] == {"dir": {"index.html": {"file": {
+        "chain": "kot", "txid": page, "checked": True}}}}
+    assert kinds(page) == [("inscription", page)]
+    assert kinds(A) == [("address", A)] and M.find(doc, A)[0]["owns"]["spaces"] == [key]
+    assert kinds("nope.lwq") == [] and kinds("rpg.lwq/nope") == []
+
+
 # --- inscriptions, folders and files -----------------------------------------------------------------------------
 
 def test_an_assembled_inscription_needs_parts_from_before_of_the_size_and_hash_it_names(chain):
@@ -484,15 +522,20 @@ def test_the_moonbrix_page_and_its_data_show_the_state(client, monkeypatch, tmp_
     monkeypatch.setattr(state, "more", {"kot": kot}, raising=False)
     built = Chain(tmp_path)
     space(built)
-    built.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 150_000_000, None))
-    built.one(E("name space", "moon", HOME, "<b>home</b>"))
+    built.one(E("create property", "moon", HOME, "MBX", "<b>MoonBrix</b>", M.FIXED, 8, 150_000_000, None))
+    assert built.ok(E("name space", "moon", HOME, "rpg"))
+    assert built.ok(E("make folder", "moon", HOME, "www"))
     mb = state.moonbrix(kot)
     with mb.conn:
         mb._set(built.mb.height, "ab" * 32, built.doc)
     page = app.get("/moonbrix")
     assert page.status_code == 200
-    assert "MBX · MoonBrix" in page.text and ".moon" in page.text and "19.55.66.132.moon" in page.text
-    assert "<b>home</b>" not in page.text and "&lt;b&gt;home" in page.text
+    assert "MBX · &lt;b&gt;MoonBrix" in page.text and "<b>MoonBrix" not in page.text
+    assert ".moon" in page.text and "rpg.moon" in page.text
+    found = app.get("/moonbrix", params={"q": "RPG.Moon"}).text
+    assert "Space 19.55.66.132.moon" in found and "MBX" in found and "www/" in found
+    assert "rpg.moon" in app.get("/moonbrix", params={"q": "moon"}).text
+    assert "Nothing on MoonBrix is called" in app.get("/moonbrix", params={"q": "nope.moon"}).text
     data = app.get("/moonbrix.json").json()
     assert data["height"] == built.mb.height and list(data["properties"]) == ["MBX"]
     assert app.get("/moonbrix/content/" + "zz" * 32).status_code in (400, 404)
