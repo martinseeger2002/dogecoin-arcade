@@ -444,6 +444,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # how the account's own mintpad page looks (presentation only)
                "/account/mintpad", "/account/mintpad/inscribe", "/account/tokenpad/inscribe", "/account/mintpad/announce", "/account/mintpad/announced",
                "/account/claim", "/account/send", "/account/inscribe", "/account/inscribe/abandon",
+               # a MoonBrix command on Kotia, built as an offer the browser checks and signs; broadcasts nothing
+               # (moonbrix_web.py, 2026-11-10)
+               "/account/moonbrix/offer",
                "/account/run/start", "/account/run/plan", "/account/run", "/account/run/piece",
                "/account/run/stop",
                # a folder bigger than one request, in batches; and an item of

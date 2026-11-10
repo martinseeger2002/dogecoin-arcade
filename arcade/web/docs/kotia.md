@@ -107,7 +107,7 @@ in `<net>-utxoset.sqlite`:
 
 MoonBrix 2 is tbuuol's protocol on Kotia: TLDs with white- and blacklists, spaces, inscriptions up to about 90 kB a
 transaction, folders and files, tokens of fixed or managed supply, NFTs, and a DEX that sells them for KOT. Its rules,
-byte by byte, are on their own page: *MoonBrix 2* (`/docs/moonbrix`). The arcade reads it on **`/moonbrix`**, with an explorer: search `lwq`, `rpg.lwq`, `rpg.lwq/www/index.html`, a ticker, a txid or an address. The same explorer is a page of its own at **`/moonbrix/explorer`**, in the Syfy-UI look. Signed
+byte by byte, are on their own page: *MoonBrix 2* (`/docs/moonbrix`). The arcade reads it on **`/moonbrix`**, with an explorer: search `lwq`, `rpg.lwq`, `rpg.lwq/www/index.html`, a ticker, a txid or an address. The same explorer is a page of its own at **`/moonbrix/explorer`**, in the Syfy-UI look. Signed in, `/moonbrix` also sends MoonBrix commands from your Kotia address: claim a TLD, make a token, inscribe a file, sell and buy. Signed
 in, the page also shows what your Kotia address holds. The whole state is at `/moonbrix.json`, an inscription's file
 at `/moonbrix/content/<txid>`, and your holdings at `/account/moonbrix`.
 

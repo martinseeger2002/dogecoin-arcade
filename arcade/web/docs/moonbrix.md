@@ -67,7 +67,7 @@ Every field must be there and well formed, and nothing may follow the last field
 | Name | Rule |
 |---|---|
 | TLD | 1 to 16 of `a-z`, `0-9` and `-`, not starting or ending with `-` |
-| Ticker | 3 to 8 of `A-Z` and `0-9`, starting with a letter |
+| Ticker | 3 to 8 of `A-Z`, letters only, so `G0LD` can never pass for `GOLD` |
 | Space name | 1 to 32 of `a-z`, `0-9` and `-`, not starting or ending with `-`. It is unique within its TLD |
 | Path | 1 to 255 bytes, names joined by `/`. Each name is 1 to 64 of `a-z`, `0-9`, `.`, `_` and `-`, and not `.` or `..` |
 | Text: a property's or an inscription's name | valid UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F), at most 32 bytes (an inscription's name 64) |
@@ -210,6 +210,24 @@ are certain to come.
 - **Several buyers:** two buyers can reserve parts of one offer at the same time. The first in block order gets as
   much as is left. A reservation that asks for more than is left is rejected, and its deposit stays paid. A wallet
   checks what is left before it sends.
+
+## Sending from the arcade's wallet
+
+A signed-in account sends commands from its own Kotia address on **`/moonbrix`**, under *Send a command*. Pick the
+command, fill in its fields, and send.
+- **Who does what:** the node builds the transaction (`POST /account/moonbrix/offer`), and the browser writes the
+  command's bytes itself (`wallet.js` `mbEncode`, the same table as `moonbrix.OPS`). The browser signs only when the
+  transaction's OP_RETURNs are exactly those bytes and it pays nobody but the target and the account itself.
+- **The outputs:** the command's OP_RETURNs come first, then the target, paid 0.001 KOT, Kotia's smallest relayed
+  output. A payload of more than one OP_RETURN gets as many outputs back to the sender as Kotia needs. The change
+  comes last.
+- **A reserve or a pay:** it pays the offer's seller what is due: the deposit's share, the whole price with *pay the
+  whole price now*, or what a reservation still owes.
+- **Before it is built:** the node tries the command against the state it has read. If MoonBrix would reject it, the
+  page says why and asks whether to send it anyway. It never refuses: on Kotia, what a person writes is theirs to send.
+- **Inscribing:** a file of up to 80 kB goes in one transaction. A bigger one goes as parts (`21`), each sent on the
+  change of the one before so they reach a block in order, then an assemble (`22`) with its size and SHA-256. That is
+  up to 20 parts, about 1.5 MB, in one run.
 
 ## What the arcade keeps
 
