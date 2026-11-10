@@ -1,0 +1,14 @@
+/* The arcade's own web fonts (arcade/web/fonts/PROVENANCE.md), served from this node: no visitor's address goes to a
+   font host. Link /fonts/fonts.css and use the families by name. Latin (with German umlauts) only. */
+@font-face { font-family:'Orbitron'; font-style:normal; font-weight:400 900; font-display:swap;
+  src:url(/fonts/orbitron.woff2) format('woff2'); }
+@font-face { font-family:'Rajdhani'; font-style:normal; font-weight:400; font-display:swap;
+  src:url(/fonts/rajdhani-400.woff2) format('woff2'); }
+@font-face { font-family:'Rajdhani'; font-style:normal; font-weight:500; font-display:swap;
+  src:url(/fonts/rajdhani-500.woff2) format('woff2'); }
+@font-face { font-family:'Rajdhani'; font-style:normal; font-weight:600; font-display:swap;
+  src:url(/fonts/rajdhani-600.woff2) format('woff2'); }
+@font-face { font-family:'Rajdhani'; font-style:normal; font-weight:700; font-display:swap;
+  src:url(/fonts/rajdhani-700.woff2) format('woff2'); }
+@font-face { font-family:'Share Tech Mono'; font-style:normal; font-weight:400; font-display:swap;
+  src:url(/fonts/share-tech-mono.woff2) format('woff2'); }

@@ -117,7 +117,7 @@ _MODULES = (
                    "/clone", "/source.rev",
                    "/source.tar.gz", "/source.tar.gz.sha256", "/openapi.json", "/.well-known", "/base.css",
                    "/favicon.ico", "/icon-32.png", "/icon-180.png", "/icon-192.png", "/icon-512.png",
-                   "/manifest.webmanifest", "/sw.js", "/vendor", "/coins.js", "/coin-{name}.png", "/qrscan.js",
+                   "/manifest.webmanifest", "/sw.js", "/vendor", "/fonts", "/coins.js", "/coin-{name}.png", "/qrscan.js",
                    "/bip39-english.txt", "/admin/terms", "/admin/login", "/admin/logout", "/admin/api/state",
                    "/admin/api/release", "/admin/api/settings", "/admin/api/cores", "/admin/api/restart",
                    "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules",

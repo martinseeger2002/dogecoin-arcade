@@ -12344,6 +12344,19 @@ def create_app(state: AppState) -> FastAPI:
                         media_type="text/plain; charset=utf-8",
                         headers={"Cache-Control": "public, max-age=604800"})
 
+    @app.get("/fonts/{name}")
+    def font_file(name: str):
+        """The arcade's own web fonts and the stylesheet that declares them (web/fonts/PROVENANCE.md, 2026-11-10):
+        served from here so no page sends a visitor's address to a font host. `tests/test_fonts.py` pins the sums."""
+        kinds = {".woff2": "font/woff2", ".css": "text/css; charset=utf-8"}
+        root = Path(__file__).parent / "fonts"
+        target = root / name
+        if "/" in name or name.startswith(".") or target.suffix not in kinds or not target.is_file():
+            raise HTTPException(404, "no such font")
+        # A font is pinned by its sum, so it never changes under its name; the stylesheet may, so it is kept a day.
+        cache = "public, max-age=31536000, immutable" if target.suffix == ".woff2" else "public, max-age=86400"
+        return Response(target.read_bytes(), media_type=kinds[target.suffix], headers={"Cache-Control": cache})
+
     @app.get("/vendor/{name:path}")
     def vendored(name: str):
         """The two libraries WebCrypto cannot replace.
