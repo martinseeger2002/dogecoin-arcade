@@ -1,31 +1,28 @@
-"""MoonBrix on Kotia, read the way its own Kurator reads it (tbuuol 2026-11-10). KOTIA ONLY (Params.moonbrix).
+"""MoonBrix 2 on Kotia (tbuuol 2026-11-10). KOTIA ONLY (Params.moonbrix).
 
-MoonBrix (github.com/tbuuol/MoonBrix) is tbuuol's OP_RETURN protocol on Kotia: TLD and IP spaces, white- and
-blacklists, folders and files, inscriptions, properties and their tokens. Its reference is the C++ program's
-`Kurator.cpp`, and the arcade must come to the same state as that program does, byte for byte, or the two show
-different owners and balances. So this is a copy of what it does, quirks included (QUIRKS below lists them, so
-tbuuol can decide which to change -- in both at once, from a block on). Nothing here is the arcade's own idea.
+MoonBrix is tbuuol's OP_RETURN protocol on Kotia: TLDs with white- and blacklists, spaces in them, inscriptions,
+folders and files, properties (fixed, managed, NFTs) and a DEX that sells them for KOT. The protocol is
+`arcade/web/docs/moonbrix.md`; this file does what that page says and nothing else. MoonBrix 2 replaces the C++
+prototype (github.com/tbuuol/MoonBrix): tbuuol asked for it to be made clean and robust, and its commands on Kotia
+were tests, so nothing of them is kept.
 
-Which transaction is a command, as MoonBrix's MasterDB, Indexer and Sync pick them:
-- Its `vout[0]` is a data output by Core's rule (OP_RETURN followed by pushes only) and Core's disassembly of it
-  starts "OP_RETURN " with at least 30 characters after that.
-- **Only the first such transaction of a block counts** (the Indexer keeps one per height). A second one in the same
-  block is read by nobody.
-- It is a command when that disassembly is exactly "OP_RETURN <hex>" with at least 30 hex characters (15 bytes): the
-  header. Bytes 0-8 the TLD, 9-12 the IP, 13 the action, 14 the action table (00), 15 the sub-action, 16 on data.
-- Its sender (`origin`) is the address of the coin its first input spends.
-- Before the protocol's activation (the 30-zero header, Kotia block 1,236,675) nothing else counts.
+The rules that decide what a command is (the page has them whole):
+- A transaction's first OP_RETURN output starts with MAGIC; the data of it and every OP_RETURN output after it,
+  joined, is the payload. Every MoonBrix transaction of a block counts, in block order.
+- The sender is the address of the coin the first input spends; the target, where one is needed, the first output
+  paying an address other than the sender's.
+- A command is applied whole or rejected whole, and a rejection goes into the log with its reason. Nothing stops the
+  reader but the node itself (a part's data it cannot fetch), and then it tries the block again later.
 
-The state is MoonBrix's five files, the same shapes and key names (`LIBARY/Kotia/*.json`): `lib` (the event log),
-`tld`, `fold`, `ins` and `prop`. It is kept as one JSON document in `<net>-moonbrix.sqlite`, with the document as it
-was before each block that changed it, so a reorg is rolled back. MoonBrix commands are rare (50 blocks carry data
-on Kotia since the activation), so the arcade's unspent set (utxoset.py `data_blocks`) says which blocks to read and
-everything else is skipped.
+The state is one JSON document in `<net>-moonbrix.sqlite`, with the document as it was before each block that changed
+it, so a reorg is rolled back. MoonBrix commands are rare, so the arcade's unspent set (utxoset.py `data_blocks`) says
+which blocks to read and everything else is skipped.
 """
 from __future__ import annotations
 
-import copy
+import hashlib
 import json
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -33,455 +30,715 @@ from typing import Any, Callable, Iterable
 
 from . import rawchain
 
-#: The activation header, and the TLDs and IPs no command may name (Kurator.hpp ActionCode).
-ACTIVATION = "0" * 30
-FIRST_TLD, LAST_TLD = "0" * 18, "f" * 18
-FIRST_IP, LAST_IP = "0" * 8, "f" * 8
-#: Byte 13, the action (Kurator.hpp ActionCode). 0a-13 are named there and read by nothing yet.
-CLAIM, OWNER, LISTTYPE, CHANGELIST, NAME, INSCRIBE, FOLDER, FILE, PROPERTY, TOKEN = (
-    "00", "01", "02", "03", "04", "05", "06", "07", "08", "09")
-#: A meta inscription's chain code (byte 16).
-CHAINS = {"00": "Kotia", "01": "Fairbrix"}
+VERSION = 2
+MAGIC = b"MB" + bytes([VERSION])
+#: Where reading starts (the prototype's activation; nothing before it is read).
+ACTIVATION = 1_236_675
 #: Blocks whose document before them is kept, so a reorg up to this deep is rolled back rather than read again.
 UNDO_DEPTH = 200
 U64 = 1 << 64
+#: Kotia's Core relays an OP_RETURN script of at most 15,000 bytes: OP_RETURN, OP_PUSHDATA2 and its length, the data.
+MAX_PUSH = 15_000 - 4
+MAX_PARTS = 10_000
 
-#: Where the arcade does what Kurator.cpp does and that may not be what was meant, for tbuuol to decide on. Changing
-#: one changes the protocol: MoonBrix and the arcade together, from a block on.
-QUIRKS = (
-    "Only the first command of a block counts; a second transaction in the same block is never read (Indexer.cpp).",
-    "A transaction MoonBrix cannot read (an input or output without an address where one is needed, a meta "
-    "inscription that is not JSON, a folder or file put where a file already is) stops MoonBrix's sync for good; "
-    "the arcade passes over it and goes on.",
-    "Folder and file 'already taken' checks never find anything, so a create overwrites a folder or file of the "
-    "same name (to_string(...) == name compares a quoted or numbered string with a letters-only name).",
-    "A folder created somewhere other than root goes beside 'root' in the IP's entry, not inside it; a file put in "
-    "a folder goes inside root (Kurator::folder writes e[location], Kurator::file e['root'][location]).",
-    "Deleting a file finds only files at root, and stops early at a folder named like the location "
-    "(Kurator::file sub-action 01).",
-    "Names, tickers, TLD texts and messages keep only the letters A-Z and a-z (Helper::hexToText); digits and "
-    "spaces are dropped.",
-    "Anybody may create a property under any TLD.IP, not only its owner (Kurator::property).",
-    "A property of fixed supply can still be minted by its owner (Kurator::token sub-action 01).",
-    "A mint is logged as 'move' (Kurator::token).",
-    "Supplies and balances wrap at 2^64 (unsigned 64-bit sums).",
-    "A fixed-supply create cut short (under 51 bytes) logs 'Property create' and creates nothing.",
-    "A meta inscription counts only when its JSON says \"next\": false; null or a txid stops MoonBrix's sync "
-    "(`!d[\"next\"]` is a conversion to bool).",
-)
+WHITELIST, BLACKLIST = 0, 1
+FIXED, MANAGED, NFT = 0, 1, 2
+KINDS = {FIXED: "fixed", MANAGED: "managed", NFT: "nft"}
+
+#: op -> (name, fields, target). target: None, "need" (rejected without one) or "maybe" (else the sender).
+OPS: dict[int, tuple[str, tuple[str, ...], str | None]] = {
+    0x01: ("claim tld", ("str", "u8"), None),
+    0x02: ("give tld", ("str",), "need"),
+    0x03: ("set list mode", ("str", "u8"), None),
+    0x04: ("list add", ("str",), "need"),
+    0x05: ("list remove", ("str",), "need"),
+    0x06: ("list clear", ("str",), None),
+    0x10: ("claim space", ("str", "u32"), None),
+    0x11: ("give space", ("str", "u32"), "need"),
+    0x12: ("name space", ("str", "u32", "str"), None),
+    0x20: ("inscribe", ("str", "str", "rest"), None),
+    0x21: ("part", ("rest",), None),
+    0x22: ("assemble", ("str", "str", "var", "id", "ids"), None),
+    0x30: ("make folder", ("str", "u32", "str"), None),
+    0x31: ("put file", ("str", "u32", "str", "id"), None),
+    0x32: ("replace file", ("str", "u32", "str", "id"), None),
+    0x33: ("remove", ("str", "u32", "str"), None),
+    0x34: ("move", ("str", "u32", "str", "str"), None),
+    0x40: ("create property", ("str", "u32", "str", "str", "u8", "u8", "var"), None),
+    0x41: ("give property", ("str",), "need"),
+    0x42: ("lock property", ("str",), None),
+    0x43: ("mint", ("str", "var"), "maybe"),
+    0x44: ("send", ("str", "var"), "need"),
+    0x45: ("burn", ("str", "var"), None),
+    0x46: ("mint nft", ("str", "opt"), "maybe"),
+    0x47: ("send nft", ("str", "var"), "need"),
+    0x50: ("offer", ("str", "var", "var"), None),
+    0x51: ("cancel", ("id",), None),
+    0x52: ("buy", ("id",), None),
+}
+CODES = {name: op for op, (name, _f, _t) in OPS.items()}
 
 
 class MoonBrixError(RuntimeError):
-    """The document and the chain disagree (a block that does not follow)."""
+    """The document and the chain disagree, or the node could not give what a command needs: read the block again."""
 
 
-class Unreadable(ValueError):
-    """A transaction MoonBrix itself would stop at (it throws and its sync never gets past it); skipped here."""
+class Rejected(ValueError):
+    """A command that breaks a rule. It changes nothing and is logged with this reason."""
 
 
-# --- Helper.cpp -------------------------------------------------------------------------------------------------
+# --- the payload's fields --------------------------------------------------------------------------------------
 
-def text(hexs: str, space: bool = False, full: bool = False) -> str:
-    """Helper::hexToText: the letters A-Z and a-z of the bytes (and spaces with `space`); every byte with `full`."""
-    raw = bytes.fromhex(hexs[:len(hexs) // 2 * 2])
-    if full:
-        return raw.decode("latin-1")
-    return "".join(chr(b) for b in raw if 65 <= b <= 90 or 97 <= b <= 122 or (space and b == 32))
+class _Fields:
+    def __init__(self, data: bytes) -> None:
+        self.data, self.at = data, 0
+
+    def take(self, n: int) -> bytes:
+        if self.at + n > len(self.data):
+            raise Rejected("the payload ends too early")
+        got = self.data[self.at:self.at + n]
+        self.at += n
+        return got
+
+    def u8(self) -> int:
+        return self.take(1)[0]
+
+    def u32(self) -> int:
+        return int.from_bytes(self.take(4), "big")
+
+    def var(self) -> int:
+        value = shift = 0
+        while True:
+            byte = self.u8()
+            value |= (byte & 0x7F) << shift
+            shift += 7
+            if not byte & 0x80:
+                break
+            if shift >= 70:
+                raise Rejected("a number past 64 bits")
+        if value >= U64:
+            raise Rejected("a number past 64 bits")
+        if byte == 0 and shift > 7:
+            raise Rejected("a number not in its shortest form")
+        return value
+
+    def str(self) -> bytes:
+        return self.take(self.var())
+
+    def id(self) -> str:
+        return self.take(32).hex()
+
+    def ids(self) -> list[str]:
+        n = self.var()
+        if not 1 <= n <= MAX_PARTS:
+            raise Rejected(f"a list of {n} ids (1 to {MAX_PARTS})")
+        return [self.id() for _ in range(n)]
+
+    def opt(self) -> str | None:
+        flag = self.u8()
+        if flag not in (0, 1):
+            raise Rejected("an optional id flagged neither 00 nor 01")
+        return self.id() if flag else None
+
+    def rest(self) -> bytes:
+        if self.at >= len(self.data):
+            raise Rejected("no data")
+        got = self.data[self.at:]
+        self.at = len(self.data)
+        return got
 
 
-def ip(hexs: str) -> str:
-    """Helper::hexToIP: four bytes as a dotted IPv4."""
-    value = int(hexs, 16)
-    return ".".join(str(value >> shift & 0xFF) for shift in (24, 16, 8, 0))
+def decode(payload: bytes) -> tuple[int, list[Any]]:
+    """(op, its fields) of a payload that starts with MAGIC. Raises Rejected."""
+    if len(payload) < len(MAGIC) + 1:
+        raise Rejected("no op")
+    op = payload[len(MAGIC)]
+    if op not in OPS:
+        raise Rejected(f"op {op:02x} is not MoonBrix 2's")
+    r = _Fields(payload[len(MAGIC) + 1:])
+    values = [getattr(r, kind)() for kind in OPS[op][1]]
+    if r.at != len(r.data):
+        raise Rejected("bytes after the last field")
+    return op, values
 
 
-def number(hexs: str) -> int:
-    """Helper::hexToNumber: big-endian hex, at most 64 bits (stoull)."""
-    value = int(hexs, 16)
-    if value >= U64:
-        raise Unreadable("a number past 64 bits")
-    return value
+def _var(n: int) -> bytes:
+    if not 0 <= n < U64:
+        raise ValueError("a var is 0 to 2^64-1")
+    out = bytearray()
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def encode(name: str, *values: Any) -> bytes:
+    """The payload of command `name` (OPS) with these fields: str as text or bytes, id as hex, ids as a list, opt as
+    hex or None. For the arcade's own sends and the tests; what it builds is what `decode` reads."""
+    op = CODES[name]
+    kinds = OPS[op][1]
+    if len(values) != len(kinds):
+        raise ValueError(f"{name} takes {len(kinds)} fields")
+    out = bytearray(MAGIC + bytes([op]))
+    for kind, value in zip(kinds, values):
+        if kind == "u8":
+            out += bytes([value])
+        elif kind == "u32":
+            out += int(value).to_bytes(4, "big")
+        elif kind == "var":
+            out += _var(value)
+        elif kind == "str":
+            raw = value.encode() if isinstance(value, str) else bytes(value)
+            out += _var(len(raw)) + raw
+        elif kind == "id":
+            out += bytes.fromhex(value)
+        elif kind == "ids":
+            out += _var(len(value)) + b"".join(bytes.fromhex(v) for v in value)
+        elif kind == "opt":
+            out += b"\x00" if value is None else b"\x01" + bytes.fromhex(value)
+        elif kind == "rest":
+            out += bytes(value)
+    return bytes(out)
+
+
+def data_scripts(payload: bytes) -> list[bytes]:
+    """The OP_RETURN scripts that carry `payload` on Kotia, each within what its Core relays, in order. A transaction
+    that carries n of them needs n outputs that pay an address too (Kotia: at most half the outputs are data)."""
+    scripts = []
+    for at in range(0, len(payload), MAX_PUSH):
+        piece = payload[at:at + MAX_PUSH]
+        if len(piece) < 0x4C:
+            push = bytes([len(piece)])
+        elif len(piece) <= 0xFF:
+            push = b"\x4c" + bytes([len(piece)])
+        else:
+            push = b"\x4d" + len(piece).to_bytes(2, "little")
+        scripts.append(b"\x6a" + push + piece)
+    return scripts
 
 
 # --- which transaction is a command ------------------------------------------------------------------------------
 
-def _push_only(script: bytes) -> bool:
-    """CScript::IsPushOnly: every opcode a push or OP_1NEGATE/OP_RESERVED/OP_1..OP_16, and every push whole."""
-    at = 0
+def _pushes(script: bytes) -> tuple[bytes, bool] | None:
+    """(the data pushed, whether every opcode was a data push) after OP_RETURN; None when it is not Core's
+    TX_NULL_DATA (OP_RETURN, then push opcodes only, each whole)."""
+    if script[:1] != b"\x6a":
+        return None
+    data, clean, at = bytearray(), True, 1
     while at < len(script):
         op = script[at]
         at += 1
         if op > 0x60:
-            return False
-        if 0 < op <= 0x4E:
+            return None
+        if op <= 0x4E:
             if op < 0x4C:
                 size = op
             else:
                 width = {0x4C: 1, 0x4D: 2, 0x4E: 4}[op]
                 if at + width > len(script):
-                    return False
+                    return None
                 size = int.from_bytes(script[at:at + width], "little")
                 at += width
             if at + size > len(script):
-                return False
+                return None
+            data += script[at:at + size]
             at += size
-    return True
+        else:
+            clean = False                                       # OP_1NEGATE, OP_RESERVED, OP_1 .. OP_16
+    return bytes(data), clean
 
 
-def nulldata(script: bytes) -> bool:
-    """Core's TX_NULL_DATA (Solver): OP_RETURN, then pushes only."""
-    return script[:1] == b"\x6a" and _push_only(script[1:])
-
-
-def candidate(tx: rawchain.Tx) -> str | None:
-    """The disassembly of `vout[0]` when this transaction takes its block's MoonBrix slot (MasterDB.cpp), else None."""
-    if not tx.vout or not nulldata(tx.vout[0][1]):
+def payload(tx: rawchain.Tx) -> bytes | None:
+    """The MoonBrix 2 payload of `tx`, or None when it is no MoonBrix 2 transaction. Raises Rejected when it is one
+    but one of its data outputs holds something other than data pushes."""
+    found = [got for got in (_pushes(script) for _value, script in tx.vout) if got is not None]
+    if not found or not found[0][0].startswith(MAGIC):
         return None
-    said = rawchain.asm(tx.vout[0][1])
-    if not said.startswith("OP_RETURN ") or len(said) - len("OP_RETURN ") < 30:
-        return None
-    return said
-
-
-def command(said: str) -> str | None:
-    """The header and data (hex) when the slot's disassembly is a command (Sync.cpp BuildLibary), else None."""
-    chunks = said.split()
-    if len(chunks) == 2 and chunks[0] == "OP_RETURN" and len(chunks[1]) >= 30:
-        return chunks[1]
-    return None
+    if not all(clean for _data, clean in found):
+        raise Rejected("an OP_RETURN output holds something other than data pushes")
+    return b"".join(data for data, _clean in found)
 
 
 def address_of(script: bytes, params) -> str | None:
-    """`scriptPubKey.addresses[0]` as Kotia's Core prints it (a key's address for a pay-to-pubkey coin too)."""
+    """The address a script pays as Kotia's Core prints it (a key's address for a pay-to-pubkey coin too)."""
     found = rawchain.script_pubkey(script, params).get("addresses") or []
     return found[0] if found else None
 
 
-# --- Kurator.cpp ---------------------------------------------------------------------------------------------------
+# --- names -----------------------------------------------------------------------------------------------------
 
-def empty() -> dict[str, list]:
-    return {"lib": [], "tld": [], "fold": [], "ins": [], "prop": []}
-
-
-class Kurator:
-    """Kurator.cpp's actions on one document (`lib`, `tld`, `fold`, `ins`, `prop`), changed in place."""
-
-    def __init__(self, doc: dict[str, list]):
-        self.doc = doc
-        self.LIB, self.TLD, self.FOLD = doc["lib"], doc["tld"], doc["fold"]
-        self.INS, self.PROP = doc["ins"], doc["prop"]
-
-    def apply(self, block: int, txid: str, chunk: str, origin: Callable[[], str | None],
-              output: Callable[[int], str | None], outputs: int) -> None:
-        """One command. `origin()` is the sender, `output(i)` the address `vout[i]` pays, `outputs` how many there
-        are. Raises Unreadable where MoonBrix's own sync would stop."""
-        if not self.LIB:
-            if chunk[:30] == ACTIVATION:
-                self.LIB.append({"Block": block, "TXID": txid, "Event": "MoonBrix GENESIS",
-                                 "Action": "Protocol activated", "Message": text(chunk[30:], space=True)})
-            return
-        owner = origin()
-        if owner is None:
-            raise Unreadable("the coin the first input spends pays no address")
-        act = chunk[26:28]
-        handler = {CLAIM: self.tld_claim, OWNER: self.change_owner, LISTTYPE: self.change_list_type,
-                   CHANGELIST: self.change_list_content, NAME: self.change_ip_name, INSCRIBE: self.inscribe,
-                   FOLDER: self.folder, FILE: self.file, PROPERTY: self.property, TOKEN: self.token}.get(act)
-        if handler is not None:
-            handler(block, txid, chunk, owner, output, outputs)
-
-    @staticmethod
-    def _pays(output, i: int) -> str:
-        found = output(i)
-        if found is None:
-            raise Unreadable(f"vout[{i}] pays no address")
-        return found
-
-    # TLD/IP claim ----------------------------------------------------------------------------------------------
-
-    def ip_claim(self, block, txid, chunk, owner, output, outputs) -> None:
-        tld_h, ip_h = chunk[0:18], chunk[18:26]
-        taken = allowed = False
-        for t in self.TLD:
-            if t["Hex"] != tld_h:
-                continue
-            if t["Type"] == "whitelist":
-                allowed = allowed or owner in t["List"]
-            if t["Type"] == "blacklist":
-                allowed = owner not in t["List"]
-            if t["Owner"] == owner:
-                allowed = True
-            taken = taken or any(i[0] == ip_h for i in t["IPs"])
-            if allowed and not taken:
-                t["IPs"].append([ip_h, owner, ""])
-                self.FOLD.append({"Key": tld_h + ip_h, "Owner": owner, "root": {}})
-
-    def tld_claim(self, block, txid, chunk, owner, output, outputs) -> None:
-        tld_h, ip_h = chunk[0:18], chunk[18:26]
-        tld_s = text(tld_h)
-        if tld_h in (FIRST_TLD, LAST_TLD):
-            return
-        if any(t["Ascii"] == tld_s for t in self.TLD):
-            self.ip_claim(block, txid, chunk, owner, output, outputs)
-            return
-        if ip_h != FIRST_IP:
-            return
-        self.LIB.append({"Block": block, "TXID": txid, "Event": "claim TLD", "Action": f"TLD {tld_s} claimed",
-                         "Message": text(chunk[30:])})
-        self.TLD.append({"Hex": tld_h, "Ascii": tld_s, "Owner": owner, "Block": block, "TXID": txid,
-                         "Type": "whitelist", "List": [], "IPs": []})
-
-    def change_owner(self, block, txid, chunk, owner, output, outputs) -> None:
-        if outputs < 3:
-            return
-        new_owner, tld_h = self._pays(output, 2), chunk[0:18]
-        for t in self.TLD:
-            if t["Hex"] == tld_h and t["Owner"] == owner:
-                t["Owner"] = new_owner
-                break
-        else:
-            return
-        self.LIB.append({"Block": block, "TXID": txid, "Event": "change owner",
-                         "Action": f"TLD {text(tld_h)} owner changed", "TLD": text(tld_h)})
-
-    def change_list_type(self, block, txid, chunk, owner, output, outputs) -> None:
-        tld_h, ip_h = chunk[0:18], chunk[18:26]
-        if len(chunk) != 32 or ip_h != FIRST_IP:
-            return
-        list_type = "whitelist" if chunk[30:32] == "00" else "blacklist"
-        change = False
-        for t in self.TLD:
-            if t["Hex"] == tld_h and t["Owner"] == owner:
-                t["Type"] = list_type
-                change = True
-        if change:
-            self.LIB.append({"Block": block, "TXID": txid, "Event": "change type",
-                             "Action": f"Type changed to {list_type}", "TLD": text(tld_h)})
-
-    def change_list_content(self, block, txid, chunk, owner, output, outputs) -> None:
-        tld_h, sub, ip_h = chunk[0:18], chunk[30:32], chunk[18:26]
-        if len(chunk) != 32 or ip_h != FIRST_IP:
-            return
-        change = False
-        if sub == "00" and outputs > 2:                     # add
-            address = self._pays(output, 2)
-            for t in self.TLD:
-                if t["Hex"] == tld_h and t["Owner"] == owner:
-                    t["List"].append(address)
-                    change = True
-        if sub == "01" and outputs > 2:                     # remove
-            address = self._pays(output, 2)
-            for t in self.TLD:
-                if t["Hex"] == tld_h and t["Owner"] == owner:
-                    t["List"][:] = [a for a in t["List"] if a != address]
-                    change = True
-        if sub == "02" and outputs > 1:                     # clear
-            for t in self.TLD:
-                if t["Hex"] == tld_h and t["Owner"] == owner:
-                    t["List"] = []
-                    change = True
-        if change:
-            self.LIB.append({"Block": block, "TXID": txid, "Event": "change list",
-                             "Action": "List have been changed", "TLD": text(tld_h)})
-
-    def change_ip_name(self, block, txid, chunk, owner, output, outputs) -> None:
-        tld_h, ip_h, name = chunk[0:18], chunk[18:26], chunk[30:]
-        if ip_h == FIRST_IP or len(chunk) < 32 or len(chunk) > 114:
-            return
-        for t in self.TLD:
-            if t["Hex"] == tld_h:
-                for i in t["IPs"]:
-                    if i[0] == ip_h and i[1] == owner:
-                        i[2] = text(name)
-
-    # inscriptions, folders, files --------------------------------------------------------------------------------
-
-    @staticmethod
-    def _open_space(chunk: str, least: int) -> bool:
-        tld_h, ip_h = chunk[0:18], chunk[18:26]
-        return not (len(chunk) < least or ip_h in (FIRST_IP, LAST_IP) or tld_h in (FIRST_TLD, LAST_TLD))
-
-    def inscribe(self, block, txid, chunk, owner, output, outputs) -> None:
-        if not self._open_space(chunk, 42):
-            return
-        if chunk[30:32] != "01":                            # 00: a chunk of data, kept by nobody
-            return
-        meta = parse_meta(chunk[34:])
-        if meta.get("next") is False:
-            # A meta file over 10 kB is split, linked by prev/next; only the last one counts.
-            self.LIB.append({"Block": block, "TXID": txid, "Event": "Inscription", "Action": "Meta Inscribing",
-                             "TLD": text(chunk[0:18]), "IP": ip(chunk[18:26])})
-            self.INS.append({"TXID": txid, "Name": meta.get("name"), "Type": meta.get("type")})
-
-    def _space(self, chunk: str, owner: str) -> dict | None:
-        key = chunk[0:18] + chunk[18:26]
-        return next((e for e in self.FOLD if e["Key"] == key and e["Owner"] == owner), None)
-
-    def folder(self, block, txid, chunk, owner, output, outputs) -> None:
-        if not self._open_space(chunk, 62):
-            return
-        if chunk[30:32] != "00":                            # 01 delete, 02 rename, 03 move, 04 join: not built
-            return
-        name = text(chunk[32:62])
-        if not name:
-            return
-        if len(chunk) == 62:
-            location = "root"
-        elif len(chunk) == 92:
-            location = text(chunk[62:92]) or "root"
-        else:
-            return
-        e = self._space(chunk, owner)
-        if e is None:
-            return
-        place = e.setdefault(location, {})
-        if not isinstance(place, dict):
-            raise Unreadable(f"a folder put into {location!r}, which is not a folder")
-        place[name] = {}
-        self.LIB.append({"Block": block, "TXID": txid, "Event": "create", "Action": "Folder", "TLD": text(chunk[0:18]),
-                         "IP": ip(chunk[18:26]), "Location": location, "Name": name})
-
-    def file(self, block, txid, chunk, owner, output, outputs) -> None:
-        if not self._open_space(chunk, 62):
-            return
-        sub, name = chunk[30:32], text(chunk[32:62])
-        if sub == "00":                                     # create (name, where, content)
-            if not name:
-                return
-            location, content = "", ""
-            if len(chunk) == 62:
-                location = "root"
-            if len(chunk) in (92, 156):
-                location = text(chunk[62:92]) or "root"
-                if len(chunk) == 156:
-                    content = chunk[92:156]
-            e = self._space(chunk, owner)
-            if e is None:
-                return
-            location = location or "root"
-            if location == "root":
-                e["root"][name] = content
-            else:
-                place = e["root"].setdefault(location, {})
-                if not isinstance(place, dict):
-                    raise Unreadable(f"a file put into {location!r}, which is a file")
-                place[name] = content
-            self.LIB.append({"Block": block, "TXID": txid, "Event": "create", "Action": "File",
-                             "TLD": text(chunk[0:18]), "IP": ip(chunk[18:26]), "Location": location, "Name": name})
-        if sub == "01":                                     # delete (name, where)
-            if not name:
-                return
-            location = ""
-            if len(chunk) == 62:
-                location = "root"
-            if len(chunk) == 92:
-                location = text(chunk[62:92]) or "root"
-            for e in self.FOLD:
-                if e["Key"] != chunk[0:26] or e["Owner"] != owner:
-                    continue
-                for key in sorted(e["root"]):               # nlohmann's object is a std::map: in key order
-                    value = e["root"][key]
-                    if key == name and isinstance(value, str):
-                        del e["root"][name]
-                        self.LIB.append({"Block": block, "TXID": txid, "Event": "delete", "Action": "File",
-                                         "TLD": text(chunk[0:18]), "IP": ip(chunk[18:26]), "Location": location,
-                                         "Name": name})
-                        break
-                    if key == location and isinstance(value, dict):
-                        break
-
-    # properties and tokens --------------------------------------------------------------------------------------
-
-    def property(self, block, txid, chunk, owner, output, outputs) -> None:
-        if not self._open_space(chunk, 32) or chunk[30:32] != "00" or len(chunk) < 86:
-            return
-        define, name = chunk[32:34], text(chunk[34:76])
-        ticker = text(chunk[76:86]).upper()
-        if not name or not ticker:
-            return
-        if any(o["Name"] == name or o["Ticker"] == ticker for o in self.PROP):
-            return
-        kinds = {"00": (True, False, True), "01": (True, False, False), "02": (True, True, True),
-                 "03": (True, True, False), "04": (False, False, False)}
-        if define not in kinds:
-            return
-        fungible, divisible, fixed = kinds[define]
-        self.LIB.append({"Block": block, "TXID": txid, "Event": "Property", "Action": "create"})
-        prop = {"Name": name, "Ticker": ticker, "GrantData": "", "Owner": owner, "OwnerData": "",
-                "Fungible": fungible, "Divisible": divisible, "Fixed": fixed, "Supply": 0, "Holder": {},
-                "Key": chunk[0:26]}
-        if fixed:
-            if len(chunk) < 102:
-                return
-            supply = number(chunk[86:102])
-            prop["Supply"] = supply
-            prop["Holder"][owner] = supply
-        self.PROP.append(prop)
-
-    def token(self, block, txid, chunk, origin, output, outputs) -> None:
-        if not self._open_space(chunk, 32):
-            return
-        sub, key = chunk[30:32], chunk[0:26]
-        if sub in ("00", "01"):
-            if len(chunk) < 58:
-                return
-            ticker, amount = text(chunk[32:42]).upper(), number(chunk[42:58])
-            if len(ticker) < 3:
-                return
-        if sub == "00":                                     # move
-            destination = self._pays(output, 2)
-            for p in self.PROP:
-                held = p["Holder"]
-                if p["Key"] == key and p["Ticker"] == ticker and origin in held and held[origin] >= amount:
-                    held[origin] -= amount
-                    if held[origin] == 0:
-                        del held[origin]
-                    held[destination] = (held.get(destination, 0) + amount) % U64
-                    self.LIB.append({"Block": block, "TXID": txid, "Event": "Token", "Action": "move"})
-                    break
-        if sub == "01":                                     # mint
-            for p in self.PROP:
-                if p["Key"] == key and p["Ticker"] == ticker and p["Owner"] == origin:
-                    p["Supply"] = (p["Supply"] + amount) % U64
-                    p["Holder"][origin] = (p["Holder"].get(origin, 0) + amount) % U64
-                    self.LIB.append({"Block": block, "TXID": txid, "Event": "Token", "Action": "move"})
+TLD_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,14}[a-z0-9])?")
+TICKER = re.compile(r"[A-Z][A-Z0-9]{2,7}")
+TYPE = re.compile(r"[ -~]{3,100}")
 
 
-def parse_meta(data: str) -> dict:
-    """A meta inscription's JSON (from byte 17), as nlohmann reads it: strict JSON in UTF-8, an object."""
-    def refuse(word):
-        raise ValueError(word)
+def _control(ch: str) -> bool:
+    return ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F
+
+
+def text(raw: bytes, most: int, least: int = 0, what: str = "a name") -> str:
+    if not least <= len(raw) <= most:
+        raise Rejected(f"{what} of {len(raw)} bytes ({least} to {most})")
     try:
-        meta = json.loads(bytes.fromhex(data).decode("utf-8"), parse_constant=refuse)
-    except ValueError as exc:
-        raise Unreadable(f"the meta inscription is not JSON ({exc})") from None
-    if meta is None:
-        meta = {}
-    if not isinstance(meta, dict):
-        raise Unreadable("the meta inscription is not a JSON object")
-    if not isinstance(meta.get("next"), bool):
-        raise Unreadable("the meta inscription's next is not true or false")
-    return meta
+        got = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Rejected(f"{what} that is not UTF-8") from None
+    if any(_control(ch) for ch in got):
+        raise Rejected(f"{what} with a control character")
+    return got
 
 
-# --- the document, block by block ----------------------------------------------------------------------------------
+def tld_name(raw: bytes) -> str:
+    got = raw.decode("ascii", "replace")
+    if not TLD_NAME.fullmatch(got):
+        raise Rejected("a TLD is 1 to 16 of a-z, 0-9 and -, not starting or ending with -")
+    return got
+
+
+def ticker_name(raw: bytes) -> str:
+    got = raw.decode("ascii", "replace")
+    if not TICKER.fullmatch(got):
+        raise Rejected("a ticker is 3 to 8 of A-Z and 0-9, starting with a letter")
+    return got
+
+
+def type_name(raw: bytes) -> str:
+    got = raw.decode("ascii", "replace")
+    if not TYPE.fullmatch(got) or "/" not in got:
+        raise Rejected("a type is 3 to 100 bytes of printable ASCII with a /")
+    return got
+
+
+def path_names(raw: bytes) -> list[str]:
+    path = text(raw, 255, 1, "a path")
+    names = path.split("/")
+    for name in names:
+        if not 1 <= len(name.encode()) <= 64 or name in (".", ".."):
+            raise Rejected("a path is names of 1 to 64 bytes joined by /, none of them . or ..")
+    return names
+
+
+def ip(space: int) -> str:
+    return ".".join(str(space >> shift & 0xFF) for shift in (24, 16, 8, 0))
+
+
+def space_key(tld: str, space: int) -> str:
+    return f"{ip(space)}.{tld}"
+
+
+# --- the state -----------------------------------------------------------------------------------------------
+
+def empty() -> dict[str, Any]:
+    return {"version": VERSION, "tlds": {}, "spaces": {}, "inscriptions": {}, "parts": {}, "properties": {},
+            "offers": {}, "log": []}
+
+
+class Book:
+    """MoonBrix 2's commands on one document, changed in place. `apply` either applies a command whole or raises
+    Rejected and leaves the document as it was."""
+
+    def __init__(self, doc: dict[str, Any]):
+        self.doc = doc
+
+    def apply(self, height: int, position: int, txid: str, data: bytes, sender: str | None,
+              outputs: list[tuple[str | None, int]], fetch_part: Callable[[str], bytes] | None = None) -> str:
+        """Command `data` (a payload) of transaction `txid`, the `position`-th of block `height`. `outputs` are the
+        transaction's (address or None, koinu). `fetch_part(txid)` gives a part's data (op 21) for an assemble.
+        Returns what it did, for the log."""
+        op, values = decode(data)
+        name, _fields, wants = OPS[op]
+        if sender is None:
+            raise Rejected("the coin the first input spends pays no address")
+        target = next((a for a, _v in outputs if a is not None and a != sender), None)
+        if wants == "need" and target is None:
+            raise Rejected("no output pays an address other than the sender's")
+        if wants == "maybe" and target is None:
+            target = sender
+        self.height, self.position, self.txid, self.sender = height, position, txid, sender
+        self.target, self.outputs, self.fetch_part = target, outputs, fetch_part
+        return getattr(self, "op_" + name.replace(" ", "_"))(*values)
+
+    # TLDs -----------------------------------------------------------------------------------------------------
+
+    def _mode(self, mode: int) -> str:
+        if mode not in (WHITELIST, BLACKLIST):
+            raise Rejected("a list mode is 00 (whitelist) or 01 (blacklist)")
+        return "whitelist" if mode == WHITELIST else "blacklist"
+
+    def _owned_tld(self, raw: bytes) -> tuple[str, dict]:
+        tld = tld_name(raw)
+        got = self.doc["tlds"].get(tld)
+        if got is None:
+            raise Rejected(f"no TLD {tld}")
+        if got["owner"] != self.sender:
+            raise Rejected(f"the sender does not own {tld}")
+        return tld, got
+
+    def op_claim_tld(self, raw: bytes, mode: int) -> str:
+        tld = tld_name(raw)
+        if tld in self.doc["tlds"]:
+            raise Rejected(f"{tld} is taken")
+        self.doc["tlds"][tld] = {"owner": self.sender, "mode": self._mode(mode), "list": [], "height": self.height,
+                                 "txid": self.txid}
+        return f"{tld} claimed"
+
+    def op_give_tld(self, raw: bytes) -> str:
+        tld, got = self._owned_tld(raw)
+        got["owner"] = self.target
+        return f"{tld} given to {self.target}"
+
+    def op_set_list_mode(self, raw: bytes, mode: int) -> str:
+        tld, got = self._owned_tld(raw)
+        got["mode"] = self._mode(mode)
+        return f"{tld} is a {got['mode']}"
+
+    def op_list_add(self, raw: bytes) -> str:
+        tld, got = self._owned_tld(raw)
+        if self.target in got["list"]:
+            raise Rejected(f"{self.target} is on {tld}'s list already")
+        got["list"].append(self.target)
+        return f"{self.target} put on {tld}'s list"
+
+    def op_list_remove(self, raw: bytes) -> str:
+        tld, got = self._owned_tld(raw)
+        if self.target not in got["list"]:
+            raise Rejected(f"{self.target} is not on {tld}'s list")
+        got["list"].remove(self.target)
+        return f"{self.target} taken off {tld}'s list"
+
+    def op_list_clear(self, raw: bytes) -> str:
+        tld, got = self._owned_tld(raw)
+        got["list"] = []
+        return f"{tld}'s list cleared"
+
+    # spaces ---------------------------------------------------------------------------------------------------
+
+    def _owned_space(self, raw: bytes, space: int) -> tuple[str, dict]:
+        key = space_key(tld_name(raw), space)
+        got = self.doc["spaces"].get(key)
+        if got is None:
+            raise Rejected(f"no space {key}")
+        if got["owner"] != self.sender:
+            raise Rejected(f"the sender does not own {key}")
+        return key, got
+
+    def op_claim_space(self, raw: bytes, space: int) -> str:
+        tld = tld_name(raw)
+        owner = self.doc["tlds"].get(tld)
+        if owner is None:
+            raise Rejected(f"no TLD {tld}")
+        key = space_key(tld, space)
+        if key in self.doc["spaces"]:
+            raise Rejected(f"{key} is taken")
+        listed = self.sender in owner["list"]
+        if owner["owner"] != self.sender and listed != (owner["mode"] == "whitelist"):
+            raise Rejected(f"{tld}'s {owner['mode']} does not let the sender claim")
+        self.doc["spaces"][key] = {"tld": tld, "space": space, "owner": self.sender, "name": "", "root": {},
+                                   "height": self.height, "txid": self.txid}
+        return f"{key} claimed"
+
+    def op_give_space(self, raw: bytes, space: int) -> str:
+        key, got = self._owned_space(raw, space)
+        got["owner"] = self.target
+        return f"{key} given to {self.target}"
+
+    def op_name_space(self, raw: bytes, space: int, name: bytes) -> str:
+        key, got = self._owned_space(raw, space)
+        got["name"] = text(name, 32)
+        return f"{key} named {got['name']!r}"
+
+    # inscriptions ---------------------------------------------------------------------------------------------
+
+    def _inscription(self, kind: bytes, name: bytes, size: int, sha: str, parts: list[str] | None) -> str:
+        self.doc["inscriptions"][self.txid] = {
+            "type": type_name(kind), "name": text(name, 64), "size": size, "sha256": sha, "by": self.sender,
+            "height": self.height, "parts": parts}
+        return f"{self.doc['inscriptions'][self.txid]['type']}, {size} bytes"
+
+    def op_inscribe(self, kind: bytes, name: bytes, data: bytes) -> str:
+        return self._inscription(kind, name, len(data), hashlib.sha256(data).hexdigest(), None)
+
+    def op_part(self, data: bytes) -> str:
+        self.doc["parts"][self.txid] = [self.height, self.position, len(data)]
+        return f"{len(data)} bytes"
+
+    def op_assemble(self, kind: bytes, name: bytes, size: int, sha: str, parts: list[str]) -> str:
+        type_name(kind), text(name, 64)
+        total = 0
+        for part in parts:
+            got = self.doc["parts"].get(part)
+            if got is None or (got[0], got[1]) >= (self.height, self.position):
+                raise Rejected(f"{part} is no part confirmed before this command")
+            total += got[2]
+        if total != size:
+            raise Rejected(f"the parts are {total} bytes, not {size}")
+        if self.fetch_part is None:
+            raise MoonBrixError("no way to fetch the parts' data")
+        digest = hashlib.sha256()
+        for part in parts:
+            digest.update(self.fetch_part(part))
+        if digest.hexdigest() != sha:
+            raise Rejected("the parts' SHA-256 is not the one named")
+        return self._inscription(kind, name, size, sha, parts)
+
+    # folders and files ----------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _folder(root: dict, names: list[str]) -> dict | None:
+        """The children of the folder at `names` (root for []), or None when no folder is there."""
+        here = root
+        for name in names:
+            node = here.get(name)
+            if node is None or "dir" not in node:
+                return None
+            here = node["dir"]
+        return here
+
+    def _spot(self, raw: bytes, space: int, path: bytes) -> tuple[str, dict, str]:
+        """(space key, the parent folder's children, the last name) of a path whose parent folder exists."""
+        key, got = self._owned_space(raw, space)
+        names = path_names(path)
+        parent = self._folder(got["root"], names[:-1])
+        if parent is None:
+            raise Rejected(f"no folder {'/'.join(names[:-1])} in {key}")
+        return key, parent, names[-1]
+
+    def _known(self, inscription: str) -> None:
+        if inscription not in self.doc["inscriptions"]:
+            raise Rejected(f"no inscription {inscription}")
+
+    def op_make_folder(self, raw: bytes, space: int, path: bytes) -> str:
+        key, parent, name = self._spot(raw, space, path)
+        if name in parent:
+            raise Rejected(f"something is at {path.decode()} already")
+        parent[name] = {"dir": {}}
+        return f"folder {path.decode()} in {key}"
+
+    def op_put_file(self, raw: bytes, space: int, path: bytes, inscription: str) -> str:
+        key, parent, name = self._spot(raw, space, path)
+        if name in parent:
+            raise Rejected(f"something is at {path.decode()} already")
+        self._known(inscription)
+        parent[name] = {"file": inscription}
+        return f"file {path.decode()} in {key}"
+
+    def op_replace_file(self, raw: bytes, space: int, path: bytes, inscription: str) -> str:
+        key, parent, name = self._spot(raw, space, path)
+        if "file" not in parent.get(name, {}):
+            raise Rejected(f"no file at {path.decode()}")
+        self._known(inscription)
+        parent[name] = {"file": inscription}
+        return f"file {path.decode()} in {key} replaced"
+
+    def op_remove(self, raw: bytes, space: int, path: bytes) -> str:
+        key, parent, name = self._spot(raw, space, path)
+        node = parent.get(name)
+        if node is None:
+            raise Rejected(f"nothing at {path.decode()}")
+        if node.get("dir"):
+            raise Rejected(f"the folder {path.decode()} is not empty")
+        del parent[name]
+        return f"{path.decode()} removed from {key}"
+
+    def op_move(self, raw: bytes, space: int, source: bytes, to: bytes) -> str:
+        key, got = self._owned_space(raw, space)
+        old, new = path_names(source), path_names(to)
+        old_parent = self._folder(got["root"], old[:-1])
+        if old_parent is None or old[-1] not in old_parent:
+            raise Rejected(f"nothing at {source.decode()}")
+        new_parent = self._folder(got["root"], new[:-1])
+        if new_parent is None:
+            raise Rejected(f"no folder {'/'.join(new[:-1])} in {key}")
+        if new[-1] in new_parent:
+            raise Rejected(f"something is at {to.decode()} already")
+        if new[:len(old)] == old:
+            raise Rejected("a folder cannot go inside itself")
+        new_parent[new[-1]] = old_parent.pop(old[-1])
+        return f"{source.decode()} moved to {to.decode()} in {key}"
+
+    # properties -----------------------------------------------------------------------------------------------
+
+    def _property(self, raw: bytes, owned: bool = False) -> tuple[str, dict]:
+        ticker = ticker_name(raw)
+        got = self.doc["properties"].get(ticker)
+        if got is None:
+            raise Rejected(f"no property {ticker}")
+        if owned and got["owner"] != self.sender:
+            raise Rejected(f"the sender does not own {ticker}")
+        return ticker, got
+
+    @staticmethod
+    def _add(holders: dict, who: str, amount: int) -> None:
+        holders[who] = holders.get(who, 0) + amount
+
+    @staticmethod
+    def _take(holders: dict, who: str, amount: int, ticker: str) -> None:
+        if amount < 1:
+            raise Rejected("an amount is 1 or more")
+        if holders.get(who, 0) < amount:
+            raise Rejected(f"the sender holds {holders.get(who, 0)} {ticker}, not {amount}")
+        holders[who] -= amount
+        if not holders[who]:
+            del holders[who]
+
+    def op_create_property(self, raw: bytes, space: int, ticker_raw: bytes, name: bytes, kind: int, decimals: int,
+                           supply: int) -> str:
+        key, _got = self._owned_space(raw, space)
+        ticker = ticker_name(ticker_raw)
+        if ticker in self.doc["properties"]:
+            raise Rejected(f"{ticker} is taken")
+        if kind not in KINDS:
+            raise Rejected("a kind is 00 (fixed), 01 (managed) or 02 (NFT)")
+        if not 0 <= decimals <= 8 or (kind == NFT and decimals):
+            raise Rejected("decimals are 0 to 8, and 0 for an NFT")
+        if (kind == FIXED) != (supply > 0):
+            raise Rejected("a fixed property has a supply of 1 or more, any other a supply of 0")
+        prop = {"name": text(name, 32, 1), "kind": KINDS[kind], "decimals": decimals, "owner": self.sender,
+                "space": key, "supply": supply, "locked": kind == FIXED, "holders": {}, "items": {}, "minted": 0,
+                "height": self.height, "txid": self.txid}
+        if supply:
+            prop["holders"][self.sender] = supply
+        self.doc["properties"][ticker] = prop
+        return f"{ticker}, {KINDS[kind]}" + (f", {supply}" if supply else "")
+
+    def op_give_property(self, raw: bytes) -> str:
+        ticker, got = self._property(raw, owned=True)
+        got["owner"] = self.target
+        return f"{ticker} given to {self.target}"
+
+    def op_lock_property(self, raw: bytes) -> str:
+        ticker, got = self._property(raw, owned=True)
+        if got["locked"]:
+            raise Rejected(f"{ticker} is locked already")
+        got["locked"] = True
+        return f"{ticker} locked"
+
+    def op_mint(self, raw: bytes, amount: int) -> str:
+        ticker, got = self._property(raw, owned=True)
+        if got["kind"] != "managed":
+            raise Rejected(f"{ticker} is {got['kind']}: only a managed property is minted")
+        if got["locked"]:
+            raise Rejected(f"{ticker} is locked")
+        if amount < 1 or got["supply"] + amount >= U64:
+            raise Rejected("an amount is 1 or more, and the supply stays below 2^64")
+        got["supply"] += amount
+        self._add(got["holders"], self.target, amount)
+        return f"{amount} {ticker} to {self.target}"
+
+    def _fungible(self, raw: bytes) -> tuple[str, dict]:
+        ticker, got = self._property(raw)
+        if got["kind"] == "nft":
+            raise Rejected(f"{ticker} is an NFT")
+        return ticker, got
+
+    def op_send(self, raw: bytes, amount: int) -> str:
+        ticker, got = self._fungible(raw)
+        self._take(got["holders"], self.sender, amount, ticker)
+        self._add(got["holders"], self.target, amount)
+        return f"{amount} {ticker} to {self.target}"
+
+    def op_burn(self, raw: bytes, amount: int) -> str:
+        ticker, got = self._fungible(raw)
+        self._take(got["holders"], self.sender, amount, ticker)
+        got["supply"] -= amount
+        return f"{amount} {ticker} burnt"
+
+    def op_mint_nft(self, raw: bytes, inscription: str | None) -> str:
+        ticker, got = self._property(raw, owned=True)
+        if got["kind"] != "nft":
+            raise Rejected(f"{ticker} is no NFT")
+        if got["locked"]:
+            raise Rejected(f"{ticker} is locked")
+        if inscription is not None:
+            self._known(inscription)
+        got["minted"] += 1
+        got["supply"] += 1
+        got["items"][str(got["minted"])] = {"holder": self.target, "inscription": inscription}
+        return f"{ticker} #{got['minted']} to {self.target}"
+
+    def _item(self, raw: bytes, item: int) -> tuple[str, dict]:
+        ticker, got = self._property(raw)
+        if got["kind"] != "nft":
+            raise Rejected(f"{ticker} is no NFT")
+        thing = got["items"].get(str(item))
+        if thing is None or thing["holder"] != self.sender:
+            raise Rejected(f"the sender does not hold {ticker} #{item}")
+        return ticker, thing
+
+    def op_send_nft(self, raw: bytes, item: int) -> str:
+        ticker, thing = self._item(raw, item)
+        thing["holder"] = self.target
+        return f"{ticker} #{item} to {self.target}"
+
+    # DEX ------------------------------------------------------------------------------------------------------
+
+    def op_offer(self, raw: bytes, amount: int, price: int) -> str:
+        if price < 1:
+            raise Rejected("a price is 1 koinu or more")
+        ticker, got = self._property(raw)
+        if got["kind"] == "nft":
+            _t, thing = self._item(raw, amount)
+            thing["holder"] = None
+            what = f"{ticker} #{amount}"
+        else:
+            self._take(got["holders"], self.sender, amount, ticker)
+            what = f"{amount} {ticker}"
+        self.doc["offers"][self.txid] = {"ticker": ticker, "amount": amount, "price": price, "seller": self.sender,
+                                         "height": self.height}
+        return f"{what} for {price} koinu"
+
+    def _deliver(self, offer: dict, to: str) -> None:
+        got = self.doc["properties"][offer["ticker"]]
+        if got["kind"] == "nft":
+            got["items"][str(offer["amount"])]["holder"] = to
+        else:
+            self._add(got["holders"], to, offer["amount"])
+
+    def op_cancel(self, offer_id: str) -> str:
+        offer = self.doc["offers"].get(offer_id)
+        if offer is None:
+            raise Rejected(f"no open offer {offer_id}")
+        if offer["seller"] != self.sender:
+            raise Rejected("the sender did not make this offer")
+        self._deliver(offer, self.sender)
+        del self.doc["offers"][offer_id]
+        return f"offer {offer_id} cancelled"
+
+    def op_buy(self, offer_id: str) -> str:
+        offer = self.doc["offers"].get(offer_id)
+        if offer is None:
+            raise Rejected(f"no open offer {offer_id}")
+        if offer["seller"] == self.sender:
+            raise Rejected("the seller cannot buy their own offer")
+        paid = sum(value for address, value in self.outputs if address == offer["seller"])
+        if paid < offer["price"]:
+            raise Rejected(f"the seller is paid {paid} koinu, not {offer['price']}")
+        self._deliver(offer, self.sender)
+        del self.doc["offers"][offer_id]
+        return f"offer {offer_id} bought for {paid} koinu"
+
+
+# --- following the chain -----------------------------------------------------------------------------------------
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS undo (height INTEGER PRIMARY KEY, hash TEXT NOT NULL, before TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS skipped (height INTEGER NOT NULL, txid TEXT PRIMARY KEY, why TEXT NOT NULL) WITHOUT ROWID;
 """
 
 
 class MoonBrix:
-    """MoonBrix's state on one chain, in one SQLite file, followed block by block."""
+    """MoonBrix 2's state on one chain, in one SQLite file, followed block by block."""
 
     def __init__(self, path: str | Path, params) -> None:
         self.path = Path(path)
         self.params = params
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.executescript(SCHEMA)
+        self.conn.execute("DROP TABLE IF EXISTS skipped")           # the prototype's reader kept one
         self.lock = threading.RLock()
+        if self._meta("doc") and json.loads(self._meta("doc")).get("version") != VERSION:
+            self.reset()                                            # a document of the prototype: read again
 
     def close(self) -> None:
         self.conn.close()
@@ -499,20 +756,15 @@ class MoonBrix:
     def best(self) -> str | None:
         return self._meta("best")
 
-    def document(self) -> dict[str, list]:
-        """The five files as MoonBrix keeps them (a copy)."""
+    def document(self) -> dict[str, Any]:
+        """The state (a copy)."""
         with self.lock:
             got = self._meta("doc")
         return json.loads(got) if got else empty()
 
-    def skipped(self) -> list[dict[str, Any]]:
-        """Commands MoonBrix's own sync would stop at, passed over here (QUIRKS)."""
-        return [{"height": h, "txid": t, "why": w}
-                for h, t, w in self.conn.execute("SELECT height, txid, why FROM skipped ORDER BY height")]
-
     def reset(self) -> None:
         with self.lock, self.conn:
-            for table in ("meta", "undo", "skipped"):
+            for table in ("meta", "undo"):
                 self.conn.execute(f"DELETE FROM {table}")
 
     def _set(self, height: int, best: str, doc: dict | None) -> None:
@@ -522,26 +774,20 @@ class MoonBrix:
             self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('doc', ?)", (json.dumps(doc),))
 
     def connect(self, height: int, block_hash: str, txs: Iterable[rawchain.Tx],
-                spent_output: Callable[[str, int], tuple[bytes, int]]) -> bool:
-        """Read block `height`'s transactions (in block order; only those carrying data are needed). Returns whether
-        the document changed. `spent_output(txid, vout)` -> (script, value) of a coin made before (the Core)."""
+                spent_output: Callable[[str, int], tuple[bytes, int]],
+                fetch_tx: Callable[[str], rawchain.Tx] | None = None) -> bool:
+        """Read block `height`'s transactions, in block order (only those carrying an OP_RETURN are needed).
+        Returns whether the document changed. `spent_output(txid, vout)` -> (script, value) of a coin made before;
+        `fetch_tx(txid)` a transaction of before, for an assemble's parts (the Core). Raises MoonBrixError, and
+        keeps nothing of the block, when the node cannot give what a command needs."""
         with self.lock:
             if self.height is not None and height <= self.height:
                 raise MoonBrixError(f"block {height} is not past the document's tip {self.height}")
             doc = self.document()
             before = json.dumps(doc)
-            for tx in txs:
-                said = candidate(tx)
-                if said is None:
-                    continue
-                chunk = command(said)
-                if chunk is not None:
-                    try:
-                        self._apply(doc, height, tx, chunk, spent_output)
-                    except Unreadable as exc:
-                        doc = json.loads(before)
-                        self.conn.execute("INSERT OR REPLACE INTO skipped VALUES (?,?,?)", (height, tx.txid, str(exc)))
-                break                                       # the block's one slot is taken (Indexer.cpp)
+            if height >= ACTIVATION:
+                for position, tx in enumerate(txs):
+                    self._read(doc, height, position, tx, spent_output, fetch_tx)
             changed = json.dumps(doc) != before
             with self.conn:
                 if changed:
@@ -550,25 +796,43 @@ class MoonBrix:
                 self._set(height, block_hash, doc if changed else None)
             return changed
 
-    def _apply(self, doc, height, tx, chunk, spent_output) -> None:
-        def origin() -> str | None:
+    def _read(self, doc, height, position, tx, spent_output, fetch_tx) -> None:
+        entry = {"height": height, "txid": tx.txid}
+        try:
+            data = payload(tx)
+            if data is None:
+                return
+            entry["op"] = OPS[data[len(MAGIC)]][0] if len(data) > len(MAGIC) and data[len(MAGIC)] in OPS else "?"
             first = tx.vin[0] if tx.vin else None
-            if not first or not first.get("txid"):
-                return None
-            script, _value = spent_output(first["txid"], first["vout"])
-            return address_of(script, self.params)
+            sender = None
+            if first and first.get("txid"):
+                sender = address_of(spent_output(first["txid"], first["vout"])[0], self.params)
+            entry["by"] = sender
+            outputs = [(address_of(script, self.params), value) for value, script in tx.vout]
 
-        def output(i: int) -> str | None:
-            return address_of(tx.vout[i][1], self.params) if i < len(tx.vout) else None
+            def fetch_part(txid: str) -> bytes:
+                if fetch_tx is None:
+                    raise MoonBrixError("no way to fetch a part")
+                got = payload(fetch_tx(txid))
+                op, values = decode(got) if got else (None, None)
+                if op != CODES["part"]:
+                    raise MoonBrixError(f"part {txid} reads as no part now")
+                return values[0]
 
-        Kurator(doc).apply(height, tx.txid, chunk, origin, output, len(tx.vout))
+            work = json.loads(json.dumps(doc))
+            entry["what"] = Book(work).apply(height, position, tx.txid, data, sender, outputs, fetch_part)
+            doc.clear()
+            doc.update(work)
+            entry["ok"] = True
+        except Rejected as exc:
+            entry["ok"], entry["why"] = False, str(exc)
+        doc["log"].append(entry)
 
     def roll_back(self, to: int, best: str) -> None:
         """Back to the document after block `to` (a reorg): whatever blocks above it changed is undone."""
         with self.lock, self.conn:
             row = self.conn.execute("SELECT before FROM undo WHERE height>? ORDER BY height LIMIT 1", (to,)).fetchone()
             self.conn.execute("DELETE FROM undo WHERE height>?", (to,))
-            self.conn.execute("DELETE FROM skipped WHERE height>?", (to,))
             if row is not None:
                 self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('doc', ?)", (row[0],))
             self._set(to, best, None)
@@ -577,10 +841,16 @@ class MoonBrix:
         return list(self.conn.execute("SELECT height, hash FROM undo ORDER BY height DESC"))
 
 
+def fetch_tx_by_rpc(rpc, params) -> Callable[[str], rawchain.Tx]:
+    def fetch(txid: str) -> rawchain.Tx:
+        return rawchain.read_tx(bytes.fromhex(rpc.call("getrawtransaction", txid, 0)), txid, timed=params.tx_time)
+    return fetch
+
+
 def follow(mb: MoonBrix, uset, rpc, params) -> int:
     """Bring the document to the unspent set's tip, reading only the blocks the set says carry data. A tip that left
     the chain (a reorg) is rolled back first: to the newest block it changed that is still on the chain, or read again
-    from block 0 when none is (cheap: data blocks are few). Returns how many data blocks were read."""
+    from the start when none is (cheap: data blocks are few). Returns how many data blocks were read."""
     from .utxoset import spent_output_by_rpc
     tip, tip_hash = uset.height, uset.best
     if tip is None or tip_hash is None:
@@ -593,15 +863,15 @@ def follow(mb: MoonBrix, uset, rpc, params) -> int:
                     break
             else:
                 mb.reset()
-    since = 0 if mb.height is None else mb.height + 1
-    look = spent_output_by_rpc(rpc)
+    since = ACTIVATION if mb.height is None else max(mb.height + 1, ACTIVATION)
+    look, fetch = spent_output_by_rpc(rpc), fetch_tx_by_rpc(rpc, params)
     read = 0
     for height, txids in uset.data_blocks(since):
         if height > tip:
             break
         raws = rpc.batch([("getrawtransaction", [t, 0]) for t in txids])
         txs = [rawchain.read_tx(bytes.fromhex(raw), t, timed=params.tx_time) for t, raw in zip(txids, raws)]
-        mb.connect(height, str(rpc.call("getblockhash", height)), txs, look)
+        mb.connect(height, str(rpc.call("getblockhash", height)), txs, look, fetch)
         read += 1
     if mb.height != tip:
         with mb.lock, mb.conn:
@@ -611,35 +881,47 @@ def follow(mb: MoonBrix, uset, rpc, params) -> int:
 
 # --- reading it -------------------------------------------------------------------------------------------------
 
-def inscription(rpc, params, txid: str) -> tuple[str, bytes]:
-    """A meta inscription's file: its type, and its chunks' data put together in order, as MoonBrix's own page does
-    (Genesis.js Background: each chunk's `vout[0]` from byte 16 on)."""
-    tx = rawchain.read_tx(bytes.fromhex(rpc.call("getrawtransaction", txid, 0)), txid, timed=params.tx_time)
-    said = candidate(tx)
-    chunk = command(said) if said else None
-    if chunk is None or chunk[26:28] != INSCRIBE or chunk[30:32] != "01":
-        raise KeyError(f"{txid} is not a MoonBrix meta inscription")
-    meta = parse_meta(chunk[34:])
-    parts = meta.get("chunks") or []
-    if not isinstance(parts, list) or not all(isinstance(p, str) for p in parts):
-        raise KeyError(f"{txid}: its chunks are not a list of txids")
-    raws = rpc.batch([("getrawtransaction", [p, 0]) for p in parts]) if parts else []
-    data = []
-    for part, raw in zip(parts, raws):
-        piece = rawchain.read_tx(bytes.fromhex(raw), part, timed=params.tx_time)
-        got = candidate(piece)
-        hexs = command(got) if got else None
-        if hexs is None:
-            raise KeyError(f"chunk {part} carries no MoonBrix data in vout[0]")
-        data.append(bytes.fromhex(hexs[32:]))
-    return str(meta.get("type") or "application/octet-stream"), b"".join(data)
+def content(doc: dict[str, Any], fetch_tx: Callable[[str], rawchain.Tx], txid: str) -> tuple[str, bytes]:
+    """An inscription's type and its bytes, from the chain, checked against the SHA-256 it was read with."""
+    ins = doc["inscriptions"].get(txid)
+    if ins is None:
+        raise KeyError(f"no MoonBrix inscription {txid}")
+    pieces = []
+    for part in ins["parts"] or [txid]:
+        got = payload(fetch_tx(part))
+        op, values = decode(got) if got else (None, None)
+        if op == CODES["inscribe"] and ins["parts"] is None:
+            pieces.append(values[2])
+        elif op == CODES["part"] and ins["parts"] is not None:
+            pieces.append(values[0])
+        else:
+            raise KeyError(f"{part} does not carry this inscription's data")
+    data = b"".join(pieces)
+    if hashlib.sha256(data).hexdigest() != ins["sha256"]:
+        raise KeyError(f"{txid}: the data on the chain is not what was read")
+    return ins["type"], data
 
 
-def balances(doc: dict[str, list], address: str) -> list[dict[str, Any]]:
-    """What `address` holds of each property."""
-    return [{"ticker": p["Ticker"], "name": p["Name"], "amount": p["Holder"][address], "key": p["Key"],
-             "divisible": p["Divisible"], "fungible": p["Fungible"]}
-            for p in doc["prop"] if address in p["Holder"]]
+def units(amount: int, decimals: int) -> str:
+    """An amount in the smallest unit, written in whole tokens."""
+    if not decimals:
+        return str(amount)
+    whole, part = divmod(amount, 10 ** decimals)
+    return f"{whole}.{part:0{decimals}d}".rstrip("0").rstrip(".")
+
+
+def balances(doc: dict[str, Any], address: str) -> list[dict[str, Any]]:
+    """What `address` holds of each property: an amount, or the NFT items. Offers it made are not counted."""
+    held = []
+    for ticker, p in sorted(doc["properties"].items()):
+        if p["kind"] == "nft":
+            items = sorted(int(i) for i, thing in p["items"].items() if thing["holder"] == address)
+            if items:
+                held.append({"ticker": ticker, "name": p["name"], "kind": p["kind"], "items": items})
+        elif address in p["holders"]:
+            held.append({"ticker": ticker, "name": p["name"], "kind": p["kind"], "amount": p["holders"][address],
+                         "decimals": p["decimals"]})
+    return held
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -674,8 +956,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "dump":
             print(json.dumps(doc, indent=4))
         else:
-            print(json.dumps({"height": mb.height, "best": mb.best, **{k: len(v) for k, v in doc.items()},
-                              "skipped": mb.skipped()}, indent=1))
+            print(json.dumps({"height": mb.height, "best": mb.best,
+                              **{k: len(v) for k, v in doc.items() if isinstance(v, (dict, list))}}, indent=1))
     finally:
         mb.close()
     return 0

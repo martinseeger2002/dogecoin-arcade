@@ -88,31 +88,40 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-10 · SadFrog's side (Claude, for tbuuol) · branch `team/kotia-moonbrix` (on master 440b1e2f) · MoonBrix on Kotia, read the way its Kurator reads it (KOTIA ONLY)
+### 2026-11-10 · SadFrog's side (Claude, for tbuuol) · branch `team/kotia-moonbrix` (on master 440b1e2f) · MoonBrix 2 on Kotia (KOTIA ONLY)
 
-tbuuol: MoonBrix (github.com/tbuuol/MoonBrix, his OP_RETURN protocol) goes into the arcade, Kotia only, with all its functions. #81 cleared the way. This is stage 1, reading. Sending commands and the DEX come later.
-- **`arcade/moonbrix.py`:** a 1:1 copy of `Kurator.cpp` and of how MoonBrix's MasterDB, Indexer and Sync choose commands.
-  - Only the first command of each block counts.
-  - The command sits in `vout[0]` as `OP_RETURN <hex ≥ 15 bytes>`. The sender is the coin spent by vin[0].
-  - Nothing counts before the activation in block 1,236,675.
-  - The state is MoonBrix's own five files (`lib`, `tld`, `fold`, `ins`, `prop`), in `<net>-moonbrix.sqlite`, with an undo per changed block for reorgs.
-  - It reads only the blocks that `utxoset.data_blocks` names. That is 50 blocks since the activation.
-  - Its quirks are copied on purpose and listed in `moonbrix.QUIRKS`. Where MoonBrix's own sync would throw, the transaction is passed over and listed.
-- **Checked against the chain:** every one of the 47 commands Kotia carries (up to block 1,539,161) comes to exactly the five files MoonBrix wrote. `tests/fixtures/moonbrix_kotia.json` holds the commands and those files.
-- **Wiring:**
+tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with all its functions: tokens and the DEX too. #81 cleared the way. A first commit copied the C++ prototype's Kurator 1:1. tbuuol then asked for the protocol itself to be redone, clean and robust: his commands on Kotia were tests and need not be kept. **This branch is MoonBrix 2**, and the protocol is `arcade/web/docs/moonbrix.md` (`/docs/moonbrix`). This stage reads it. Building and sending commands from the wallet comes next.
+- **What changed from the prototype:**
+  - A command starts with `MB` 02, in the first OP_RETURN. The payload runs on over every OP_RETURN output, about 89 kB in six outputs on Kotia.
+  - Every command of a block counts, in block order.
+  - The target is the first output that pays someone other than the sender.
+  - Fields are typed and length-prefixed. A name that breaks a rule rejects the command and is never trimmed.
+  - A command is applied whole or rejected whole, and every rejection is logged with its reason. Nothing stops the reader except a part the node cannot give, and then the block is read again later.
+  - A fixed property is never minted. Only a space's owner creates a property in it. Folders and files are never overwritten except by a replace.
+  - NFTs have numbered items.
+  - The DEX: an offer holds the tokens, and a buy must pay the seller in the same transaction.
+  - Large inscriptions are parts, put together by an assemble that names the size and SHA-256.
+- **`arcade/moonbrix.py`:**
+  - `OPS` is one table that drives both `decode` and `encode` (`encode` is for the sending stage and the tests).
+  - `data_scripts` cuts a payload into OP_RETURNs that Kotia relays. `Book` holds the rules.
+  - `MoonBrix` keeps the document in `<net>-moonbrix.sqlite`, with an undo for each changed block. A document from the prototype is reset and read again.
+  - `follow` reads `utxoset.data_blocks` from block 1,236,675 on. `content` gives an inscription checked against its SHA-256.
+- **Wiring:** unchanged from the first commit.
   - `Params.moonbrix`, Kotia only.
   - `state.moonbrix(chain)`.
-  - `watcher.moonbrix_pass` runs right after the unspent set's `follow`, in its own try.
-  - `web/moonbrix_web.py` serves `/moonbrix`, `/moonbrix.json`, `/moonbrix/content/<txid>` (the chunks put together the way MoonBrix's Genesis.js does, sandboxed with `CONTENT_HEADERS`) and `/account/moonbrix`.
-  - `door.py` makes these public, and the `tokens` module claims them. A borrowing arcade shows only that it is borrowed.
-  - Docs are in `docs/kotia.md` under *MoonBrix*.
-- **Seen on the way, for later:** the asset format in KOTIA-PLAN Phase 3 (`"parts"`, `"next": null`, raw chunks outside `vout[0]`) is not MoonBrix's. MoonBrix chunks carry the 05/00/00 header in `vout[0]`, and the meta (05/00/01) lists `"chunks"` with `"next": false`. A `null` there stops MoonBrix's sync. The arcade's assets must use MoonBrix's form before anything is inscribed.
+  - `watcher.moonbrix_pass`, after the unspent set.
+  - `web/moonbrix_web.py`: `/moonbrix`, `/moonbrix.json`, `/moonbrix/content/<txid>` (with `CONTENT_HEADERS`), `/account/moonbrix`.
+  - `door.py` and the `tokens` module.
+- **Docs:**
+  - `docs/moonbrix.md` is new and offered in the guide.
+  - `docs/kotia.md` *MoonBrix* points to it.
+- **For later:** the arcade's own Kotia asset format (KOTIA-PLAN Phase 3) should become MoonBrix 2 inscriptions (`20`, or `21` + `22`).
+- **Open questions, written on the protocol page:** a price for claiming a TLD, and bids, which need KOT locked in a script.
 - **Tests:**
-  - `tests/test_moonbrix.py` (20).
-  - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is the new `chains.<net>.params.moonbrix`, true on `kot` only. test_conformance passes.
-  - With test_utxoset, test_kotia, test_classb_off, test_safe_headers, test_modules, test_script_policy, test_page_scripts and test_public: 236 passed, 18 skipped.
-  - `test_docs` fails 2 here, as before this branch (environment).
-- **Needs from the operator:** a review and merge. Nothing to set on a node. Only an arcade that runs Kotia's Core itself shows MoonBrix.
+  - `tests/test_moonbrix.py` (32).
+  - The prototype's fixture is gone.
+  - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is `chains.<net>.params.moonbrix`.
+- **Needs from the operator:** a review and merge. Nothing to set on a node.
 
 ### 2026-11-09 · the operator's side (Claude) · merged PR #125 (hardening round 2) onto master
 
