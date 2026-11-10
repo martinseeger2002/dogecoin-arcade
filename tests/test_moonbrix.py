@@ -257,29 +257,72 @@ def test_folders_and_files_are_never_overwritten_but_by_a_replace(chain):
 
 # --- the DEX -----------------------------------------------------------------------------------------------------
 
-def test_an_offer_holds_the_tokens_and_a_buy_pays_the_seller_in_the_same_transaction(chain):
+def offered(chain, amount=30, price=3_000_000, window=10, deposit=300_000):
     space(chain)
     chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
-    offer = chain.one(E("offer", "MBX", 30, 5_000_000))[1].txid
+    return chain.one(E("offer", "MBX", amount, price, window, deposit))[1].txid
+
+
+def test_a_reservation_holds_the_tokens_for_the_buyer_until_paid(chain):
+    offer = offered(chain)
     assert chain.doc["properties"]["MBX"]["holders"] == {A: 70}
-    assert not chain.ok(E("buy", offer), FROM_B, pays=((A, 4_999_999),)), "underpaid"
-    assert not chain.ok(E("buy", offer), FROM_A), "not one's own"
-    first = command_tx(E("buy", offer), FROM_B, pays=((A, 5_000_000),))
-    second = command_tx(E("buy", offer), FROM_C, pays=((A, 5_000_000),))
-    assert [e["ok"] for e in chain.block(first, second)] == [True, False]
-    assert chain.doc["properties"]["MBX"]["holders"] == {A: 70, B: 30} and chain.doc["offers"] == {}
-    assert not chain.ok(E("offer", "MBX", 71, 1)), "more than A holds"
+    assert not chain.ok(E("reserve", offer, 10), FROM_B, pays=((A, 99_999),)), "short of the deposit's share"
+    rid = chain.one(E("reserve", offer, 10), FROM_B, pays=((A, 100_000),))[1].txid
+    assert chain.doc["offers"][offer]["left"] == 20
+    assert chain.doc["reservations"][rid]["due"] == 1_000_000
+    assert chain.ok(E("cancel", offer)), "the seller cancels the rest"
+    assert chain.doc["properties"]["MBX"]["holders"] == {A: 90}, "but not what B reserved"
+    assert not chain.ok(E("reserve", offer, 1), FROM_C, pays=((A, 1_000_000),)), "cancelled"
+    assert not chain.ok(E("pay", rid), FROM_C, pays=((A, 900_000),)), "only the buyer pays"
+    assert not chain.ok(E("pay", rid), FROM_B, pays=((A, 899_999),)), "what is due"
+    assert chain.ok(E("pay", rid), FROM_B, pays=((A, 900_000),))
+    assert chain.doc["properties"]["MBX"]["holders"] == {A: 90, B: 10}
+    assert chain.doc["offers"] == {} and chain.doc["reservations"] == {}
 
 
-def test_an_nft_offer_and_its_cancel(chain):
+def test_a_reservation_not_paid_in_its_window_goes_back_and_its_deposit_stays(chain):
+    offer = offered(chain, window=2)
+    rid = chain.one(E("reserve", offer, 30), FROM_B, pays=((A, 300_000),))[1].txid
+    assert not chain.ok(E("reserve", offer, 1), FROM_C, pays=((A, 100_000),)), "nothing left"
+    chain.block()                                                      # h+1
+    reserved_at = chain.doc["reservations"][rid]["height"]
+    chain.height = reserved_at + 2
+    log = chain.block(command_tx(E("pay", rid), FROM_B, pays=((A, 2_700_000),)))
+    assert log[0]["op"] == "expiry" and not log[1]["ok"], "the window closed after block h+2"
+    assert chain.doc["offers"][offer]["left"] == 30
+    assert chain.ok(E("reserve", offer, 30), FROM_C, pays=((A, 3_000_000),)), "paid in full at once"
+    assert chain.doc["properties"]["MBX"]["holders"] == {A: 70, C: 30}
+
+
+def test_a_payment_in_the_last_block_of_the_window_counts(chain):
+    offer = offered(chain, window=2, deposit=0)
+    rid = chain.one(E("reserve", offer, 30), FROM_B)[1].txid
+    chain.height += 1
+    assert chain.ok(E("pay", rid), FROM_B, pays=((A, 3_000_000),))
+    assert chain.doc["properties"]["MBX"]["holders"] == {A: 70, B: 30}
+
+
+@pytest.mark.parametrize("fields,why", [
+    ((30, 0, 10, 0), "a price is"), ((30, 10, 0, 0), "a payment window"), ((30, 10, 10, 11), "a deposit is"),
+    ((101, 10, 10, 0), "holds"),
+])
+def test_an_offer_has_a_price_a_window_and_a_deposit_within_it(chain, fields, why):
+    space(chain)
+    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
+    entry = chain.one(E("offer", "MBX", *fields))[0]
+    assert not entry["ok"] and why in entry["why"]
+
+
+def test_an_nft_offer_is_reserved_whole_and_its_cancel(chain):
     space(chain)
     chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0))
     chain.one(E("mint nft", "SWORD", None))
-    offer = chain.one(E("offer", "SWORD", 1, 100))[1].txid
+    offer = chain.one(E("offer", "SWORD", 1, 100, 5, 0))[1].txid
     assert not chain.ok(E("send nft", "SWORD", 1), pays=(B,)), "the offer holds it"
+    assert not chain.ok(E("reserve", offer, 2), FROM_B)
     assert not chain.ok(E("cancel", offer), FROM_B)
     assert chain.ok(E("cancel", offer))
-    assert chain.doc["properties"]["SWORD"]["items"]["1"]["holder"] == A
+    assert chain.doc["properties"]["SWORD"]["items"]["1"]["holder"] == A and chain.doc["offers"] == {}
 
 
 # --- following the chain -----------------------------------------------------------------------------------------

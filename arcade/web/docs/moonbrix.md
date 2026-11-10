@@ -7,7 +7,7 @@ MoonBrix is tbuuol's protocol on Kotia. It keeps everything in OP_RETURN outputs
 - **Inscriptions**: files of any type, up to about 90 kB in one transaction, or put together from parts.
 - **Folders and files** in a space, each file pointing at an inscription.
 - **Properties**: fungible tokens of fixed or managed supply, and NFTs.
-- **A DEX**: tokens and NFTs offered for KOT and bought in one transaction.
+- **A DEX**: tokens and NFTs offered for KOT. A buyer reserves first and then pays, as on Omni's DEX.
 
 This arcade reads it on **`/moonbrix`** (`arcade/moonbrix.py`). This page is the protocol: the arcade does exactly
 what is written here and nothing else.
@@ -140,22 +140,37 @@ Amounts are in the smallest unit: with 8 decimals, `100000000` is one token. **A
 
 ### DEX
 
+The DEX works as Omni's does. A buyer first **reserves** part of an offer, then **pays** for it in a second
+transaction. Once a reservation is on the chain, the reserved tokens are the buyer's to pay for until the offer's
+window closes. Nobody else can reserve them, and the seller cannot take them back. A buyer only pays for tokens that
+are certain to come.
+
 | Op | Command | Fields | Rule |
 |---|---|---|---|
-| `50` | offer | `str` ticker, `var` amount or item, `var` price | The sender holds them. For an NFT the number is the item. The amount or item leaves the sender and is held by the offer. The price is in koinu, at least 1, for the whole offer. The offer's id is this transaction's id. |
-| `51` | cancel | `id` offer | The sender made the offer. What it held goes back. |
-| `52` | buy | `id` offer | The offer is still open, and the sender did not make it. This same transaction pays the seller's address at least the price, all outputs to that address added up. The buyer (the sender) gets what the offer held. |
+| `50` | offer | `str` ticker, `var` amount or item, `var` price, `var` window, `var` deposit | The sender holds the tokens (for an NFT, the number is the item). They leave the sender and are held by the offer. **price**: koinu for the whole offer, at least 1. **window**: the blocks a reservation has to pay in, 1 to 10,000. **deposit**: koinu for the whole offer, 0 up to the price. The offer's id is this transaction's id. |
+| `51` | cancel | `id` offer | The sender made the offer, and it is still open. What is not reserved goes back to the seller. What is reserved stays reserved: it is paid for, or it goes back to the seller when its window closes. |
+| `52` | reserve | `id` offer, `var` amount | The offer is open, and the sender did not make it. 1 to what is left of it (an NFT: 1). The reservation's id is this transaction's id. This transaction pays the seller's address at least the deposit's share. That payment counts towards the price. If it pays the whole share of the price, the tokens go to the buyer at once. |
+| `53` | pay | `id` reservation | The sender made the reservation, and its window is still open. This transaction pays the seller's address what is still due. The buyer gets the reserved tokens. |
 
-**A buy and its payment are one transaction, so nobody can take the tokens without paying or the KOT without
-delivering.** What the protocol cannot do is give KOT back. When two buys of one offer reach the chain, the first in
-block order gets it. The second is rejected, and its payment to the seller stays paid. A wallet must check that the
-offer is still open, and that no buy of it is waiting in the mempool, before it sends a buy. An offer is all or
-nothing: a seller who wants to sell in pieces makes several offers.
+- **Share of an amount:** its share of the price is `price × amount ÷ the offer's amount`, rounded up. The same goes
+  for the deposit.
+- **Payment:** the seller's payment in a transaction is the sum of every output that pays the seller's address.
+- **The window:** a reservation made in block `h` can be paid up to and including block `h + window`. At the start of
+  every block after that, before that block's commands, it ends. Its tokens go back to the offer, or to the seller if
+  the offer was cancelled. The deposit stays with the seller. That is what makes it cost something to reserve without
+  paying.
+- **The arcade's view:** the arcade reads only blocks that carry data, so an ended reservation shows on its page from
+  the next such block on. What counts is the block height, never when it was read.
+- **What a wallet must check:** a payment after the window has closed is rejected, and the KOT stays paid. A wallet
+  must check that the window is still open and that the payment reaches the chain in time.
+- **Several buyers:** two buyers can reserve parts of one offer at the same time. The first in block order gets as
+  much as is left. A reservation that asks for more than is left is rejected, and its deposit stays paid. A wallet
+  checks what is left before it sends.
 
 ## What the arcade keeps
 
 `<net>-moonbrix.sqlite` holds the state as one JSON document: `tlds`, `spaces`, `inscriptions`, `parts`,
-`properties`, `offers` and `log`. It also keeps the document as it was before each of the last 200 blocks that changed
+`properties`, `offers`, `reservations` and `log`. It also keeps the document as it was before each of the last 200 blocks that changed
 it, so a reorg is rolled back. The arcade's unspent set (`data_blocks`) says which blocks carry an OP_RETURN, and only
 those are read.
 

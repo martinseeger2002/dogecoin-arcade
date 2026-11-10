@@ -40,6 +40,8 @@ U64 = 1 << 64
 #: Kotia's Core relays an OP_RETURN script of at most 15,000 bytes: OP_RETURN, OP_PUSHDATA2 and its length, the data.
 MAX_PUSH = 15_000 - 4
 MAX_PARTS = 10_000
+#: The longest payment window an offer may give a reservation, in blocks.
+MAX_WINDOW = 10_000
 
 WHITELIST, BLACKLIST = 0, 1
 FIXED, MANAGED, NFT = 0, 1, 2
@@ -72,9 +74,10 @@ OPS: dict[int, tuple[str, tuple[str, ...], str | None]] = {
     0x45: ("burn", ("str", "var"), None),
     0x46: ("mint nft", ("str", "opt"), "maybe"),
     0x47: ("send nft", ("str", "var"), "need"),
-    0x50: ("offer", ("str", "var", "var"), None),
+    0x50: ("offer", ("str", "var", "var", "var", "var"), None),
     0x51: ("cancel", ("id",), None),
-    0x52: ("buy", ("id",), None),
+    0x52: ("reserve", ("id", "var"), None),
+    0x53: ("pay", ("id",), None),
 }
 CODES = {name: op for op, (name, _f, _t) in OPS.items()}
 
@@ -331,7 +334,7 @@ def space_key(tld: str, space: int) -> str:
 
 def empty() -> dict[str, Any]:
     return {"version": VERSION, "tlds": {}, "spaces": {}, "inscriptions": {}, "parts": {}, "properties": {},
-            "offers": {}, "log": []}
+            "offers": {}, "reservations": {}, "log": []}
 
 
 class Book:
@@ -672,51 +675,117 @@ class Book:
         return f"{ticker} #{item} to {self.target}"
 
     # DEX ------------------------------------------------------------------------------------------------------
+    # As on Omni's DEX: a buyer first reserves (52), and the reserved tokens are theirs to pay for (53) until the
+    # offer's window closes; the seller can no longer take them back. A deposit, part of the price, paid to the
+    # seller with the reservation, makes reserving without paying cost something.
 
-    def op_offer(self, raw: bytes, amount: int, price: int) -> str:
+    def _paid_to(self, address: str) -> int:
+        return sum(value for a, value in self.outputs if a == address)
+
+    def _offer(self, offer_id: str) -> dict:
+        offer = self.doc["offers"].get(offer_id)
+        if offer is None:
+            raise Rejected(f"no offer {offer_id}")
+        return offer
+
+    def _release(self, offer_id: str, offer: dict, amount: int, to: str) -> None:
+        """`amount` of an offer's tokens (an NFT: its item) out of the offer, to `to`."""
+        got = self.doc["properties"][offer["ticker"]]
+        if offer["item"] is not None:
+            got["items"][str(offer["item"])]["holder"] = to
+        else:
+            self._add(got["holders"], to, amount)
+
+    def _tidy(self, offer_id: str) -> None:
+        offer = self.doc["offers"][offer_id]
+        if not offer["left"] and not any(r["offer"] == offer_id for r in self.doc["reservations"].values()):
+            del self.doc["offers"][offer_id]
+
+    def expire(self, height: int) -> list[str]:
+        """Reservations whose window closed before `height`: their tokens go back to the offer (or, when it was
+        cancelled, to the seller). Done at the start of every block read, before its commands."""
+        gone = []
+        for rid, r in sorted(self.doc["reservations"].items()):
+            if r["expires"] < height:
+                offer = self.doc["offers"][r["offer"]]
+                if offer["open"]:
+                    offer["left"] += r["amount"]
+                else:
+                    self._release(r["offer"], offer, r["amount"], offer["seller"])
+                del self.doc["reservations"][rid]
+                self._tidy(r["offer"])
+                gone.append(rid)
+        return gone
+
+    def op_offer(self, raw: bytes, amount: int, price: int, window: int, deposit: int) -> str:
         if price < 1:
             raise Rejected("a price is 1 koinu or more")
+        if not 1 <= window <= MAX_WINDOW:
+            raise Rejected(f"a payment window is 1 to {MAX_WINDOW} blocks")
+        if deposit > price:
+            raise Rejected("a deposit is at most the price")
         ticker, got = self._property(raw)
         if got["kind"] == "nft":
             _t, thing = self._item(raw, amount)
             thing["holder"] = None
-            what = f"{ticker} #{amount}"
+            item, units, what = amount, 1, f"{ticker} #{amount}"
         else:
             self._take(got["holders"], self.sender, amount, ticker)
-            what = f"{amount} {ticker}"
-        self.doc["offers"][self.txid] = {"ticker": ticker, "amount": amount, "price": price, "seller": self.sender,
-                                         "height": self.height}
-        return f"{what} for {price} koinu"
-
-    def _deliver(self, offer: dict, to: str) -> None:
-        got = self.doc["properties"][offer["ticker"]]
-        if got["kind"] == "nft":
-            got["items"][str(offer["amount"])]["holder"] = to
-        else:
-            self._add(got["holders"], to, offer["amount"])
+            item, units, what = None, amount, f"{amount} {ticker}"
+        self.doc["offers"][self.txid] = {"ticker": ticker, "item": item, "amount": units, "left": units,
+                                         "price": price, "window": window, "deposit": deposit,
+                                         "seller": self.sender, "open": True, "height": self.height}
+        return f"{what} for {price} koinu, {window} blocks to pay"
 
     def op_cancel(self, offer_id: str) -> str:
-        offer = self.doc["offers"].get(offer_id)
-        if offer is None:
-            raise Rejected(f"no open offer {offer_id}")
+        offer = self._offer(offer_id)
         if offer["seller"] != self.sender:
             raise Rejected("the sender did not make this offer")
-        self._deliver(offer, self.sender)
-        del self.doc["offers"][offer_id]
-        return f"offer {offer_id} cancelled"
+        if not offer["open"]:
+            raise Rejected("the offer is cancelled already")
+        if offer["left"]:
+            self._release(offer_id, offer, offer["left"], self.sender)
+        offer["open"], offer["left"] = False, 0
+        self._tidy(offer_id)
+        return f"offer {offer_id} cancelled; what is reserved stays reserved"
 
-    def op_buy(self, offer_id: str) -> str:
-        offer = self.doc["offers"].get(offer_id)
-        if offer is None:
-            raise Rejected(f"no open offer {offer_id}")
+    def op_reserve(self, offer_id: str, amount: int) -> str:
+        offer = self._offer(offer_id)
+        if not offer["open"]:
+            raise Rejected("the offer is cancelled")
         if offer["seller"] == self.sender:
-            raise Rejected("the seller cannot buy their own offer")
-        paid = sum(value for address, value in self.outputs if address == offer["seller"])
-        if paid < offer["price"]:
-            raise Rejected(f"the seller is paid {paid} koinu, not {offer['price']}")
-        self._deliver(offer, self.sender)
-        del self.doc["offers"][offer_id]
-        return f"offer {offer_id} bought for {paid} koinu"
+            raise Rejected("the seller cannot reserve their own offer")
+        if not 1 <= amount <= offer["left"]:
+            raise Rejected(f"{offer['left']} of the offer is left, not {amount}")
+        due = -(-offer["price"] * amount // offer["amount"])                # rounded up
+        deposit = -(-offer["deposit"] * amount // offer["amount"])
+        paid = self._paid_to(offer["seller"])
+        if paid < deposit:
+            raise Rejected(f"the seller is paid {paid} koinu, not the deposit of {deposit}")
+        offer["left"] -= amount
+        if paid >= due:                                                     # paid in full at once
+            self._release(offer_id, offer, amount, self.sender)
+            self._tidy(offer_id)
+            return f"{amount} of offer {offer_id} bought for {paid} koinu"
+        self.doc["reservations"][self.txid] = {"offer": offer_id, "buyer": self.sender, "amount": amount,
+                                               "due": due, "paid": paid, "expires": self.height + offer["window"],
+                                               "height": self.height}
+        return f"{amount} of offer {offer_id} reserved until block {self.height + offer['window']}"
+
+    def op_pay(self, reservation_id: str) -> str:
+        r = self.doc["reservations"].get(reservation_id)
+        if r is None:
+            raise Rejected(f"no reservation {reservation_id} (paid, or its window closed)")
+        if r["buyer"] != self.sender:
+            raise Rejected("the sender did not make this reservation")
+        offer = self.doc["offers"][r["offer"]]
+        paid = self._paid_to(offer["seller"])
+        if r["paid"] + paid < r["due"]:
+            raise Rejected(f"the seller is paid {paid} koinu, {r['due'] - r['paid']} are due")
+        self._release(r["offer"], offer, r["amount"], self.sender)
+        del self.doc["reservations"][reservation_id]
+        self._tidy(r["offer"])
+        return f"{r['amount']} of offer {r['offer']} paid for"
 
 
 # --- following the chain -----------------------------------------------------------------------------------------
@@ -786,6 +855,9 @@ class MoonBrix:
             doc = self.document()
             before = json.dumps(doc)
             if height >= ACTIVATION:
+                for rid in Book(doc).expire(height):
+                    doc["log"].append({"height": height, "txid": rid, "op": "expiry", "ok": True,
+                                       "what": "reservation's window closed; its tokens went back"})
                 for position, tx in enumerate(txs):
                     self._read(doc, height, position, tx, spent_output, fetch_tx)
             changed = json.dumps(doc) != before

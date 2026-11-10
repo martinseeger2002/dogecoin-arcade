@@ -69,12 +69,20 @@ offers for KOT, all in OP_RETURN outputs.</p>
 <h2 class="mb-sec">Offers</h2>
 <div class="panel mb-card">
   {% if doc.offers %}
-  <table><tr><th>Offer</th><th>What</th><th>Price</th><th>Seller</th></tr>
+  <table><tr><th>Offer</th><th>What</th><th>Left</th><th>Price</th><th>Window</th><th>Seller</th></tr>
     {% for oid, o in doc.offers.items() %}{% set p = doc.properties[o.ticker] %}<tr><td class="mb-mono">{{ oid[:16] }}…</td>
-      <td>{% if p.kind == "nft" %}{{ o.ticker }} #{{ o.amount }}{% else %}{{ units(o.amount, p.decimals) }} {{ o.ticker }}{% endif %}</td>
-      <td>{{ units(o.price, 8) }} KOT</td><td class="mb-mono">{{ o.seller }}</td></tr>{% endfor %}
+      <td>{% if o.item %}{{ o.ticker }} #{{ o.item }}{% else %}{{ units(o.amount, p.decimals) }} {{ o.ticker }}{% endif %}{{ " (cancelled)" if not o.open }}</td>
+      <td>{% if o.item %}{{ o.left }}{% else %}{{ units(o.left, p.decimals) }}{% endif %}</td>
+      <td>{{ units(o.price, 8) }} KOT{% if o.deposit %}, deposit {{ units(o.deposit, 8) }}{% endif %}</td>
+      <td>{{ o.window }} blocks</td><td class="mb-mono">{{ o.seller }}</td></tr>{% endfor %}
   </table>
   {% else %}<p class="mb-no">No open offers.</p>{% endif %}
+  {% if doc.reservations %}
+  <table><tr><th>Reserved</th><th>Buyer</th><th>Due</th><th>Until block</th></tr>
+    {% for rid, r in doc.reservations.items() %}<tr><td class="mb-mono">{{ r.amount }} of {{ r.offer[:16] }}…</td>
+      <td class="mb-mono">{{ r.buyer }}</td><td>{{ units(r.due - r.paid, 8) }} KOT</td><td>{{ r.expires }}</td></tr>{% endfor %}
+  </table>
+  {% endif %}
 </div>
 
 <h2 class="mb-sec">TLDs and spaces</h2>
