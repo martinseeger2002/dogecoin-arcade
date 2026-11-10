@@ -55,8 +55,9 @@ enough). `moonbrix.data_scripts(payload)` cuts a payload into those outputs.
 | `var` | an unsigned LEB128 number below 2^64, in its shortest form |
 | `str` | a `var` length, then that many bytes of UTF-8 |
 | `id` | 32 bytes: a transaction id, in the order it is printed |
-| `ids` | a `var` count (1 to 10,000), then that many `id`s |
-| `opt` | `00`, or `01` followed by an `id` |
+| `ref` | a pointer: a `str` chain, then an `id`. The chain is the target chain's ticker (`kot`, `ltc`, `doge`, `btc` ...), or empty for this chain |
+| `refs` | a `var` count (1 to 10,000), then that many `ref`s |
+| `data` | `00` empty, `01` followed by a `str` text, or `02` followed by a `ref` |
 | `rest` | every byte left, at least one |
 
 Every field must be there and well formed, and nothing may follow the last field. Otherwise the command is rejected.
@@ -70,6 +71,19 @@ Every field must be there and well formed, and nothing may follow the last field
 | Text: a space's name, a property's or an inscription's name | valid UTF-8 with no control characters (U+0000 to U+001F, U+007F to U+009F), at most 32 bytes (an inscription's name 64) |
 | Path | 1 to 255 bytes, names joined by `/`. Each name is text of 1 to 64 bytes, without `/` and not `.` or `..` |
 | Type | 3 to 100 bytes of printable ASCII (space to `~`) with a `/` in it, such as `image/png` |
+| A TLD's message | text of at most 80 bytes, may be empty |
+| A chain in a `ref` | 2 to 8 of `a-z` and `0-9`, or empty |
+| Text in a `data` | text of at most 1,024 bytes. Line breaks and tabs are allowed. More goes into an inscription it points to |
+
+### Pointers to other chains
+
+A `ref` names its chain, so MoonBrix on another chain can point at Kotia's content (`kot:<txid>`), and Kotia's at
+another's.
+- **Here:** a pointer to this chain (empty, or `kot` on Kotia) must name an inscription this reader has, or the command
+  is rejected.
+- **Another chain:** the pointer is kept as written and marked unchecked, until a reader that reads both chains checks
+  it.
+- **Parts:** an assemble's parts must be on this chain for now. Only there are their size and SHA-256 checked.
 
 A name is never changed to make it fit: a name that breaks the rule rejects the command.
 
@@ -82,7 +96,7 @@ is none.
 
 | Op | Command | Fields | Rule |
 |---|---|---|---|
-| `01` | claim TLD | `str` tld, `u8` mode | The TLD is free. Mode `00` whitelist, `01` blacklist. The sender owns it. |
+| `01` | claim TLD | `str` tld, `u8` mode, `str` message | The TLD is free. Mode `00` whitelist, `01` blacklist. The sender owns it. The message is kept and never changes. |
 | `02` | give TLD | `str` tld → | The sender owns the TLD. The target owns it now. |
 | `03` | set list mode | `str` tld, `u8` mode | The sender owns the TLD. |
 | `04` | list add | `str` tld → | The sender owns the TLD. The target is not on the list yet. |
@@ -103,7 +117,7 @@ is none.
 |---|---|---|---|
 | `20` | inscribe | `str` type, `str` name, `rest` data | The file is the data. Its id is this transaction's id. |
 | `21` | part | `rest` data | Data for a later `22`. A part on its own is no file. |
-| `22` | assemble | `str` type, `str` name, `var` size, `id` sha256, `ids` parts | Every part is a `21` confirmed before this command: in an earlier block, or earlier in the same block. A part may be named more than once. The parts' data joined in order is `size` bytes long and its SHA-256 is `sha256`. The file's id is this transaction's id. |
+| `22` | assemble | `str` type, `str` name, `var` size, `id` sha256, `refs` parts | Every part is a `21` confirmed before this command: in an earlier block, or earlier in the same block. A part may be named more than once. The parts' data joined in order is `size` bytes long and its SHA-256 is `sha256`. The file's id is this transaction's id. |
 
 An inscription cannot be changed or taken over. The sender is written down as the one who inscribed it.
 
@@ -115,10 +129,11 @@ is the empty path, and it is always there.
 | Op | Command | Fields | Rule |
 |---|---|---|---|
 | `30` | make folder | path | The parent folder exists, and nothing is at the path yet. |
-| `31` | put file | path, `id` inscription | The parent folder exists, nothing is at the path yet, and the inscription exists. |
-| `32` | replace file | path, `id` inscription | A file is at the path, and the inscription exists. |
+| `31` | put file | path, `ref` inscription | The parent folder exists, nothing is at the path yet, and the pointer is good (see *Pointers*). |
+| `32` | replace file | path, `ref` inscription | A file is at the path, and the pointer is good. |
 | `33` | remove | path | A file, or an empty folder, is at the path. |
 | `34` | move | `str` from, `str` to | Something is at `from` and nothing at `to`. The folder `to` goes in exists, and it is not `from` or inside it. A rename is a move. |
+| `35` | join | `str` from, `str` into | Both are folders, and `into` is not `from` or inside it. Everything in `from` goes into `into`, and `from` is gone. If a name is in both, the command is rejected. |
 
 Nothing is overwritten except by `32`.
 
@@ -126,17 +141,27 @@ Nothing is overwritten except by `32`.
 
 | Op | Command | Fields | Rule |
 |---|---|---|---|
-| `40` | create property | `str` tld, `u32` space, `str` ticker, `str` name, `u8` kind, `u8` decimals, `var` supply | The sender owns the space, and the ticker is free (tickers are unique across MoonBrix). Kind `00` is **fixed**: the supply is 1 or more, and all of it goes to the sender. Kind `01` is **managed**: the supply is 0, and the owner mints. Kind `02` is an **NFT**: the supply and decimals are 0, and the owner mints items. Decimals are 0 to 8. |
+| `40` | create property | `str` tld, `u32` space, `str` ticker, `str` name, `u8` kind, `u8` decimals, `var` supply, `data` grant | The sender owns the space, and the ticker is free (tickers are unique across MoonBrix). Kind `00` is **fixed**: the supply is 1 or more, and all of it goes to the sender. Kind `01` is **managed**: the supply is 0, and the owner mints. Kind `02` is an **NFT**: the supply and decimals are 0, and the owner mints items. Decimals are 0 to 8. **Grant data** is set here once and never changes. |
 | `41` | give property | `str` ticker → | The sender owns the property. The target owns it now, and with it the right to mint. |
 | `42` | lock property | `str` ticker | The sender owns a managed property or an NFT. Nothing more is ever minted of it. |
 | `43` | mint | `str` ticker, `var` amount →? | Only for managed properties: the sender owns it, it is not locked, the amount is 1 or more, and the supply stays below 2^64. |
 | `44` | send | `str` ticker, `var` amount → | A fungible property: the sender holds at least the amount, which is 1 or more. |
 | `45` | burn | `str` ticker, `var` amount | A fungible property: the sender holds at least the amount, which is 1 or more. The supply goes down by it. |
-| `46` | mint NFT | `str` ticker, `opt` inscription →? | The sender owns the NFT property and it is not locked. The item gets the next number, starting at 1. An inscription named here must exist, and it becomes the item's picture or data for good. |
-| `47` | send NFT | `str` ticker, `var` item → | The sender holds the item. |
+| `46` | mint NFT | `str` ticker, `data` grant →? | The sender owns the NFT property and it is not locked. The item gets the next number, starting at 1. Its **grant data** is set here once and never changes. |
+| `47` | send NFT | `str` ticker, `var` item → | The sender holds the item. Its data goes with it. |
+| `48` | set issuer data | `str` ticker, `var` item, `data` | The sender owns the NFT property. The item's **issuer data** is now this (empty clears it). |
+| `49` | set holder data | `str` ticker, `var` item, `data` | The sender holds the item. The item's **holder data** is now this (empty clears it). It stays when the item moves on. |
 
 Amounts are in the smallest unit: with 8 decimals, `100000000` is one token. **A fixed property is never minted.**
 **An NFT is never burnt.**
+
+An NFT item has three data fields:
+
+| Field | Set by | When |
+|---|---|---|
+| Grant data | the property's owner | once, when the item is minted |
+| Issuer data | the property's owner | any time |
+| Holder data | whoever holds the item | any time. It stays when the item is sent or sold. |
 
 ### DEX
 

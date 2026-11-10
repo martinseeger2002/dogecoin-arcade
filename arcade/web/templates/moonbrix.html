@@ -19,10 +19,13 @@
 <p class="sub">tbuuol's protocol on Kotia: TLDs and their spaces, folders and files, inscriptions, tokens, NFTs and
 offers for KOT, all in OP_RETURN outputs.</p>
 
+{% macro ref(r, label) %}{% if r.checked %}<a href="/moonbrix/content/{{ r.txid }}" rel="noopener">{{ label or "open" }}</a>{% else %}{{ label ~ " → " if label }}<span class="mb-mono">{{ r.chain }}:{{ r.txid[:16] }}…</span> (not read here){% endif %}{% endmacro %}
+{% macro data(d) %}{% if d is none %}<span class="mb-no">–</span>{% elif d.text is defined %}{{ d.text }}{% else %}{{ ref(d.ref) }}{% endif %}{% endmacro %}
+
 {% macro tree(children) %}
 <ul>{% for name, node in children|dictsort %}
   {% if "dir" in node %}<li>{{ name }}/{{ tree(node.dir) }}</li>
-  {% else %}<li><a href="/moonbrix/content/{{ node.file }}" rel="noopener">{{ name }}</a></li>{% endif %}
+  {% else %}<li>{{ ref(node.file, name) }}</li>{% endif %}
 {% endfor %}</ul>
 {% endmacro %}
 
@@ -54,10 +57,12 @@ offers for KOT, all in OP_RETURN outputs.</p>
     <h3>{{ ticker }} · {{ p.name }}</h3>
     <p class="who">{{ p.kind }}{{ ", locked" if p.locked and p.kind != "fixed" }} · supply {{ units(p.supply, p.decimals) }}
       · in {{ p.space }} · owner <span class="mb-mono">{{ p.owner }}</span></p>
+    {% if p.grant %}<p class="who">Grant data: {{ data(p.grant) }}</p>{% endif %}
     <table>
-      {% if p.kind == "nft" %}<tr><th>Item</th><th>Holder</th></tr>
-        {% for i, thing in p["items"].items() %}<tr><td>#{{ i }}{% if thing.inscription %} · <a href="/moonbrix/content/{{ thing.inscription }}" rel="noopener">open</a>{% endif %}</td>
-          <td class="mb-mono">{{ thing.holder or "in an offer" }}</td></tr>{% endfor %}
+      {% if p.kind == "nft" %}<tr><th>Item</th><th>Holder</th><th>Grant</th><th>Issuer</th><th>Holder's</th></tr>
+        {% for i, thing in p["items"].items() %}<tr><td>#{{ i }}</td>
+          <td class="mb-mono">{{ thing.holder or "in an offer" }}</td><td>{{ data(thing.grant) }}</td>
+          <td>{{ data(thing.issuer) }}</td><td>{{ data(thing.holder_data) }}</td></tr>{% endfor %}
       {% else %}<tr><th>Holder</th><th>Amount</th></tr>
         {% for who, amount in p.holders.items() %}<tr><td class="mb-mono">{{ who }}</td><td>{{ units(amount, p.decimals) }}</td></tr>{% endfor %}
       {% endif %}
@@ -92,6 +97,7 @@ offers for KOT, all in OP_RETURN outputs.</p>
     <h3>.{{ tld }}</h3>
     <p class="who">Owner <span class="mb-mono">{{ t.owner }}</span> · claimed in block {{ t.height }} · {{ t.mode }}
       {% if t.list %}({{ t.list|length }} on the list){% endif %}</p>
+    {% if t.message %}<p>“{{ t.message }}”</p>{% endif %}
     {% for key, s in doc.spaces|dictsort if s.tld == tld %}
       <p><b>{{ key }}</b>{% if s.name %} · {{ s.name }}{% endif %} · <span class="mb-mono">{{ s.owner }}</span></p>
       {% if s.root %}{{ tree(s.root) }}{% endif %}
