@@ -467,6 +467,7 @@ class BlockWatcher:
                 # Accounts added since: their coins are in the set already; their history starts now (no rescan).
                 uset.watch(watched)
                 utxosetlib.follow(uset, rpc, params)
+                moonbrix_pass(self.state, chain, uset, rpc)
             progress.update(phase="ready", height=uset.height, tip=uset.height)
             self._utxoset_mirror(chain, uset)
         except Exception:                                      # noqa: BLE001 -- next pass tries again
@@ -1360,3 +1361,18 @@ class BlockWatcher:
             # nothing in it for us must not make every open page reload.
             self.state.bump_generation()
             log.info("new on %s at height %d: %s", name, tip, result)
+
+
+def moonbrix_pass(state, chain, uset, rpc) -> None:
+    """KOTIA ONLY (Params.moonbrix, arcade/moonbrix.py, 2026-11-10): MoonBrix's state brought to the unspent set's
+    tip, right after the set's own pass, reading only the blocks the set says carry data. Its own try: a MoonBrix
+    fault never stops the wallet's set."""
+    if not getattr(chain.params, "moonbrix", False) or not hasattr(state, "moonbrix"):
+        return
+    from .. import moonbrix as moonbrixlib
+    try:
+        mb = state.moonbrix(chain)
+        if mb is not None and moonbrixlib.follow(mb, uset, rpc, chain.params):
+            state.bump_generation()
+    except Exception:                                          # noqa: BLE001 -- next pass tries again
+        log.warning("%s: the MoonBrix pass failed", chain.params.label, exc_info=True)

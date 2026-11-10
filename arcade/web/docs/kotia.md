@@ -9,6 +9,9 @@ until its node has synced.
 inscriptions (`Params.class_b`, as on Litecoin): the index reads its coins only, and nothing is checked
 when you send.
 
+**MoonBrix (2026-11-10).** Kotia's own token protocol is tbuuol's **MoonBrix**, read on its own page, `/moonbrix`
+(see *MoonBrix* below).
+
 **Status:**
 - **In the wallet,** on the same key as PEP, DOGE and LTC: receive and send KOT. The operator's sends
   from the node key (Admin, when Kotia is borrowed or its Core has no wallet) write the transaction
@@ -99,3 +102,37 @@ in `<net>-utxoset.sqlite`:
   them, because it signs only ordinary address coins.
 - **Kotia only for now.** Another chain would need adapting first: its size, how its headers are named, its
   block-file magic, and what its transactions carry.
+
+## MoonBrix
+
+[MoonBrix](https://github.com/tbuuol/MoonBrix) is tbuuol's OP_RETURN protocol on Kotia. It has TLD and IP spaces with
+white- and blacklists, folders and files, inscriptions, and properties with their tokens. The arcade reads it on
+**`/moonbrix`**. Signed in, the page also shows what your Kotia address holds. The same data is at `/moonbrix.json`,
+an inscription's file at `/moonbrix/content/<txid>`, and your holdings at `/account/moonbrix`.
+
+- **The arcade reads it exactly the way MoonBrix's own program does.** It copies `Kurator.cpp` and comes to the same
+  five files: `lib`, `tld`, `fold`, `ins` and `prop`, in the same shapes. The tests replay every MoonBrix command Kotia
+  has carried and check the result against the files MoonBrix wrote.
+- **What counts as a command:** the first transaction of a block whose `vout[0]` is an OP_RETURN with at least 15 bytes.
+  The bytes are laid out like this:
+
+  | Bytes | Content |
+  |---|---|
+  | 0-8 | TLD |
+  | 9-12 | IP |
+  | 13 | action |
+  | 14 | action table (`00`) |
+  | 15 | sub-action |
+  | 16 on | data |
+
+  The sender is the address of the coin the first input spends. Nothing counts before the activation in block
+  1,236,675.
+- **Some of what MoonBrix does may not be what was meant.** Examples: only one command a block counts, and the
+  owner of a fixed-supply token can still mint it. The arcade does the same on purpose, so the two never disagree.
+  `moonbrix.QUIRKS` lists each one, and `/moonbrix.json` carries the list. A change to any of them is a change of the
+  protocol, made in MoonBrix and the arcade together, from a given block on.
+- **Where MoonBrix itself would stop,** for example at a meta inscription whose `next` is not `true` or `false`, the
+  arcade passes over the transaction and lists it under *Passed over*.
+- **Only with Kotia's Core run here.** The unspent set says which blocks carry data, and MoonBrix reads only those,
+  right after the set's own pass. An arcade that borrows Kotia shows that it is borrowed instead.
+- **Reading only, for now.** Sending MoonBrix commands from the arcade, and the DEX, come next.

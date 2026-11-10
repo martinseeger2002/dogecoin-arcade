@@ -88,6 +88,32 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-10 · SadFrog's side (Claude, for tbuuol) · branch `team/kotia-moonbrix` (on master 440b1e2f) · MoonBrix on Kotia, read the way its Kurator reads it (KOTIA ONLY)
+
+tbuuol: MoonBrix (github.com/tbuuol/MoonBrix, his OP_RETURN protocol) goes into the arcade, Kotia only, with all its functions. #81 cleared the way. This is stage 1, reading. Sending commands and the DEX come later.
+- **`arcade/moonbrix.py`:** a 1:1 copy of `Kurator.cpp` and of how MoonBrix's MasterDB, Indexer and Sync choose commands.
+  - Only the first command of each block counts.
+  - The command sits in `vout[0]` as `OP_RETURN <hex ≥ 15 bytes>`. The sender is the coin spent by vin[0].
+  - Nothing counts before the activation in block 1,236,675.
+  - The state is MoonBrix's own five files (`lib`, `tld`, `fold`, `ins`, `prop`), in `<net>-moonbrix.sqlite`, with an undo per changed block for reorgs.
+  - It reads only the blocks that `utxoset.data_blocks` names. That is 50 blocks since the activation.
+  - Its quirks are copied on purpose and listed in `moonbrix.QUIRKS`. Where MoonBrix's own sync would throw, the transaction is passed over and listed.
+- **Checked against the chain:** every one of the 47 commands Kotia carries (up to block 1,539,161) comes to exactly the five files MoonBrix wrote. `tests/fixtures/moonbrix_kotia.json` holds the commands and those files.
+- **Wiring:**
+  - `Params.moonbrix`, Kotia only.
+  - `state.moonbrix(chain)`.
+  - `watcher.moonbrix_pass` runs right after the unspent set's `follow`, in its own try.
+  - `web/moonbrix_web.py` serves `/moonbrix`, `/moonbrix.json`, `/moonbrix/content/<txid>` (the chunks put together the way MoonBrix's Genesis.js does, sandboxed with `CONTENT_HEADERS`) and `/account/moonbrix`.
+  - `door.py` makes these public, and the `tokens` module claims them. A borrowing arcade shows only that it is borrowed.
+  - Docs are in `docs/kotia.md` under *MoonBrix*.
+- **Seen on the way, for later:** the asset format in KOTIA-PLAN Phase 3 (`"parts"`, `"next": null`, raw chunks outside `vout[0]`) is not MoonBrix's. MoonBrix chunks carry the 05/00/00 header in `vout[0]`, and the meta (05/00/01) lists `"chunks"` with `"next": false`. A `null` there stops MoonBrix's sync. The arcade's assets must use MoonBrix's form before anything is inscribed.
+- **Tests:**
+  - `tests/test_moonbrix.py` (20).
+  - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is the new `chains.<net>.params.moonbrix`, true on `kot` only. test_conformance passes.
+  - With test_utxoset, test_kotia, test_classb_off, test_safe_headers, test_modules, test_script_policy, test_page_scripts and test_public: 236 passed, 18 skipped.
+  - `test_docs` fails 2 here, as before this branch (environment).
+- **Needs from the operator:** a review and merge. Nothing to set on a node. Only an arcade that runs Kotia's Core itself shows MoonBrix.
+
 ### 2026-11-09 · the operator's side (Claude) · merged PR #125 (hardening round 2) onto master
 
 All 57 commits cherry-picked onto master 2d2bfb90. The conflicts were the public mirror's filtered comment wording beside the branch's new `nonce` attributes (base.html, admin.html, exchange.html, ord_collection.html), the DigiAssets import in doginals.py and the bad-bodies change in the trade orders route; each took the branch's code with this repository's own wording. Checked by running the publish filter over the result and comparing it with the branch.

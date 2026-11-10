@@ -264,6 +264,10 @@ class Params:
     #: KOTIA ONLY for now -- a small chain (79,022 coins, 10 minutes to build). Another chain needs adapting first:
     #: its size, header naming, block-file magic and transaction parts (utxoset.py's docstring says what).
     full_utxo_set: bool = False
+    #: Read MoonBrix, tbuuol's OP_RETURN protocol (arcade/moonbrix.py, 2026-11-10): TLD/IP spaces, folders and files,
+    #: inscriptions, properties and their tokens, the way MoonBrix's own Kurator reads them. KOTIA ONLY: it needs the
+    #: whole unspent set (full_utxo_set) to know which blocks carry data.
+    moonbrix: bool = False
     #: Whether getblockchaininfo's verificationprogress can be trusted as "this node is done". True for a
     #: chain whose chainTxData matches its real traffic. False when that estimate is a stub: Wojakcoin's
     #: is 100 transactions a second, so the figure stays near 0.9 at a live tip and never reaches 0.9999.
@@ -662,6 +666,7 @@ KOTIA = dataclasses.replace(
     letter="T", family="KOT", net_word="kotia", real_coins=True, bech32_hrp="", mweb=False,
     tx_time=True, block_sig=True, scrypt_headers_below=7,
     full_utxo_set=True,         # Kotia only (utxoset.py)
+    moonbrix=True,              # Kotia only (moonbrix.py)
     class_b=False,              # no arcade tokens on Kotia (2026-11-05): storage (MoonBrix OP_RETURN) and coin only
 )
 

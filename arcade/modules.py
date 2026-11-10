@@ -192,7 +192,9 @@ _MODULES = (
     Module("tokens", "app", "Tokens", "The arcade's own tokens, and DRC-20 / PRC-20 balances.",
            routes=("/tokens", "/wallet/tokens", "/me/wallet/tokens", "/node/wallet/tokens", "/node/wallet/token",
                    "/account/token", "/account/token20", "/account/tokens", "/account/tokenpad", "/r/token",
-                   "/r/tokens"), group="creating"),
+                   "/r/tokens",
+                   # MoonBrix on Kotia (moonbrix_web.py, 2026-11-10): its TLDs, properties, tokens and inscriptions
+                   "/moonbrix", "/moonbrix.json", "/account/moonbrix"), group="creating"),
     Module("exchange", "app", "Exchange", "The market: listings, swaps, buy orders, escrow, cross-chain orders and "
            "this node's trades.",
            routes=("/exchange", "/listings", "/swap", "/doginals", "/settings/cut", "/settings/filling",
