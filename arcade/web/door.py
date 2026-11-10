@@ -291,6 +291,7 @@ PUBLIC_SHAPES = (
     re.compile(r"^/games/[0-9a-f]{64}$"),
     # A MoonBrix inscription's file (moonbrix_web.py, 2026-11-10): served sandboxed, like /content.
     re.compile(r"^/moonbrix/content/[0-9a-f]{64}$"),
+    re.compile(r"^/moonbrix/tx/[0-9a-f]{64}$"),             # how deep a Kotia transaction is (MoonBrix's big inscribe)
     re.compile(r"^/games/[0-9a-f]{64}/access$"),   # is a page a game (the wallet gate, base.html arcadeGameGate)
     # A game's own front door: its sign-up, or the game itself once signed in.
     re.compile(r"^/play/[A-Za-z0-9._-]{1,64}$"),

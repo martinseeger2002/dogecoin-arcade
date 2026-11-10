@@ -122,6 +122,13 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
     - A Playwright test holds the JS and Python encodings byte for byte to each other.
     - `inscribeMoonBrix` sends files over 80 kB as parts chained on change, then an assemble.
     - `/account/moonbrix/offer` is in `door.PUBLIC_POST`.
+  - **Live test on Kotia, 2026-11-10** (tbuuol: "get the TLD claude").
+    - Two senders: @liteworldsquest's Kotia key and a fresh address of the VPS node's wallet, 30 KOT each.
+    - They sent 59 commands, plus one more after the DEX window, all built with this branch's code. Of them, 48 were meant to apply and 11 to be rejected.
+    - `moonbrix.follow` over the real chain read every one of them as meant. The end states matched, and the inscriptions came back byte for byte with their SHA-256: 222 B, 70 kB in one transaction, and 172 kB in three parts and an assemble.
+    - An unpaid reservation ended at the first data block after its window.
+    - Fees came to 0.05 KOT for 258 kB.
+    - From it: `GET /moonbrix/tx/<txid>` (how deep a Kotia transaction is). `inscribeMoonBrix` waits for each 80 kB part's block, because Kotia's mempool takes 101 kB of unconfirmed ancestors at most.
   - Pointers (`ref`) name their chain's ticker (`kot`, `ltc` ...), so MoonBrix on another chain can point at Kotia's content later. A pointer to another chain is kept unchecked.
 - **`arcade/moonbrix.py`:**
   - `OPS` is one table that drives both `decode` and `encode` (`encode` is for the sending stage and the tests).

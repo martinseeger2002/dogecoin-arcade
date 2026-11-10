@@ -5486,9 +5486,23 @@ export async function sendMoonBrix(keys, ask, onWarn = null) {
   return working(() => signOffer(null, offer, keys));
 }
 
+/** Until Kotia has `txid` in a block (/moonbrix/tx): a part of up to 80 kB waits for the one before, because Kotia's
+ *  mempool takes no more than 101 kB of unconfirmed ancestors (found in the live test, 2026-11-10). */
+async function mbInBlock(txid, onStep) {
+  for (let tries = 0; tries < 720; tries++) {
+    try {
+      const got = await (await fetch(`/moonbrix/tx/${txid}`, {cache: "no-store"})).json();
+      if (got.confirmations >= 1) return;
+    } catch (e) {}
+    onStep("Waiting for the part before to reach a block\u2026");
+    await new Promise((r) => setTimeout(r, 10000));
+  }
+  throw new Error("the part before has not reached a block in two hours; send the rest later");
+}
+
 /** Inscribe a file: in one transaction when it fits, else as parts (each sent on the change of the one before, so
- *  they reach a block in order) and an assemble naming their size and SHA-256. `onStep(text)` says how far. The
- *  inscription's txid. */
+ *  they reach a block in order, and each after the one before is in a block) and an assemble naming their size and
+ *  SHA-256. `onStep(text)` says how far. The inscription's txid. */
 export async function inscribeMoonBrix(keys, file, onStep = () => {}, onWarn = null) {
   const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
   const one = ["inscribe", [file.type, file.name || "", coinsHex(bytes)]];
@@ -5501,10 +5515,12 @@ export async function inscribeMoonBrix(keys, file, onStep = () => {}, onWarn = n
   if (count > 20) throw new Error(`that file needs ${count} parts; 20 (about 1.5 MB) go in one run`);
   const parts = [];
   for (let i = 0; i < count; i++) {
+    if (parts.length) await mbInBlock(parts[parts.length - 1][1], onStep);
     onStep(`Part ${i + 1} of ${count}…`);
     const sent = await sendMoonBrix(keys, {op: "part", fields: [coinsHex(bytes.slice(i * size, (i + 1) * size))]});
     parts.push(["", sent.txid]);
   }
+  await mbInBlock(parts[parts.length - 1][1], onStep);
   onStep("Putting the parts together…");
   const sha = coinsHex(await coins.sha256Of(bytes));
   return (await sendMoonBrix(keys, {op: "assemble", fields: [file.type, file.name || "", bytes.length, sha, parts]})).txid;
