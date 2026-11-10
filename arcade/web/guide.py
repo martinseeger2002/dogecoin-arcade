@@ -82,6 +82,8 @@ ORDER = (
      "Running a Luckycoin node, its K and L addresses, fees, and Luckinals."),
     ("kotia.md", "Kotia on this arcade",
      "Running a Kotia node, its K addresses, timed transactions, fees, and data outputs."),
+    ("moonbrix.md", "MoonBrix 2",
+     "tbuuol's protocol on Kotia: TLDs, spaces, inscriptions, files, tokens, NFTs and a DEX, byte by byte."),
     ("wojakcoin.md", "Wojakcoin on this arcade",
      "Running a Wojakcoin node, its W addresses, fees, and Wojakinals."),
     ("digibyte.md", "DigiByte on this arcade",

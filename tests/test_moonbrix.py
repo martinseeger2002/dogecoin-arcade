@@ -1,9 +1,8 @@
-"""MoonBrix on Kotia, read the way tbuuol's own Kurator reads it (arcade/moonbrix.py, 2026-11-10).
+"""MoonBrix 2 on Kotia (arcade/moonbrix.py, arcade/web/docs/moonbrix.md, tbuuol 2026-11-10).
 
-The first test replays every MoonBrix command Kotia has carried and must come to exactly the five files MoonBrix
-itself wrote from them. The others hold the rules that decide what counts, and the quirks the arcade copies on
-purpose (moonbrix.QUIRKS)."""
-import json
+Each test holds a rule of the protocol page: which transaction is a command, who sends it and to whom, that a command
+is applied whole or rejected whole and logged, and what each command may do."""
+import hashlib
 import pathlib
 import sys
 
@@ -12,61 +11,17 @@ import pytest
 from arcade import moonbrix as M, rawchain
 from arcade.config import NETWORKS
 from arcade.script import b58check_encode
-from arcade.txbuild import p2pkh_script, varint
+from arcade.txbuild import p2pkh_script
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_utxoset import tx, txid                              # noqa: E402
 
 KOT = NETWORKS["kot"]
-FIXTURE = json.loads((pathlib.Path(__file__).parent / "fixtures" / "moonbrix_kotia.json").read_text())
 A, B, C = (b58check_encode(46, bytes([n]) * 20) for n in (1, 2, 3))
-TLD = b"\x00MoonBrix".hex()
-SPACE = TLD + "13374284"
-
-
-def replay(commands):
-    doc = M.empty()
-    for c in commands:
-        outputs = c["outputs"]
-        M.Kurator(doc).apply(c["height"], c["txid"], c["chunk"], lambda c=c: c["origin"],
-                             lambda i, o=outputs: o[i] if i < len(o) else None, len(outputs))
-    return doc
-
-
-def test_every_moonbrix_command_on_kotia_comes_to_the_files_moonbrix_wrote():
-    doc = replay(FIXTURE["commands"])
-    for name, want in FIXTURE["moonbrix"].items():
-        assert json.dumps(doc[name], sort_keys=True) == json.dumps(want, sort_keys=True), name
-
-
-def test_kotia_and_only_kotia_reads_moonbrix():
-    assert {n for n, p in NETWORKS.items() if p.moonbrix} == {"kot"}
-    assert KOT.full_utxo_set, "the unspent set says which blocks carry data"
-
-
-# --- transactions, as the chain carries them -------------------------------------------------------------------
-
-def op_return(hexs: str) -> bytes:
-    data = bytes.fromhex(hexs)
-    if len(data) < 0x4C:
-        push = bytes([len(data)])
-    elif len(data) <= 0xFF:
-        push = b"\x4c" + bytes([len(data)])
-    else:
-        push = b"\x4d" + len(data).to_bytes(2, "little")
-    return b"\x6a" + push + data
-
-
-def head(space: str, action: str, sub: str = "00", data: str = "") -> str:
-    return space + action + "00" + sub + data
-
-
-def command_tx(chunk: str, spends: str, pays=(), first=None):
-    """A transaction whose vout[0] carries `chunk` (or `first`, a script of its own), spending `spends`:0."""
-    outs = [(0, first if first is not None else op_return(chunk)), (100_000, p2pkh_script(A))]
-    outs += [(100_000, p2pkh_script(p)) for p in pays]
-    raw = tx([(spends, 0)], outs)
-    return rawchain.read_tx(raw, txid(raw), timed=True)
+FROM_A, FROM_B, FROM_C = "1" * 64, "2" * 64, "3" * 64
+H = M.ACTIVATION
+E = M.encode
+HOME = 0x13374284                                               # 19.55.66.132
 
 
 class Coins:
@@ -75,172 +30,297 @@ class Coins:
         return p2pkh_script((A, B, C)[int(txid[0]) - 1]), 100_000
 
 
-FROM_A, FROM_B, FROM_C = "1" * 64, "2" * 64, "3" * 64
+def sender_of(spends):
+    return (A, B, C)[int(spends[0]) - 1]
 
 
-def store(tmp_path):
-    return M.MoonBrix(tmp_path / "kot-moonbrix.sqlite", KOT)
+def command_tx(data: bytes, spends: str, pays=(), change_first=False, scripts=None):
+    """A transaction carrying `data` in its OP_RETURN outputs, change to the sender (one per data output, as Kotia
+    relays it) after them or before them, and then `pays` (an address, or (address, koinu))."""
+    datas = [(0, s) for s in (scripts if scripts is not None else M.data_scripts(data))]
+    change = [(100_000, p2pkh_script(sender_of(spends)))] * max(1, len(datas))
+    paid = [(p[1], p2pkh_script(p[0])) if isinstance(p, tuple) else (100_000, p2pkh_script(p)) for p in pays]
+    outs = (change + datas + paid) if change_first else (datas + change + paid)
+    raw = tx([(spends, 0)], outs)
+    return rawchain.read_tx(raw, txid(raw), timed=True)
 
 
-def activate(mb, height=10):
-    mb.connect(height, "aa" * 32, [command_tx(M.ACTIVATION + b"hi".hex(), FROM_A)], Coins())
+class Chain:
+    """A MoonBrix store fed one block at a time, with every transaction it was given there to fetch."""
+
+    def __init__(self, tmp_path):
+        self.mb = M.MoonBrix(tmp_path / "kot-moonbrix.sqlite", KOT)
+        self.height = H - 1
+        self.txs = {}
+
+    def block(self, *txs):
+        self.height += 1
+        for t in txs:
+            self.txs[t.txid] = t
+        self.mb.connect(self.height, f"{self.height:064x}", txs, Coins(), self.txs.__getitem__)
+        return [e for e in self.mb.document()["log"] if e["height"] == self.height]
+
+    def one(self, data, spends=FROM_A, **kw):
+        t = command_tx(data, spends, **kw)
+        return self.block(t)[-1], t
+
+    def ok(self, data, spends=FROM_A, **kw):
+        return self.one(data, spends, **kw)[0]["ok"]
+
+    @property
+    def doc(self):
+        return self.mb.document()
 
 
-def test_nothing_counts_before_the_activation_header(tmp_path):
-    mb = store(tmp_path)
-    mb.connect(5, "05" * 32, [command_tx(head(TLD + "00000000", M.CLAIM), FROM_A)], Coins())
-    assert mb.document() == M.empty()
-    activate(mb)
-    assert [e["Event"] for e in mb.document()["lib"]] == ["MoonBrix GENESIS"]
-    assert mb.document()["lib"][0]["Message"] == "hi"
+@pytest.fixture
+def chain(tmp_path):
+    return Chain(tmp_path)
 
 
-def test_a_tld_is_claimed_at_its_first_ip_and_its_owner_then_claims_ips(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [command_tx(head(TLD + "00000000", M.CLAIM), FROM_A)], Coins())
-    mb.connect(12, "12" * 32, [command_tx(head(SPACE, M.CLAIM), FROM_A)], Coins())
-    mb.connect(13, "13" * 32, [command_tx(head(SPACE, M.CLAIM), FROM_B)], Coins())     # taken already
-    doc = mb.document()
-    assert [(t["Ascii"], t["Owner"]) for t in doc["tld"]] == [("MoonBrix", A)]
-    assert doc["tld"][0]["IPs"] == [["13374284", A, ""]]
-    assert doc["fold"] == [{"Key": SPACE, "Owner": A, "root": {}}]
+def space(chain, tld="moon", at=HOME, by=FROM_A):
+    assert chain.ok(E("claim tld", tld, M.WHITELIST), by)
+    assert chain.ok(E("claim space", tld, at), by)
+    return M.space_key(tld, at)
 
 
-def test_only_the_first_command_of_a_block_counts(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    first = command_tx(head(TLD + "00000000", M.CLAIM), FROM_A)
-    second = command_tx(head(b"\x00Another".hex() + "00000000", M.CLAIM), FROM_B)
-    mb.connect(11, "11" * 32, [first, second], Coins())
-    assert [t["Ascii"] for t in mb.document()["tld"]] == ["MoonBrix"]
+# --- which transaction is a command ------------------------------------------------------------------------------
+
+def test_only_magic_and_version_2_make_a_command_and_reading_starts_at_the_activation(chain):
+    chain.mb.connect(H - 1, "00" * 32, [command_tx(E("claim tld", "early", 0), FROM_A)], Coins())
+    assert chain.doc["tlds"] == {}
+    other = E("claim tld", "later", 0).replace(b"MB\x02", b"MB\x03", 1)
+    prototype = bytes.fromhex("004d6f6f6e4272697800000000000000")         # the prototype's TLD claim
+    assert chain.block(command_tx(other, FROM_A), command_tx(prototype, FROM_A)) == []
+    assert chain.doc["tlds"] == {}
 
 
-def test_a_data_output_that_is_not_vout_0_or_not_pushes_only_is_no_command(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    claim = head(TLD + "00000000", M.CLAIM)
-    raw = tx([(FROM_A, 0)], [(100_000, p2pkh_script(A)), (0, op_return(claim))])
-    later = rawchain.read_tx(raw, txid(raw), timed=True)
-    not_pushes = command_tx(claim, FROM_A, first=op_return(claim) + b"\x76")      # OP_DUP after the push
-    mb.connect(11, "11" * 32, [later], Coins())
-    mb.connect(12, "12" * 32, [not_pushes], Coins())
-    assert mb.document()["tld"] == []
+def test_every_command_of_a_block_counts_in_block_order(chain):
+    log = chain.block(command_tx(E("claim tld", "moon", 0), FROM_A), command_tx(E("claim tld", "moon", 0), FROM_B),
+                      command_tx(E("claim tld", "sun", 0), FROM_B))
+    assert [e["ok"] for e in log] == [True, False, True]
+    assert log[1]["why"] == "moon is taken"
+    assert chain.doc["tlds"]["moon"]["owner"] == A and chain.doc["tlds"]["sun"]["owner"] == B
 
 
-def test_a_slot_taken_by_something_that_is_not_a_command_shuts_the_block(tmp_path):
-    """Two pushes ("OP_RETURN <a> <b>") still take the block's slot (MasterDB keeps it) but are read as nothing."""
-    mb = store(tmp_path)
-    activate(mb)
-    claim = head(TLD + "00000000", M.CLAIM)
-    two = command_tx("", FROM_A, first=op_return(claim)[:] + bytes([16]) + b"\x01" * 16)
-    mb.connect(11, "11" * 32, [two, command_tx(claim, FROM_B)], Coins())
-    assert mb.document()["tld"] == []
+def test_the_payload_runs_on_over_every_data_output(chain):
+    data = bytes(range(256)) * 200                                   # 51,200 bytes: four OP_RETURN outputs
+    scripts = M.data_scripts(E("inscribe", "application/octet-stream", "big", data))
+    assert len(scripts) == 4 and all(len(s) <= 15_000 for s in scripts)
+    entry, t = chain.one(b"", scripts=scripts)
+    assert entry["ok"], entry
+    assert M.content(chain.doc, chain.txs.__getitem__, t.txid) == ("application/octet-stream", data)
 
 
-def test_the_sender_is_whoever_the_first_input_spends_from(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [command_tx(head(TLD + "00000000", M.CLAIM), FROM_C)], Coins())
-    assert mb.document()["tld"][0]["Owner"] == C
+def test_a_data_output_that_is_not_data_pushes_only_rejects_the_command(chain):
+    good = M.data_scripts(E("claim tld", "moon", 0))[0]
+    entry, _t = chain.one(b"", scripts=[good, b"\x6a\x51"])                  # OP_RETURN OP_1
+    assert not entry["ok"] and "data pushes" in entry["why"] and chain.doc["tlds"] == {}
 
 
-def property_command(define="00", name="MoonBrix", ticker="MBX", supply=1000):
-    return head(SPACE, M.PROPERTY, "00", define + name.encode().hex().ljust(42, "0")
-                + ticker.encode().hex().ljust(10, "0") + f"{supply:016x}")
+def test_the_target_is_the_first_output_paying_someone_but_the_sender(chain):
+    chain.one(E("claim tld", "moon", 0))
+    entry, _t = chain.one(E("give tld", "moon"), pays=(B, C), change_first=True)
+    assert entry["ok"] and chain.doc["tlds"]["moon"]["owner"] == B
+    entry, _t = chain.one(E("give tld", "moon"), FROM_B)
+    assert not entry["ok"] and entry["why"] == "no output pays an address other than the sender's"
+    assert chain.doc["tlds"]["moon"]["owner"] == B
 
 
-def token_command(sub, ticker, amount):
-    return head(SPACE, M.TOKEN, sub, ticker.encode().hex().ljust(10, "0") + f"{amount:016x}")
+@pytest.mark.parametrize("data,why", [
+    (E("claim tld", "moon", 0) + b"\x00", "bytes after the last field"),
+    (E("claim tld", "MoonBrix", 0), "a TLD is"),
+    (E("claim tld", "moon", 2), "a list mode is"),
+    (b"MB\x02\x01\x84\x00", "shortest form"),
+    (b"MB\x02\x01\x09moon", "ends too early"),
+    (b"MB\x02\x99", "not MoonBrix 2's"),
+])
+def test_a_command_that_breaks_a_rule_is_rejected_whole_and_logged(chain, data, why):
+    entry, _t = chain.one(data)
+    assert not entry["ok"] and why in entry["why"]
+    assert chain.doc["tlds"] == {}
 
 
-def test_a_token_moves_to_vout_2_and_is_minted_by_its_owner(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [command_tx(property_command(), FROM_A)], Coins())
-    mb.connect(12, "12" * 32, [command_tx(token_command("00", "mbx", 300), FROM_A, pays=[B])], Coins())
-    mb.connect(13, "13" * 32, [command_tx(token_command("00", "MBX", 301), FROM_B, pays=[C])], Coins())   # too much
-    mb.connect(14, "14" * 32, [command_tx(token_command("01", "MBX", 5), FROM_A)], Coins())
-    mb.connect(15, "15" * 32, [command_tx(token_command("01", "MBX", 5), FROM_B)], Coins())               # not owner
-    prop = mb.document()["prop"][0]
-    assert prop["Holder"] == {A: 705, B: 300}
-    assert prop["Supply"] == 1005, "a fixed supply is still minted by its owner (a quirk MoonBrix has)"
-    assert M.balances(mb.document(), B) == [{"ticker": "MBX", "name": "MoonBrix", "amount": 300, "key": SPACE,
-                                             "divisible": False, "fungible": True}]
-    assert [e["Action"] for e in mb.document()["lib"][-2:]] == ["move", "move"], "a mint is logged as a move"
+# --- TLDs and spaces ---------------------------------------------------------------------------------------------
+
+def test_a_whitelist_lets_its_list_claim_and_a_blacklist_everybody_else(chain):
+    chain.one(E("claim tld", "moon", M.WHITELIST))
+    assert not chain.ok(E("claim space", "moon", 1), FROM_B)
+    chain.one(E("list add", "moon"), pays=(B,))
+    assert chain.ok(E("claim space", "moon", 1), FROM_B)
+    assert not chain.ok(E("claim space", "moon", 2), FROM_C)
+    chain.one(E("set list mode", "moon", M.BLACKLIST))
+    assert chain.ok(E("claim space", "moon", 2), FROM_C)
+    assert not chain.ok(E("claim space", "moon", 3), FROM_B), "B is on the list: barred now"
+    assert chain.ok(E("claim space", "moon", 3)), "the owner always may"
+    assert not chain.ok(E("claim space", "moon", 3), FROM_C), "a space is had once"
+    assert {k: s["owner"] for k, s in chain.doc["spaces"].items()} == {
+        "0.0.0.1.moon": B, "0.0.0.2.moon": C, "0.0.0.3.moon": A}
 
 
-def test_names_keep_letters_only_and_a_ticker_or_name_is_had_once(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [command_tx(property_command(name="Moon Brix 2", ticker="m1x"), FROM_A)], Coins())
-    mb.connect(12, "12" * 32, [command_tx(property_command(name="Other", ticker="MX"), FROM_B)], Coins())
-    assert [(p["Name"], p["Ticker"]) for p in mb.document()["prop"]] == [("MoonBrix", "MX")]
+def test_only_the_tlds_owner_changes_its_list(chain):
+    chain.one(E("claim tld", "moon", 0))
+    assert not chain.ok(E("list add", "moon"), FROM_B, pays=(C,))
+    assert chain.ok(E("list add", "moon"), pays=(C,))
+    assert not chain.ok(E("list add", "moon"), pays=(C,)), "on the list already"
+    assert chain.ok(E("list remove", "moon"), pays=(C,))
+    assert chain.doc["tlds"]["moon"]["list"] == []
 
 
-def test_a_meta_inscription_counts_with_next_false_and_its_chunks_make_the_file(tmp_path):
-    data = b"\xff\xd8 a picture"
-    chunk_tx = command_tx(head(SPACE, M.INSCRIBE, "00", data.hex()), FROM_A)
-    meta = {"name": "Pic", "type": "image/jpg", "next": False, "chunks": [chunk_tx.txid]}
-    meta_tx = command_tx(head(SPACE, M.INSCRIBE, "01", "00" + json.dumps(meta).encode().hex()), FROM_A)
-    nulled = command_tx(head(SPACE, M.INSCRIBE, "01", "00" + json.dumps({**meta, "next": None}).encode().hex()),
-                        FROM_A)
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [meta_tx], Coins())
-    mb.connect(12, "12" * 32, [nulled], Coins())
-    assert mb.document()["ins"] == [{"TXID": meta_tx.txid, "Name": "Pic", "Type": "image/jpg"}]
-    assert [s["txid"] for s in mb.skipped()] == [nulled.txid], "MoonBrix itself stops at next: null"
+# --- properties --------------------------------------------------------------------------------------------------
 
-    class Rpc:
-        raws = {t.txid: t.raw.hex() for t in (chunk_tx, meta_tx)}
-
-        def call(self, method, txid, _verbose):
-            return self.raws[txid]
-
-        def batch(self, calls):
-            return [self.raws[args[0]] for _m, args in calls]
-
-    assert M.inscription(Rpc(), KOT, meta_tx.txid) == ("image/jpg", data)
+def test_only_the_spaces_owner_creates_a_property_and_a_fixed_one_is_never_minted(chain):
+    key = space(chain)
+    assert not chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 1000), FROM_B)
+    assert chain.ok(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 1000))
+    prop = chain.doc["properties"]["MBX"]
+    assert prop["space"] == key and prop["holders"] == {A: 1000} and prop["locked"]
+    entry = chain.one(E("mint", "MBX", 5))[0]
+    assert not entry["ok"] and "only a managed property is minted" in entry["why"]
+    assert not chain.ok(E("create property", "moon", HOME, "MBX", "Again", M.MANAGED, 0, 0)), "a ticker is had once"
+    assert not chain.ok(E("create property", "moon", HOME, "ZZZ", "Zero", M.FIXED, 0, 0))
+    assert not chain.ok(E("create property", "moon", HOME, "NFTX", "Bad", M.NFT, 2, 0))
 
 
-def test_folders_and_files_go_where_kurator_puts_them(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [command_tx(head(TLD + "00000000", M.CLAIM), FROM_A)], Coins())
-    mb.connect(12, "12" * 32, [command_tx(head(SPACE, M.CLAIM), FROM_A)], Coins())
-    name = lambda word: word.encode().hex().ljust(30, "0")                       # noqa: E731
-    mb.connect(13, "13" * 32, [command_tx(head(SPACE, M.FOLDER, "00", name("www")), FROM_A)], Coins())
-    mb.connect(14, "14" * 32, [command_tx(head(SPACE, M.FILE, "00", name("Genesis") + name("www") + "ab" * 32),
-                                          FROM_A)], Coins())
-    mb.connect(15, "15" * 32, [command_tx(head(SPACE, M.FOLDER, "00", name("Pics") + name("www")), FROM_A)], Coins())
-    mb.connect(16, "16" * 32, [command_tx(head(SPACE, M.FILE, "00", name("M")), FROM_A)], Coins())
-    mb.connect(17, "17" * 32, [command_tx(head(SPACE, M.FILE, "01", name("M")), FROM_A)], Coins())
-    fold = mb.document()["fold"][0]
-    assert fold["root"] == {"www": {"Genesis": "ab" * 32}}
-    assert fold["www"] == {"Pics": {}}, "a folder made outside root goes beside it (Kurator::folder)"
+def test_a_managed_property_is_minted_by_its_owner_until_locked(chain):
+    space(chain)
+    chain.one(E("create property", "moon", HOME, "ORE", "Iron ore", M.MANAGED, 0, 0))
+    assert chain.ok(E("mint", "ORE", 50), pays=(B,))
+    assert chain.ok(E("mint", "ORE", 7)), "no target: to the sender"
+    assert not chain.ok(E("mint", "ORE", 1), FROM_B), "only the owner mints"
+    assert chain.ok(E("lock property", "ORE"))
+    assert not chain.ok(E("mint", "ORE", 1))
+    prop = chain.doc["properties"]["ORE"]
+    assert prop["supply"] == 57 and prop["holders"] == {B: 50, A: 7}
 
 
-def test_a_reorg_rolls_the_document_back(tmp_path):
-    mb = store(tmp_path)
-    activate(mb)
-    mb.connect(11, "11" * 32, [command_tx(head(TLD + "00000000", M.CLAIM), FROM_A)], Coins())
-    mb.roll_back(10, "aa" * 32)
-    assert mb.document()["tld"] == [] and mb.height == 10
-    mb.connect(11, "b1" * 32, [command_tx(head(TLD + "00000000", M.CLAIM), FROM_B)], Coins())
-    assert mb.document()["tld"][0]["Owner"] == B
+def test_tokens_are_sent_and_burnt_only_from_what_the_sender_holds(chain):
+    space(chain)
+    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
+    assert chain.ok(E("send", "MBX", 60), pays=(B,))
+    assert not chain.ok(E("send", "MBX", 41), pays=(B,))
+    assert not chain.ok(E("send", "MBX", 0), pays=(B,))
+    assert chain.ok(E("burn", "MBX", 10), FROM_B)
+    prop = chain.doc["properties"]["MBX"]
+    assert prop["holders"] == {A: 40, B: 50} and prop["supply"] == 90
+
+
+def test_an_nft_has_numbered_items_that_move_whole_and_are_never_burnt(chain):
+    space(chain)
+    picture = chain.one(E("inscribe", "image/png", "sword", b"\x89PNG..."))[1].txid
+    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0))
+    assert chain.ok(E("mint nft", "SWORD", picture), pays=(B,))
+    assert chain.ok(E("mint nft", "SWORD", None))
+    assert not chain.ok(E("mint nft", "SWORD", "ab" * 32)), "an inscription that exists"
+    assert not chain.ok(E("send nft", "SWORD", 1), pays=(C,)), "A does not hold #1"
+    assert chain.ok(E("send nft", "SWORD", 1), FROM_B, pays=(C,))
+    assert not chain.ok(E("burn", "SWORD", 1), FROM_C)
+    items = chain.doc["properties"]["SWORD"]["items"]
+    assert items == {"1": {"holder": C, "inscription": picture}, "2": {"holder": A, "inscription": None}}
+    assert M.balances(chain.doc, C) == [{"ticker": "SWORD", "name": "Swords", "kind": "nft", "items": [1]}]
+
+
+# --- inscriptions, folders and files -----------------------------------------------------------------------------
+
+def test_an_assembled_inscription_needs_parts_from_before_of_the_size_and_hash_it_names(chain):
+    one, two = b"first half,", b" second half"
+    p1 = chain.one(E("part", one))[1].txid
+    p2 = chain.one(E("part", two), FROM_B)[1].txid
+    whole = one + two + one
+    sha = hashlib.sha256(whole).hexdigest()
+    assert not chain.ok(E("assemble", "text/plain", "x", len(whole), "00" * 32, [p1, p2, p1]))
+    assert not chain.ok(E("assemble", "text/plain", "x", len(whole) + 1, sha, [p1, p2, p1]))
+    late = command_tx(E("part", b"late"), FROM_C)
+    early = command_tx(E("assemble", "text/plain", "x", 4, hashlib.sha256(b"late").hexdigest(), [late.txid]), FROM_A)
+    assert [e["ok"] for e in chain.block(early, late)] == [False, True], "a part comes before its assemble"
+    entry, t = chain.one(E("assemble", "text/plain", "story", len(whole), sha, [p1, p2, p1]))
+    assert entry["ok"]
+    assert M.content(chain.doc, chain.txs.__getitem__, t.txid) == ("text/plain", whole)
+
+
+def test_folders_and_files_are_never_overwritten_but_by_a_replace(chain):
+    key = space(chain)
+    a = chain.one(E("inscribe", "text/html", "a", b"<p>a"))[1].txid
+    b = chain.one(E("inscribe", "text/html", "b", b"<p>b"))[1].txid
+    assert chain.ok(E("make folder", "moon", HOME, "www"))
+    assert not chain.ok(E("make folder", "moon", HOME, "www"))
+    assert not chain.ok(E("put file", "moon", HOME, "nope/index.html", a)), "a parent folder that exists"
+    assert chain.ok(E("put file", "moon", HOME, "www/index.html", a))
+    assert not chain.ok(E("put file", "moon", HOME, "www/index.html", b))
+    assert chain.ok(E("replace file", "moon", HOME, "www/index.html", b))
+    assert not chain.ok(E("remove", "moon", HOME, "www")), "not empty"
+    assert not chain.ok(E("move", "moon", HOME, "www", "www/inner"))
+    assert chain.ok(E("move", "moon", HOME, "www", "site"))
+    assert not chain.ok(E("put file", "moon", HOME, "x", a), FROM_B), "only the space's owner"
+    assert not chain.ok(E("make folder", "moon", HOME, "a/../b"))
+    assert chain.doc["spaces"][key]["root"] == {"site": {"dir": {"index.html": {"file": b}}}}
+
+
+# --- the DEX -----------------------------------------------------------------------------------------------------
+
+def test_an_offer_holds_the_tokens_and_a_buy_pays_the_seller_in_the_same_transaction(chain):
+    space(chain)
+    chain.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 0, 100))
+    offer = chain.one(E("offer", "MBX", 30, 5_000_000))[1].txid
+    assert chain.doc["properties"]["MBX"]["holders"] == {A: 70}
+    assert not chain.ok(E("buy", offer), FROM_B, pays=((A, 4_999_999),)), "underpaid"
+    assert not chain.ok(E("buy", offer), FROM_A), "not one's own"
+    first = command_tx(E("buy", offer), FROM_B, pays=((A, 5_000_000),))
+    second = command_tx(E("buy", offer), FROM_C, pays=((A, 5_000_000),))
+    assert [e["ok"] for e in chain.block(first, second)] == [True, False]
+    assert chain.doc["properties"]["MBX"]["holders"] == {A: 70, B: 30} and chain.doc["offers"] == {}
+    assert not chain.ok(E("offer", "MBX", 71, 1)), "more than A holds"
+
+
+def test_an_nft_offer_and_its_cancel(chain):
+    space(chain)
+    chain.one(E("create property", "moon", HOME, "SWORD", "Swords", M.NFT, 0, 0))
+    chain.one(E("mint nft", "SWORD", None))
+    offer = chain.one(E("offer", "SWORD", 1, 100))[1].txid
+    assert not chain.ok(E("send nft", "SWORD", 1), pays=(B,)), "the offer holds it"
+    assert not chain.ok(E("cancel", offer), FROM_B)
+    assert chain.ok(E("cancel", offer))
+    assert chain.doc["properties"]["SWORD"]["items"]["1"]["holder"] == A
+
+
+# --- following the chain -----------------------------------------------------------------------------------------
+
+def test_a_reorg_rolls_the_document_back(chain):
+    chain.one(E("claim tld", "moon", 0))
+    chain.mb.roll_back(H - 1, "00" * 32)
+    assert chain.doc["tlds"] == {} and chain.mb.height == H - 1
+    chain.height = H - 1
+    chain.one(E("claim tld", "moon", 0), FROM_B)
+    assert chain.doc["tlds"]["moon"]["owner"] == B
+
+
+def test_a_prototype_document_is_read_again(tmp_path):
+    mb = M.MoonBrix(tmp_path / "kot-moonbrix.sqlite", KOT)
+    with mb.conn:
+        mb._set(H + 5, "ab" * 32, {"lib": [], "tld": [], "fold": [], "ins": [], "prop": []})
+    mb.close()
+    again = M.MoonBrix(tmp_path / "kot-moonbrix.sqlite", KOT)
+    assert again.height is None and again.document() == M.empty()
+
+
+def test_a_part_the_node_cannot_give_keeps_nothing_of_the_block(chain):
+    part = chain.one(E("part", b"data"))[1]
+    assemble = command_tx(E("assemble", "text/plain", "x", 4, hashlib.sha256(b"data").hexdigest(), [part.txid]),
+                          FROM_A)
+    before = chain.mb.height
+    with pytest.raises(M.MoonBrixError):
+        chain.mb.connect(before + 1, "ff" * 32, [assemble], Coins())
+    assert chain.mb.height == before
 
 
 def test_follow_reads_the_sets_data_blocks_and_rolls_back_a_reorg(tmp_path):
-    claim_a = command_tx(head(TLD + "00000000", M.CLAIM), FROM_A)
-    claim_b = command_tx(head(TLD + "00000000", M.CLAIM), FROM_B)
-    genesis = command_tx(M.ACTIVATION, FROM_A)
-    chain = {10: "aa" * 32, 11: "bb" * 32, 12: "cc" * 32}
-    raws = {t.txid: t.raw.hex() for t in (claim_a, claim_b, genesis)}
+    claim_a = command_tx(E("claim tld", "moon", 0), FROM_A)
+    claim_b = command_tx(E("claim tld", "moon", 0), FROM_B)
+    hashes = {H: "aa" * 32, H + 1: "bb" * 32, H + 2: "cc" * 32}
+    raws = {t.txid: t.raw.hex() for t in (claim_a, claim_b)}
 
     class Set:
-        height, best = 12, chain[12]
-        blocks = {10: [genesis.txid], 11: [claim_a.txid]}
+        height, best = H + 2, hashes[H + 2]
+        blocks = {H - 5: [claim_b.txid], H + 1: [claim_a.txid]}
 
         def data_blocks(self, since=0):
             return [(h, t) for h, t in sorted(self.blocks.items()) if h >= since]
@@ -248,33 +328,42 @@ def test_follow_reads_the_sets_data_blocks_and_rolls_back_a_reorg(tmp_path):
     class Rpc:
         def call(self, method, *args):
             if method == "getblockhash":
-                return chain[args[0]]
-            return p2pkh_like(args[0])
+                return hashes[args[0]]
+            if args[1] == 0:
+                return raws[args[0]]
+            who = (A, B, C)[int(args[0][0]) - 1]                  # getrawtransaction <spent> 1, for the sender
+            return {"vout": [{"scriptPubKey": {"hex": p2pkh_script(who).hex()}, "value": 0.001}]}
 
         def batch(self, calls):
             return [raws[args[0]] for _m, args in calls]
 
-    def p2pkh_like(spent):                                  # getrawtransaction <spent> 1, for the sender
-        who = (A, B, C)[int(spent[0]) - 1]
-        return {"vout": [{"scriptPubKey": {"hex": p2pkh_script(who).hex()}, "value": 0.001}]}
-
-    mb, uset = store(tmp_path), Set()
-    assert M.follow(mb, uset, Rpc(), KOT) == 2
-    assert mb.height == 12 and mb.document()["tld"][0]["Owner"] == A
-    chain[11], chain[12] = "b2" * 32, "c2" * 32               # block 11 left the chain; B's claim is there instead
-    uset.blocks, uset.best = {10: [genesis.txid], 11: [claim_b.txid]}, chain[12]
+    mb, uset = M.MoonBrix(tmp_path / "kot-moonbrix.sqlite", KOT), Set()
+    assert M.follow(mb, uset, Rpc(), KOT) == 1, "nothing before the activation is read"
+    assert mb.height == H + 2 and mb.document()["tlds"]["moon"]["owner"] == A
+    hashes[H + 1], hashes[H + 2] = "b2" * 32, "c2" * 32
+    uset.blocks, uset.best = {H + 1: [claim_b.txid]}, hashes[H + 2]
     assert M.follow(mb, uset, Rpc(), KOT) == 1
-    assert mb.document()["tld"][0]["Owner"] == B
+    assert mb.document()["tlds"]["moon"]["owner"] == B
 
 
-def test_every_quirk_is_named_for_tbuuol():
-    assert len(M.QUIRKS) >= 10 and all(q.endswith(")") or q.endswith(".") for q in M.QUIRKS)
+def test_kotia_and_only_kotia_reads_moonbrix():
+    assert {n for n, p in NETWORKS.items() if p.moonbrix} == {"kot"}
+    assert KOT.full_utxo_set, "the unspent set says which blocks carry data"
 
 
-@pytest.mark.parametrize("hexs,want", [("4d6f6f6e", "Moon"), ("4d20 31".replace(" ", ""), "M"), ("", "")])
-def test_text_keeps_letters_as_helper_does(hexs, want):
-    assert M.text(hexs) == want
-    assert M.text("4d2031", space=True) == "M "
+@pytest.mark.parametrize("amount,decimals,want", [(150_000_000, 8, "1.5"), (7, 0, "7"), (100, 2, "1")])
+def test_units_write_whole_tokens(amount, decimals, want):
+    assert M.units(amount, decimals) == want
+
+
+def test_encode_and_decode_agree_on_every_op():
+    samples = {"str": "moon", "u8": 1, "u32": 7, "var": 300, "id": "ab" * 32, "ids": ["cd" * 32], "opt": "ef" * 32,
+               "rest": b"data"}
+    for op, (name, kinds, _t) in M.OPS.items():
+        values = [samples[k] for k in kinds]
+        got_op, got = M.decode(E(name, *values))
+        want = [v.encode() if k == "str" else v for k, v in zip(kinds, values)]
+        assert (got_op, got) == (op, want), name
 
 
 # --- the pages ---------------------------------------------------------------------------------------------------
@@ -282,20 +371,24 @@ def test_text_keeps_letters_as_helper_does(hexs, want):
 from test_web import app_state, client                          # noqa: F401,E402
 
 
-def test_the_moonbrix_page_and_its_data_show_what_kurator_read(client, monkeypatch):
+def test_the_moonbrix_page_and_its_data_show_the_state(client, monkeypatch, tmp_path):
     from arcade.web.state import ChainContext
     app, state = client
     kot = ChainContext(network="kot", role="ledger", label="Kotia", conf=pathlib.Path("/nonexistent/kotia.conf"))
     monkeypatch.setattr(state, "more", {"kot": kot}, raising=False)
+    built = Chain(tmp_path)
+    space(built)
+    built.one(E("create property", "moon", HOME, "MBX", "MoonBrix", M.FIXED, 8, 150_000_000))
+    built.one(E("name space", "moon", HOME, "<b>home</b>"))
     mb = state.moonbrix(kot)
-    doc = replay(FIXTURE["commands"])
     with mb.conn:
-        mb._set(1_539_161, "ab" * 32, doc)
+        mb._set(built.mb.height, "ab" * 32, built.doc)
     page = app.get("/moonbrix")
     assert page.status_code == 200
-    assert "MBX · MoonBrix" in page.text and ".MoonBrix" in page.text and "TestInscription" in page.text
+    assert "MBX · MoonBrix" in page.text and ".moon" in page.text and "19.55.66.132.moon" in page.text
+    assert "<b>home</b>" not in page.text and "&lt;b&gt;home" in page.text
     data = app.get("/moonbrix.json").json()
-    assert data["height"] == 1_539_161 and [p["Ticker"] for p in data["prop"]] == ["MBX", "MONO"]
+    assert data["height"] == built.mb.height and list(data["properties"]) == ["MBX"]
     assert app.get("/moonbrix/content/" + "zz" * 32).status_code in (400, 404)
     assert app.get("/moonbrix/content/" + "ab" * 32).status_code == 404, "only an inscription MoonBrix has"
     kot.borrowed = True

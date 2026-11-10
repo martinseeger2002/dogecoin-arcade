@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}MoonBrix · {{ brand.name }}{% endblock %}
 {% block body %}
-{# MoonBrix on Kotia (arcade/moonbrix.py, tbuuol 2026-11-10): what this arcade's copy of MoonBrix's Kurator reads from
-   the chain. Every name here was written by whoever sent the command: plain text through autoescaping only. #}
+{# MoonBrix 2 on Kotia (arcade/moonbrix.py, docs/moonbrix.md, tbuuol 2026-11-10): what this arcade reads from the
+   chain. Every name here was written by whoever sent the command: plain text through autoescaping only. #}
 <style>
 .mb-grid{display:grid;gap:12px;max-width:900px}
 .mb-card{padding:14px 18px;overflow-wrap:anywhere}
@@ -10,29 +10,38 @@
 .mb-card .who{font-size:.85rem;color:var(--muted)}
 .mb-card table{width:100%;border-collapse:collapse;margin-top:8px;font-size:.88rem}
 .mb-card td,.mb-card th{padding:3px 6px;text-align:left;border-top:1px solid var(--line, rgba(127,127,127,.25))}
+.mb-card ul{margin:4px 0;padding-left:18px}
 .mb-mono{font-family:ui-monospace,monospace;font-size:.82rem}
 .mb-sec{margin:26px 0 10px;font-size:1.1rem}
+.mb-no{color:var(--muted)}
 </style>
 <h1>MoonBrix</h1>
-<p class="sub">tbuuol's OP_RETURN protocol on Kotia: TLD and IP spaces, folders and files, inscriptions, properties
-and their tokens. Read here the way MoonBrix's own Kurator reads it.</p>
+<p class="sub">tbuuol's protocol on Kotia: TLDs and their spaces, folders and files, inscriptions, tokens, NFTs and
+offers for KOT, all in OP_RETURN outputs.</p>
+
+{% macro tree(children) %}
+<ul>{% for name, node in children|dictsort %}
+  {% if "dir" in node %}<li>{{ name }}/{{ tree(node.dir) }}</li>
+  {% else %}<li><a href="/moonbrix/content/{{ node.file }}" rel="noopener">{{ name }}</a></li>{% endif %}
+{% endfor %}</ul>
+{% endmacro %}
 
 {% if why %}
 <div class="panel mb-card"><p>{{ why }}</p></div>
 {% else %}
 <p class="who">Read to Kotia block {{ height if height is not none else "…" }}.
-  <a href="/moonbrix.json">As data</a> · <a href="/docs/kotia#moonbrix">How it is read</a></p>
+  <a href="/moonbrix.json">As data</a> · <a href="/docs/moonbrix">The protocol</a></p>
 
 {% if account_signed %}
-<h2 class="mb-sec">Your tokens</h2>
+<h2 class="mb-sec">Yours</h2>
 <div class="panel mb-card">
   {% if not address %}<p>Your account has no Kotia address on this arcade yet.</p>
-  {% elif not held %}<p>{{ address }} holds no MoonBrix tokens.</p>
+  {% elif not held %}<p>{{ address }} holds no MoonBrix tokens or NFTs.</p>
   {% else %}
   <p class="who mb-mono">{{ address }}</p>
-  <table><tr><th>Ticker</th><th>Name</th><th>Amount</th><th>Space</th></tr>
-    {% for h in held %}<tr><td>{{ h.ticker }}</td><td>{{ h.name }}</td><td>{{ h.amount }}</td>
-      <td>{{ ip(h.key[18:26]) }}.{{ text(h.key[0:18]) }}</td></tr>{% endfor %}
+  <table><tr><th>Ticker</th><th>Name</th><th>Held</th></tr>
+    {% for h in held %}<tr><td>{{ h.ticker }}</td><td>{{ h.name }}</td>
+      <td>{% if h.kind == "nft" %}{% for i in h["items"] %}#{{ i }} {% endfor %}{% else %}{{ units(h.amount, h.decimals) }}{% endif %}</td></tr>{% endfor %}
   </table>
   {% endif %}
 </div>
@@ -40,67 +49,68 @@ and their tokens. Read here the way MoonBrix's own Kurator reads it.</p>
 
 <h2 class="mb-sec">Properties</h2>
 <div class="mb-grid">
-  {% for p in doc.prop %}
+  {% for ticker, p in doc.properties|dictsort %}
   <div class="panel mb-card">
-    <h3>{{ p.Ticker }} · {{ p.Name }}</h3>
-    <p class="who">Supply {{ p.Supply }} · {{ "fungible" if p.Fungible else "non-fungible" }}{{ ", divisible" if p.Divisible }}{{ ", fixed" if p.Fixed }}
-      · in {{ ip(p.Key[18:26]) }}.{{ text(p.Key[0:18]) }} · owner <span class="mb-mono">{{ p.Owner }}</span></p>
-    <table><tr><th>Holder</th><th>Amount</th></tr>
-      {% for who, amount in p.Holder.items() %}<tr><td class="mb-mono">{{ who }}</td><td>{{ amount }}</td></tr>{% endfor %}
+    <h3>{{ ticker }} · {{ p.name }}</h3>
+    <p class="who">{{ p.kind }}{{ ", locked" if p.locked and p.kind != "fixed" }} · supply {{ units(p.supply, p.decimals) }}
+      · in {{ p.space }} · owner <span class="mb-mono">{{ p.owner }}</span></p>
+    <table>
+      {% if p.kind == "nft" %}<tr><th>Item</th><th>Holder</th></tr>
+        {% for i, thing in p["items"].items() %}<tr><td>#{{ i }}{% if thing.inscription %} · <a href="/moonbrix/content/{{ thing.inscription }}" rel="noopener">open</a>{% endif %}</td>
+          <td class="mb-mono">{{ thing.holder or "in an offer" }}</td></tr>{% endfor %}
+      {% else %}<tr><th>Holder</th><th>Amount</th></tr>
+        {% for who, amount in p.holders.items() %}<tr><td class="mb-mono">{{ who }}</td><td>{{ units(amount, p.decimals) }}</td></tr>{% endfor %}
+      {% endif %}
     </table>
   </div>
-  {% else %}<p class="who">No properties yet.</p>{% endfor %}
+  {% else %}<p class="mb-no">No properties yet.</p>{% endfor %}
 </div>
 
-<h2 class="mb-sec">TLDs</h2>
+<h2 class="mb-sec">Offers</h2>
+<div class="panel mb-card">
+  {% if doc.offers %}
+  <table><tr><th>Offer</th><th>What</th><th>Price</th><th>Seller</th></tr>
+    {% for oid, o in doc.offers.items() %}{% set p = doc.properties[o.ticker] %}<tr><td class="mb-mono">{{ oid[:16] }}…</td>
+      <td>{% if p.kind == "nft" %}{{ o.ticker }} #{{ o.amount }}{% else %}{{ units(o.amount, p.decimals) }} {{ o.ticker }}{% endif %}</td>
+      <td>{{ units(o.price, 8) }} KOT</td><td class="mb-mono">{{ o.seller }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<p class="mb-no">No open offers.</p>{% endif %}
+</div>
+
+<h2 class="mb-sec">TLDs and spaces</h2>
 <div class="mb-grid">
-  {% for t in doc.tld %}
+  {% for tld, t in doc.tlds|dictsort %}
   <div class="panel mb-card">
-    <h3>.{{ t.Ascii }}</h3>
-    <p class="who">Owner <span class="mb-mono">{{ t.Owner }}</span> · claimed in block {{ t.Block }} · {{ t.Type }}
-      {% if t.List %}({{ t.List|length }} on the list){% endif %}</p>
-    <table><tr><th>IP</th><th>Name</th><th>Owner</th></tr>
-      {% for i in t.IPs %}<tr><td>{{ ip(i[0]) }}</td><td>{{ i[2] }}</td><td class="mb-mono">{{ i[1] }}</td></tr>{% endfor %}
-    </table>
+    <h3>.{{ tld }}</h3>
+    <p class="who">Owner <span class="mb-mono">{{ t.owner }}</span> · claimed in block {{ t.height }} · {{ t.mode }}
+      {% if t.list %}({{ t.list|length }} on the list){% endif %}</p>
+    {% for key, s in doc.spaces|dictsort if s.tld == tld %}
+      <p><b>{{ key }}</b>{% if s.name %} · {{ s.name }}{% endif %} · <span class="mb-mono">{{ s.owner }}</span></p>
+      {% if s.root %}{{ tree(s.root) }}{% endif %}
+    {% endfor %}
   </div>
-  {% else %}<p class="who">No TLD claimed yet.</p>{% endfor %}
+  {% else %}<p class="mb-no">No TLD claimed yet.</p>{% endfor %}
 </div>
 
 <h2 class="mb-sec">Inscriptions</h2>
 <div class="mb-grid">
-  {% for i in doc.ins %}
+  {% for txid, i in doc.inscriptions.items() %}
   <div class="panel mb-card">
-    <h3>{{ i.Name }}</h3>
-    <p class="who">{{ i.Type }} · <a href="/moonbrix/content/{{ i.TXID }}" rel="noopener">open</a>
-      · <span class="mb-mono">{{ i.TXID }}</span></p>
+    <h3>{{ i.name or "(no name)" }}</h3>
+    <p class="who">{{ i.type }} · {{ i.size }} bytes{% if i.parts %} in {{ i.parts|length }} parts{% endif %}
+      · <a href="/moonbrix/content/{{ txid }}" rel="noopener">open</a> · <span class="mb-mono">{{ txid }}</span></p>
   </div>
-  {% else %}<p class="who">No inscriptions yet.</p>{% endfor %}
+  {% else %}<p class="mb-no">No inscriptions yet.</p>{% endfor %}
 </div>
 
-<h2 class="mb-sec">Folders and files</h2>
-<div class="mb-grid">
-  {% for f in doc.fold %}
-  <div class="panel mb-card">
-    <h3>{{ ip(f.Key[18:26]) }}.{{ text(f.Key[0:18]) }}</h3>
-    <p class="who">Owner <span class="mb-mono">{{ f.Owner }}</span></p>
-    <pre class="mb-mono">{{ f.root|tojson(indent=2) }}</pre>
-  </div>
-  {% endfor %}
-</div>
-
-<h2 class="mb-sec">Events</h2>
+<h2 class="mb-sec">Log</h2>
 <div class="panel mb-card">
-  <table><tr><th>Block</th><th>Event</th><th>What</th></tr>
-    {% for e in events %}<tr><td>{{ e.Block }}</td><td>{{ e.Event }}</td><td>{{ e.Action }}</td></tr>{% endfor %}
+  {% if events %}
+  <table><tr><th>Block</th><th>Command</th><th>What</th></tr>
+    {% for e in events %}<tr><td>{{ e.height }}</td><td>{{ e.op or "?" }}</td>
+      <td>{% if e.ok %}{{ e.what }}{% else %}<span class="mb-no">rejected: {{ e.why }}</span>{% endif %}</td></tr>{% endfor %}
   </table>
+  {% else %}<p class="mb-no">No commands yet.</p>{% endif %}
 </div>
-
-{% if skipped %}
-<h2 class="mb-sec">Passed over</h2>
-<div class="panel mb-card">
-  <p class="who">MoonBrix's own sync stops at these; this arcade passes over them.</p>
-  <table>{% for s in skipped %}<tr><td>{{ s.height }}</td><td class="mb-mono">{{ s.txid }}</td><td>{{ s.why }}</td></tr>{% endfor %}</table>
-</div>
-{% endif %}
 {% endif %}
 {% endblock %}

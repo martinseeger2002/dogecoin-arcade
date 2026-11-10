@@ -264,8 +264,8 @@ class Params:
     #: KOTIA ONLY for now -- a small chain (79,022 coins, 10 minutes to build). Another chain needs adapting first:
     #: its size, header naming, block-file magic and transaction parts (utxoset.py's docstring says what).
     full_utxo_set: bool = False
-    #: Read MoonBrix, tbuuol's OP_RETURN protocol (arcade/moonbrix.py, 2026-11-10): TLD/IP spaces, folders and files,
-    #: inscriptions, properties and their tokens, the way MoonBrix's own Kurator reads them. KOTIA ONLY: it needs the
+    #: Read MoonBrix 2, tbuuol's OP_RETURN protocol (arcade/moonbrix.py, docs/moonbrix.md, 2026-11-10): TLDs and
+    #: spaces, inscriptions, folders and files, tokens, NFTs and a DEX. KOTIA ONLY: it needs the
     #: whole unspent set (full_utxo_set) to know which blocks carry data.
     moonbrix: bool = False
     #: Whether getblockchaininfo's verificationprogress can be trusted as "this node is done". True for a

@@ -1,10 +1,11 @@
-"""MoonBrix on the web (arcade/moonbrix.py, tbuuol 2026-11-10). KOTIA ONLY.
+"""MoonBrix 2 on the web (arcade/moonbrix.py, docs/moonbrix.md, tbuuol 2026-11-10). KOTIA ONLY.
 
-    GET /moonbrix                     the TLDs and their IPs, the properties and who holds them, the inscriptions and
-                                      the event log, as this arcade's copy of MoonBrix's Kurator reads them; a
-                                      signed-in account sees what its own Kotia address holds
-    GET /moonbrix.json                the same five files as MoonBrix keeps them, with the height they are read to
-    GET /moonbrix/content/<txid>      a meta inscription's file, its chunks put together, sandboxed like /content
+    GET /moonbrix                     the TLDs and their spaces, folders and files, the properties and who holds
+                                      them, the open offers, the inscriptions and the log; a signed-in account sees
+                                      what its own Kotia address holds
+    GET /moonbrix.json                the whole state, with the height it is read to
+    GET /moonbrix/content/<txid>      an inscription's file, from the chain and checked against its SHA-256,
+                                      sandboxed like /content
     GET /account/moonbrix             what the signed-in account's Kotia address holds (needs a session)
 
 Everything here is read from the public chain; nothing is anybody's secret. Only an arcade that runs Kotia's Core
@@ -43,17 +44,15 @@ def register(app, state, *, render, signed_in, account_address) -> None:
         doc = mb.document() if mb is not None else moonbrixlib.empty()
         account, address, held = holdings(request, chain, mb)
         return render(request, "moonbrix.html", why=why, height=mb.height if mb is not None else None, doc=doc,
-                      events=list(reversed(doc["lib"])), skipped=mb.skipped() if mb is not None else [],
-                      quirks=moonbrixlib.QUIRKS, account_signed=account is not None, address=address, held=held,
-                      ip=moonbrixlib.ip, text=moonbrixlib.text)
+                      events=list(reversed(doc["log"]))[:200], account_signed=account is not None, address=address,
+                      held=held, units=moonbrixlib.units)
 
     @app.get("/moonbrix.json")
     def moonbrix_json():
         chain, mb, why = kotia()
         if mb is None:
             return JSONResponse({"error": why}, status_code=404)
-        return {"chain": chain.network, "height": mb.height, "best": mb.best, **mb.document(),
-                "skipped": mb.skipped(), "quirks": list(moonbrixlib.QUIRKS)}
+        return {"chain": chain.network, "height": mb.height, "best": mb.best, **mb.document()}
 
     @app.get("/moonbrix/content/{txid}")
     def moonbrix_content(txid: str):
@@ -62,12 +61,13 @@ def register(app, state, *, render, signed_in, account_address) -> None:
             raise HTTPException(404, why)
         if len(txid) != 64 or any(ch not in "0123456789abcdef" for ch in txid):
             raise HTTPException(400, "a transaction id is 64 hex characters")
-        if not any(i["TXID"] == txid for i in mb.document()["ins"]):
+        doc = mb.document()
+        if txid not in doc["inscriptions"]:
             raise HTTPException(404, "no MoonBrix inscription has that id")
         try:
             with chain.rpc() as rpc:
-                kind, data = moonbrixlib.inscription(rpc, chain.params, txid)
-        except (KeyError, moonbrixlib.Unreadable) as exc:
+                kind, data = moonbrixlib.content(doc, moonbrixlib.fetch_tx_by_rpc(rpc, chain.params), txid)
+        except (KeyError, moonbrixlib.Rejected) as exc:
             raise HTTPException(404, str(exc)) from None
         return Response(data, media_type=kind, headers=CONTENT_HEADERS)
 
