@@ -141,6 +141,136 @@ offers for KOT, all in OP_RETURN outputs.</p>
 </div>
 {% endif %}
 
+{% if account_signed and can_send and address %}
+<h2 class="mb-sec" id="send">Send a command</h2>
+<div class="panel mb-card mb-send">
+  <p class="who">From your Kotia address <span class="mb-mono">{{ address }}</span>. This arcade builds the transaction;
+    your browser writes the command's bytes itself, checks them and signs. <a href="/docs/moonbrix">What each command does</a></p>
+  <form id="mb-form" autocomplete="off">
+    <label>Command <select id="mb-op">{% for name in form %}<option>{{ name }}</option>{% endfor %}</select></label>
+    <div id="mb-fields"></div>
+    <label id="mb-to-row" hidden>To <input id="mb-to" placeholder="@name or a Kotia address"></label>
+    <label id="mb-payall-row" hidden><input type="checkbox" id="mb-payall"> Pay the whole price now, not only the deposit</label>
+    <button class="btn" type="submit" id="mb-go">Send</button>
+    <p class="who" id="mb-said" aria-live="polite"></p>
+  </form>
+</div>
+<style>
+.mb-send label{display:block;margin:8px 0;font-size:.9rem}
+.mb-send input:not([type=checkbox]),.mb-send select,.mb-send textarea{display:block;width:100%;max-width:520px;margin-top:3px}
+</style>
+<script type="module" nonce="{{ csp_nonce }}">
+import * as wallet from "/wallet.js";
+const FORM = {{ form|tojson }}, TARGETS = {{ targets|tojson }};
+const KOT = {network: "kot", version: 46};
+const $ = (id) => document.getElementById(id);
+let state = null;
+async function doc() {
+  if (!state) state = await (await fetch("/moonbrix.json", {cache: "no-store"})).json();
+  return state;
+}
+function field(label, kind, i) {
+  const row = document.createElement("label");
+  row.textContent = label + " ";
+  let input;
+  if (kind === "mode") { input = document.createElement("select"); input.innerHTML = "<option value=0>whitelist</option><option value=1>blacklist</option>"; }
+  else if (kind === "kind") { input = document.createElement("select"); input.innerHTML = "<option value=0>fixed</option><option value=1>managed</option><option value=2>NFT</option>"; }
+  else if (kind === "file") { input = document.createElement("input"); input.type = "file"; }
+  else if (kind === "data") { input = document.createElement("textarea"); input.rows = 2; input.placeholder = "text, or a pointer: kot:<txid> (empty: none)"; }
+  else {
+    input = document.createElement("input");
+    input.placeholder = {tld: "lowercase, e.g. lwq", space: "a number (19.55.66.132) or its name (rpg)", tokens: "in whole tokens, e.g. 1.5",
+      kot: "KOT, e.g. 0.5", int: "a whole number", txid: "64 hex characters", ref: "<txid>, or chain:<txid>",
+      path: "lowercase, e.g. www/index.html", text: ""}[kind] || "";
+  }
+  input.dataset.kind = kind; input.dataset.i = i; input.className = "mb-in";
+  row.appendChild(input);
+  return row;
+}
+function draw() {
+  const op = $("mb-op").value;
+  $("mb-fields").replaceChildren(...FORM[op].map(([label, kind], i) => field(label, kind, i)));
+  $("mb-to-row").hidden = !TARGETS[op] || ["reserve", "pay"].includes(op);
+  $("mb-payall-row").hidden = op !== "reserve";
+  $("mb-said").textContent = TARGETS[op] === "maybe" ? "To: leave it empty and it goes to you." : "";
+}
+$("mb-op").addEventListener("change", draw);
+draw();
+function decimal(text, places) {
+  const m = String(text).trim().match(/^(\d*)(?:\.(\d*))?$/);
+  if (!m || (m[1] === "" && !m[2])) throw new Error(`${text || "nothing"} is not an amount`);
+  const frac = (m[2] || "");
+  if (frac.length > places) throw new Error(`${text} has more than ${places} decimals`);
+  return (BigInt(m[1] || "0") * 10n ** BigInt(places) + BigInt((frac + "0".repeat(places)).slice(0, places) || "0")).toString();
+}
+async function read(op) {
+  const d = await doc(), inputs = [...document.querySelectorAll(".mb-in")];
+  const val = (k) => inputs.find((x) => x.dataset.kind === k);
+  const out = [];
+  for (const input of inputs) {
+    const kind = input.dataset.kind, v = input.value.trim();
+    if (kind === "mode" || kind === "kind") out.push(Number(v));
+    else if (kind === "int") { if (!/^\d+$/.test(v)) throw new Error(`${v || "nothing"} is not a whole number`); out.push(v); }
+    else if (kind === "kot") out.push(decimal(v, 8));
+    else if (kind === "tokens") {
+      const ticker = (inputs[0].value || "").trim().toUpperCase();
+      const prop = d.properties && d.properties[ticker];
+      const places = op === "create property" ? Number((inputs.find((x) => x.dataset.i === "5") || {}).value || 0)
+        : op === "reserve" ? (() => { const o = d.offers[inputs[0].value.trim()]; return o && !o.item ? (d.properties[o.ticker] || {}).decimals || 0 : 0; })()
+        : prop && prop.kind !== "nft" ? prop.decimals : 0;
+      out.push(decimal(v || "0", places));
+    } else if (kind === "space") {
+      const tld = (val("tld") || {}).value.trim();
+      const dotted = v.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+      if (dotted) out.push(dotted.slice(1).reduce((n, x) => n * 256 + Number(x), 0));
+      else if (/^\d+$/.test(v)) out.push(Number(v));
+      else {
+        const hit = Object.values(d.spaces || {}).find((s) => s.tld === tld && s.name === v);
+        if (!hit) throw new Error(`no space ${v}.${tld}: give its number`);
+        out.push(hit.space);
+      }
+    } else if (kind === "ref" || kind === "data") {
+      if (kind === "data" && !v) { out.push(null); continue; }
+      const m = v.match(/^(?:([a-z0-9]{2,8}):)?([0-9a-f]{64})$/);
+      if (m) out.push([m[1] || "", m[2]]);
+      else if (kind === "ref") throw new Error("a pointer is <txid> or chain:<txid>");
+      else out.push(v);
+    } else if (kind === "file") {
+      const f = input.files[0];
+      if (!f) throw new Error("pick a file");
+      out.push({file: f});
+    } else out.push(v);
+  }
+  return out;
+}
+$("mb-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const op = $("mb-op").value, said = $("mb-said"), go = $("mb-go");
+  go.disabled = true;
+  try {
+    const fields = await read(op);
+    const keys = (await wallet.opened(KOT)) || await arcadeKeys(KOT, "Sending a MoonBrix command needs your key.");
+    if (!keys) throw new Error("your wallet is not open");
+    const warn = async (why) => arcadeAsk("MoonBrix would reject this", `${why}. Send it anyway? The fee is spent either way.`);
+    let txid;
+    if (op === "inscribe") {
+      const f = fields[2].file, bytes = new Uint8Array(await f.arrayBuffer());
+      txid = await wallet.inscribeMoonBrix(keys, {type: fields[0] || f.type || "application/octet-stream", name: fields[1], bytes},
+                                           (t) => { said.textContent = t; }, warn);
+    } else {
+      txid = (await wallet.sendMoonBrix(keys, {op, fields, to: $("mb-to").value.trim(), pay_all: $("mb-payall").checked}, warn)).txid;
+    }
+    said.textContent = `Sent: ${txid}. It counts once it is in a block.`;
+    state = null;
+  } catch (err) {
+    said.textContent = String(err.message || err);
+  } finally {
+    go.disabled = false;
+  }
+});
+</script>
+{% endif %}
+
 <h2 class="mb-sec">Properties</h2>
 <div class="mb-grid">
   {% for ticker, p in doc.properties|dictsort %}{{ prop_card(ticker, p) }}

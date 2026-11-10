@@ -106,6 +106,7 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
     - grant data, set once, on a property and on each NFT item;
     - an item's issuer data (set by the property's owner) and holder data (set by its holder, kept when it moves);
     - folder join.
+  - Tickers are letters only, 3 to 8 of A-Z (tbuuol), so `G0LD` can never pass for `GOLD`.
   - Names that address something are lowercase only, and a space's name is unique in its TLD: TLDs, space names, folders and files.
   - `/moonbrix?q=` is an explorer. It takes `lwq` (a TLD and its spaces), `rpg.lwq` or `19.55.66.132.lwq` (a space, its files and properties), `rpg.lwq/www/index.html`, a ticker, a txid, or an address (`moonbrix.find`).
   - `/moonbrix/explorer` is the explorer as a page of its own, built from tbuuol's Syfy-UI (github.com/tbuuol/Syfy-UI): Atlantis and OASIS themes, and an address dialled like a gate address. It is a plain file beside `browser.html`, `web/moonbrix_explorer.html`. It is served with `nonced()` like the globe, and listed in pyproject's package-data. It reads `/moonbrix.json` and `/moonbrix/find.json`.
@@ -114,6 +115,13 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
     - `fonts.css` declares them.
     - `PROVENANCE.md` gives each file's address and sha256, and `tests/test_fonts.py` pins the sums.
     - No page sends a visitor's address to Google.
+  - **Sending** (stage 2), from a signed-in account's Kotia address, on `/moonbrix`:
+    - `POST /account/moonbrix/offer` builds the transaction like `/account/send`: data OP_RETURNs first, then the target (dust), then enough self outputs for Kotia's half-data rule, then change. A reserve or pay goes to the seller with what is due.
+    - It dry-runs the command against the state read so far. If MoonBrix would reject it, that comes back as a `warning`, never a refusal (tbuuol: no checks on what is sent on KOT).
+    - `wallet.js` `mbEncode` and `mbDataScripts` write the bytes in the browser, and `checkFunding` signs only those exact OP_RETURNs plus the target.
+    - A Playwright test holds the JS and Python encodings byte for byte to each other.
+    - `inscribeMoonBrix` sends files over 80 kB as parts chained on change, then an assemble.
+    - `/account/moonbrix/offer` is in `door.PUBLIC_POST`.
   - Pointers (`ref`) name their chain's ticker (`kot`, `ltc` ...), so MoonBrix on another chain can point at Kotia's content later. A pointer to another chain is kept unchecked.
 - **`arcade/moonbrix.py`:**
   - `OPS` is one table that drives both `decode` and `encode` (`encode` is for the sending stage and the tests).
@@ -132,7 +140,7 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
 - **For later:** the arcade's own Kotia asset format (KOTIA-PLAN Phase 3) should become MoonBrix 2 inscriptions (`20`, or `21` + `22`).
 - **Open questions, written on the protocol page:** a price for claiming a TLD, and bids, which need KOT locked in a script.
 - **Tests:**
-  - `tests/test_moonbrix.py` (47).
+  - `tests/test_moonbrix.py` (54).
   - The prototype's fixture is gone.
   - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is `chains.<net>.params.moonbrix`.
 - **Needs from the operator:** a review and merge. Nothing to set on a node.

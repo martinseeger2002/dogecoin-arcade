@@ -251,6 +251,107 @@ def data_scripts(payload: bytes) -> list[bytes]:
     return scripts
 
 
+# --- sending one (the arcade's wallet, moonbrix_web.py) ----------------------------------------------------------
+
+#: The most payload one sent transaction carries: six OP_RETURN outputs hold 89,976 bytes, and what is left of
+#: Kotia's 100,000-byte limit is kept for the inputs and outputs. A bigger file goes as parts (21) and an assemble (22).
+MAX_SEND = 80_000
+
+#: What a person fills in for each command, in order: (label, input). The browser turns each input into the field
+#: OPS names: "tld" text, "mode" whitelist/blacklist, "space" a space's number or name, "tokens" an amount in the
+#: property's own units, "kot" KOT (into koinu), "kind" fixed/managed/nft, "file" a file's bytes, "data" text or a
+#: pointer (chain:txid), "ref" a pointer, "txid" a transaction id, "path" a path, "int" a number, "text" text.
+FORM: dict[str, list[tuple[str, str]]] = {
+    "claim tld": [("TLD", "tld"), ("List", "mode"), ("Message", "text")],
+    "give tld": [("TLD", "tld")],
+    "set list mode": [("TLD", "tld"), ("List", "mode")],
+    "list add": [("TLD", "tld")],
+    "list remove": [("TLD", "tld")],
+    "list clear": [("TLD", "tld")],
+    "claim space": [("TLD", "tld"), ("Space number", "space")],
+    "give space": [("TLD", "tld"), ("Space", "space")],
+    "name space": [("TLD", "tld"), ("Space", "space"), ("Name", "text")],
+    "inscribe": [("Type", "text"), ("Name", "text"), ("File", "file")],
+    "make folder": [("TLD", "tld"), ("Space", "space"), ("Path", "path")],
+    "put file": [("TLD", "tld"), ("Space", "space"), ("Path", "path"), ("Inscription", "ref")],
+    "replace file": [("TLD", "tld"), ("Space", "space"), ("Path", "path"), ("Inscription", "ref")],
+    "remove": [("TLD", "tld"), ("Space", "space"), ("Path", "path")],
+    "move": [("TLD", "tld"), ("Space", "space"), ("From", "path"), ("To", "path")],
+    "join": [("TLD", "tld"), ("Space", "space"), ("Folder", "path"), ("Into", "path")],
+    "create property": [("TLD", "tld"), ("Space", "space"), ("Ticker", "text"), ("Name", "text"), ("Kind", "kind"),
+                        ("Decimals", "int"), ("Supply", "tokens"), ("Grant data", "data")],
+    "give property": [("Ticker", "text")],
+    "lock property": [("Ticker", "text")],
+    "mint": [("Ticker", "text"), ("Amount", "tokens")],
+    "send": [("Ticker", "text"), ("Amount", "tokens")],
+    "burn": [("Ticker", "text"), ("Amount", "tokens")],
+    "mint nft": [("Ticker", "text"), ("Grant data", "data")],
+    "send nft": [("Ticker", "text"), ("Item", "int")],
+    "set issuer data": [("Ticker", "text"), ("Item", "int"), ("Issuer data", "data")],
+    "set holder data": [("Ticker", "text"), ("Item", "int"), ("Holder data", "data")],
+    "offer": [("Ticker", "text"), ("Amount or item", "tokens"), ("Price", "kot"), ("Blocks to pay", "int"),
+              ("Deposit", "kot")],
+    "cancel": [("Offer", "txid")],
+    "reserve": [("Offer", "txid"), ("Amount", "tokens")],
+    "pay": [("Reservation", "txid")],
+}
+#: The commands a person sends themselves; a part (21) and an assemble (22) are sent by the inscribe of a big file.
+SENDABLE = tuple(FORM)
+
+
+def fields_from_json(name: str, values: list) -> list:
+    """A command's fields as a browser sends them in JSON, as `encode` takes them. Raises ValueError."""
+    kinds = OPS[CODES[name]][1]
+    if not isinstance(values, list) or len(values) != len(kinds):
+        raise ValueError(f"{name} takes {len(kinds)} fields")
+    out = []
+    for kind, value in zip(kinds, values):
+        if kind in ("u8", "u32", "var"):
+            if isinstance(value, bool) or not isinstance(value, (int, str)) or not str(value).isdigit():
+                raise ValueError("a number field holds a whole number")
+            out.append(int(value))
+        elif kind == "str":
+            out.append(str(value))
+        elif kind == "id":
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError("a transaction id is 64 hex characters")
+            out.append(value)
+        elif kind == "ref":
+            out.append(_ref_json(value))
+        elif kind == "refs":
+            if not isinstance(value, list):
+                raise ValueError("parts are a list of pointers")
+            out.append([_ref_json(v) for v in value])
+        elif kind == "data":
+            if value is None or isinstance(value, str):
+                out.append(value)
+            else:
+                out.append(_ref_json(value))
+        elif kind == "rest":
+            if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-f]{2})+", value):
+                raise ValueError("data is hex")
+            out.append(bytes.fromhex(value))
+    return out
+
+
+def _ref_json(value) -> tuple[str, str]:
+    if not (isinstance(value, list) and len(value) == 2 and all(isinstance(v, str) for v in value)
+            and re.fullmatch(r"[0-9a-f]{64}", value[1])):
+        raise ValueError("a pointer is [chain, txid]")
+    return value[0], value[1]
+
+
+def send_outputs(payload: bytes, sender_script: bytes, dust: int, target_script: bytes | None = None,
+                 target_value: int = 0) -> list[tuple[int, bytes]]:
+    """The outputs of a sent command, before its change: the payload's OP_RETURNs first (where `payload` reads it),
+    then what pays the target, then -- when the payload takes more than one OP_RETURN -- enough outputs back to the
+    sender that at most half of the outputs are data, which Kotia's Core needs to relay it."""
+    datas = [(0, script) for script in data_scripts(payload)]
+    pays = [(max(target_value, dust), target_script)] if target_script is not None else []
+    extra = max(0, len(datas) - len(pays)) if len(datas) > 1 else 0
+    return datas + pays + [(dust, sender_script)] * extra
+
+
 # --- which transaction is a command ------------------------------------------------------------------------------
 
 def _pushes(script: bytes) -> tuple[bytes, bool] | None:
@@ -306,7 +407,7 @@ def address_of(script: bytes, params) -> str | None:
 TLD_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,14}[a-z0-9])?")
 SPACE_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?")
 FILE_NAME = re.compile(r"[a-z0-9._-]{1,64}")
-TICKER = re.compile(r"[A-Z][A-Z0-9]{2,7}")
+TICKER = re.compile(r"[A-Z]{3,8}")              # letters only: no G0LD beside GOLD (tbuuol)
 TYPE = re.compile(r"[ -~]{3,100}")
 
 
@@ -336,7 +437,7 @@ def tld_name(raw: bytes) -> str:
 def ticker_name(raw: bytes) -> str:
     got = raw.decode("ascii", "replace")
     if not TICKER.fullmatch(got):
-        raise Rejected("a ticker is 3 to 8 of A-Z and 0-9, starting with a letter")
+        raise Rejected("a ticker is 3 to 8 of A-Z, letters only")
     return got
 
 

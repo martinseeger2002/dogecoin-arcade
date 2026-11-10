@@ -195,7 +195,7 @@ _MODULES = (
                    "/r/tokens",
                    # MoonBrix on Kotia (moonbrix_web.py, 2026-11-10): its TLDs, properties, tokens and inscriptions
                    "/moonbrix", "/moonbrix.json", "/account/moonbrix",
-                   "/moonbrix/explorer", "/moonbrix/find.json"), group="creating"),
+                   "/moonbrix/explorer", "/moonbrix/find.json", "/account/moonbrix/offer"), group="creating"),
     Module("exchange", "app", "Exchange", "The market: listings, swaps, buy orders, escrow, cross-chain orders and "
            "this node's trades.",
            routes=("/exchange", "/listings", "/swap", "/doginals", "/settings/cut", "/settings/filling",

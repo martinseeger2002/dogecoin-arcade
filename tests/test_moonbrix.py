@@ -180,6 +180,8 @@ def test_only_the_spaces_owner_creates_a_property_and_a_fixed_one_is_never_minte
     assert not chain.ok(E("create property", "moon", HOME, "MBX", "Again", M.MANAGED, 0, 0, None)), "had once"
     assert not chain.ok(E("create property", "moon", HOME, "ZZZ", "Zero", M.FIXED, 0, 0, None))
     assert not chain.ok(E("create property", "moon", HOME, "NFTX", "Bad", M.NFT, 2, 0, None))
+    for bad in ("G0LD", "LWQ2", "mbx", "AB", "ABCDEFGHI"):
+        assert not chain.ok(E("create property", "moon", HOME, bad, "Bad ticker", M.MANAGED, 0, 0, None)), bad
 
 
 def test_a_managed_property_is_minted_by_its_owner_until_locked(chain):
@@ -576,3 +578,135 @@ def test_moonbrix_is_public_and_claimed_by_the_tokens_module():
     assert not door.public_path("/moonbrix/content/../admin")
     claimed = {r for m in modules._MODULES if m.id == "tokens" for r in m.routes}
     assert {"/moonbrix", "/moonbrix.json", "/account/moonbrix", "/moonbrix/explorer", "/moonbrix/find.json"} <= claimed
+
+
+# --- sending (moonbrix_web.py /account/moonbrix/offer, wallet.js sendMoonBrix) ----------------------------------
+
+def sender_app(tmp_path, doc=None):
+    """moonbrix_web on an app of its own: A signed in, Kotia read here, and a `build` that keeps what it was given."""
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from arcade.web import moonbrix_web
+    chain = SimpleNamespace(params=KOT, borrowed=False, network="kot", label="Kotia")
+    mb = M.MoonBrix(tmp_path / "kot-moonbrix.sqlite", KOT)
+    if doc is not None:
+        with mb.conn:
+            mb._set(H + 50, "ab" * 32, doc)
+    built = []
+
+    def build(account, chain, outputs, what):
+        built.append(outputs)
+        return {"offer": "o1", "chain": "kot", "raw": "00"}
+
+    def payee(raw, chain):
+        return {"@bee": B}.get(raw, raw), ""
+
+    app = FastAPI()
+    moonbrix_web.register(app, SimpleNamespace(addons=[chain], moonbrix=lambda c: mb), render=None,
+                          signed_in=lambda r: SimpleNamespace(pubkey="02" + "11" * 32), account_address=lambda p, c: A,
+                          build=build, payee=payee, pay_script=lambda to, c: p2pkh_script(to))
+    return TestClient(app), built
+
+
+def test_a_command_is_built_data_first_then_the_target_then_nothing_but_the_sender(tmp_path):
+    app, built = sender_app(tmp_path, M.empty())
+    got = app.post("/account/moonbrix/offer", json={"op": "give tld", "fields": ["moon"], "to": "@bee"}).json()
+    assert got["target"] == B and got["target_value"] == KOT.dust_limit
+    assert got["warning"] == "no TLD moon", "said, never refused (tbuuol: no checks on what is sent on Kotia)"
+    outputs = built[-1]
+    assert outputs[0] == (0, M.data_scripts(E("give tld", "moon"))[0])
+    assert outputs[1] == (KOT.dust_limit, p2pkh_script(B)) and len(outputs) == 2
+    no_target = app.post("/account/moonbrix/offer", json={"op": "give tld", "fields": ["moon"], "to": A})
+    assert no_target.status_code == 400 and "somebody else" in no_target.json()["detail"]
+
+
+def test_a_big_payload_takes_as_many_outputs_back_as_it_takes_op_returns(tmp_path):
+    app, built = sender_app(tmp_path, M.empty())
+    data = "ab" * 40_000
+    got = app.post("/account/moonbrix/offer", json={"op": "part", "fields": [data]})
+    assert got.status_code == 200, got.text
+    outputs = built[-1]
+    datas = [o for o in outputs if o[1][:1] == b"\x6a"]
+    assert len(datas) == 3 and len(outputs) >= 2 * len(datas), "Kotia relays at most half the outputs as data"
+    assert all(o == (KOT.dust_limit, p2pkh_script(A)) for o in outputs[3:])
+    too_big = app.post("/account/moonbrix/offer", json={"op": "part", "fields": ["ab" * 90_000]})
+    assert too_big.status_code == 400 and "parts" in too_big.json()["detail"]
+
+
+def test_a_reserve_and_a_pay_go_to_the_seller_with_what_is_due(tmp_path):
+    doc, offer_id, rid = offered_doc(tmp_path)
+    app, built = sender_app(tmp_path, doc)
+    got = app.post("/account/moonbrix/offer", json={"op": "reserve", "fields": [offer_id, 10]}).json()
+    assert got["target"] == A and got["target_value"] == 100_000 and got["warning"] == "the seller cannot reserve their own offer"
+    full = app.post("/account/moonbrix/offer", json={"op": "reserve", "fields": [offer_id, 10], "pay_all": True}).json()
+    assert full["target_value"] == 1_000_000
+    paid = app.post("/account/moonbrix/offer", json={"op": "pay", "fields": [rid]}).json()
+    assert paid["target"] == A and paid["target_value"] == 900_000
+
+
+def offered_doc(tmp_path):
+    (tmp_path / "d").mkdir()
+    chain = Chain(tmp_path / "d")
+    offer = offered(chain)
+    rid = chain.one(E("reserve", offer, 10), FROM_B, pays=((A, 100_000),))[1].txid
+    return chain.doc, offer, rid
+
+
+@pytest.mark.parametrize("body,why", [
+    ({"op": "nope", "fields": []}, "not a MoonBrix command"),
+    ({"op": "send", "fields": ["MBX"]}, "takes 2 fields"),
+    ({"op": "cancel", "fields": ["xyz"]}, "64 hex"),
+])
+def test_what_cannot_be_encoded_is_refused_before_anything_is_built(tmp_path, body, why):
+    app, built = sender_app(tmp_path, M.empty())
+    got = app.post("/account/moonbrix/offer", json=body)
+    assert got.status_code == 400 and why in got.json()["detail"] and not built
+
+
+def test_the_browser_writes_every_command_byte_for_byte_as_the_reader_reads_it(app_state):
+    """wallet.js mbEncode and mbDataScripts against moonbrix.encode and data_scripts, in a real browser: the browser
+    signs only what it wrote itself, so the two must never differ."""
+    sync_api = pytest.importorskip("playwright.sync_api", reason="needs playwright")
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    from arcade.web.app import create_app
+    samples = {"str": "moön", "u8": 1, "u32": 0x13374284, "var": "18446744073709551615", "id": "ab" * 32,
+               "ref": ["ltc", "cd" * 32], "refs": [["", "cd" * 32], ["kot", "ef" * 32]], "data": "hi\nthere",
+               "rest": "00ff" * 300}
+    cases = {name: [samples[k] for k in kinds] for name, kinds, _t in M.OPS.values()}
+    cases["mint nft"] = ["SWORD", ["", "ab" * 32]]
+    cases["set holder data"] = ["SWORD", 1, None]
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    app = create_app(app_state)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    try:
+        with sync_api.sync_playwright() as p:
+            browser = p.chromium.launch()
+            tab = browser.new_page()
+            tab.goto(f"http://127.0.0.1:{port}/moonbrix")
+            got = tab.evaluate("""async (cases) => { const w = await import('/wallet.js'); const out = {};
+                for (const [name, values] of Object.entries(cases)) {
+                  const payload = w.mbEncode(name, values);
+                  out[name] = w.mbDataScripts(payload).map((s) => [...s].map((b) => b.toString(16).padStart(2, '0')).join(''));
+                }
+                return out; }""", cases)
+            browser.close()
+    finally:
+        server.should_exit = True
+    for name, values in cases.items():
+        python = M.data_scripts(E(name, *M.fields_from_json(name, values)))
+        assert got[name] == [s.hex() for s in python], name
