@@ -99,7 +99,7 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
   - A command is applied whole or rejected whole, and every rejection is logged with its reason. Nothing stops the reader except a part the node cannot give, and then the block is read again later.
   - A fixed property is never minted. Only a space's owner creates a property in it. Folders and files are never overwritten except by a replace.
   - NFTs have numbered items.
-  - The DEX: an offer holds the tokens, and a buy must pay the seller in the same transaction.
+  - The DEX works as Omni's does. An offer holds the tokens, and has a price, a payment window and a deposit. A buyer reserves (`52`, paying the deposit's share), then pays (`53`) within the window. Reserved tokens are certain for the buyer. Unpaid reservations go back when the window closes, and the deposit stays with the seller.
   - Large inscriptions are parts, put together by an assemble that names the size and SHA-256.
 - **`arcade/moonbrix.py`:**
   - `OPS` is one table that drives both `decode` and `encode` (`encode` is for the sending stage and the tests).
@@ -118,7 +118,7 @@ tbuuol: MoonBrix (his OP_RETURN protocol) goes into the arcade, Kotia only, with
 - **For later:** the arcade's own Kotia asset format (KOTIA-PLAN Phase 3) should become MoonBrix 2 inscriptions (`20`, or `21` + `22`).
 - **Open questions, written on the protocol page:** a price for claiming a TLD, and bids, which need KOT locked in a script.
 - **Tests:**
-  - `tests/test_moonbrix.py` (32).
+  - `tests/test_moonbrix.py` (38).
   - The prototype's fixture is gone.
   - `tests/conformance/vectors.json` re-recorded with `make_vectors.py`. The only change is `chains.<net>.params.moonbrix`.
 - **Needs from the operator:** a review and merge. Nothing to set on a node.
