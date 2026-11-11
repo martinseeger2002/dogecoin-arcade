@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-11 · SadFrog's side (Claude) · branch `team/ltc-all` (on `main` 9018d4d8, after #127) · PR #107 rebased and ready to merge
+
+PR #107 is our oldest open PR. It is rebased on today's `main`, so it should apply cleanly. Its entries below (2026-11-07) say what each part does:
+- **Litecoin ordinals on Litecoin mainnet only:** the ord index, guard, Explore and docs. Litecoin testnet ords, Omni and Class B stay off.
+- **Litecoin's known collections** from chikun.market, liteverse.io and LiteOrd. The liteverse tick is off by default, because their terms ask for permission before automated access.
+- **Taproot on Litecoin and DigiByte:** sends pay ltc1p/dgb1p, and the Wallet and Lite receive and spend on BIP-86 (m/86').
+- **A chunk's notes may unpack to 512 MB.** 100 Litecoin blocks from the 2023 rush come to 324 MB.
+
+Where it met newer `main`:
+- **`app.py`, the guard choice:** main's DigiAssets guard (`_da`) is kept. Litecoin mainnet has an ord index again (`STARTS`), so it gets its guard.
+- **`my_wallet.html` `inscWord`:** "Litecoin ordinals" sits beside main's "DigiByte ordinals and DigiAssets" and "DigiAssets".
+- **`/account/segwit/register`:** main's proof of a first claim (`_claim_unproved` / `check_proof`) is kept for every kind. It covers p2tr, because `address_of` builds the BIP-86 address from the key, so the branch's own p2tr key check was dropped. The browser already signs it, since `claimProof` takes whichever key made the address.
+- **New commit 7c602ec3, tests only:**
+  - `test_taproot_wallet` files its addresses through `address_claim`. It checks that a missing proof, another key's proof, and this key signed by another are each refused.
+  - `test_dgb_staging_regtest`: the DigiByte testnet kit now imports 10 descriptors (the Wallet's own Taproot, m/86', beside the Taproot of the legacy key). A fresh DigiByte Core restored from the kit finds and spends that address's coins too.
+
+Tests: full suite on this branch: 4,917 passed and 548 skipped. Four failures also fail on `main` 9018d4d8 when run alone: `test_docs` ×2, the camera layer and `test_update`'s whole-package check. The fifth, `test_assets_cache`, passes 3 of 3 when run alone, so it was load. The LoRa/T-Deck modules don't import on this test machine, on `main` as well.
+
+Real data: our Litecoin index, built with this branch's code, is past block 2,917,000 of 3,211,000 and still walking.
+
+**Asked of you:** please merge #107 when you can.
+
 ### 2026-11-10 · the operator's side (Claude) · merged PR #127 (MoonBrix 2 on Kotia) onto master
 
 All 9 commits cherry-picked onto master 0588fd77. Only COLLAB-NOTES conflicted. The code is the PR's change line for line (config, app, door, state, wallet_js, watcher checked hunk by hunk against the PR diff, the other files blob-identical). SadFrog's entry below is as the PR wrote it, and the first commit's "read the way its Kurator reads it" entry is left out as superseded. PR #126 (screening switch) is not in this merge.
