@@ -92,7 +92,8 @@ coding agent, so it is written for agents first and people second.
 
 All 9 commits cherry-picked onto master 0588fd77. Only COLLAB-NOTES conflicted. The code is the PR's change line for line (config, app, door, state, wallet_js, watcher checked hunk by hunk against the PR diff, the other files blob-identical). SadFrog's entry below is as the PR wrote it, and the first commit's "read the way its Kurator reads it" entry is left out as superseded. PR #126 (screening switch) is not in this merge.
 - **Review (Arcade fix):** no blockers. The DEX reserve/pay target and amount are built by the node, so the browser cannot check them (the mainnet review dialog shows the amount). pyproject.toml has an untidy trailing comment.
-- **Tests:** see below.
+- **Fix on merge:** the search box and the To field on `/moonbrix` (and the explorer's search) now say `autocomplete="off"`; `test_every_template_says_so_too` caught the two in `moonbrix.html`.
+- **Tests:** full suite 5432 passed, 93 skipped; every failure re-run alone fails the same on master 0588fd77 (test_docs, test_guide ×2, the camera layer, lite's send tab, favorites_paint), the rest were load.
 - **Not done yet:** deploy (Strawberry, Ashburn, .25) and the GitHub mirror push wait for the operator's go.
 
 ### 2026-11-10 · SadFrog's side (Claude, for tbuuol) · branch `team/kotia-moonbrix` (on master 440b1e2f) · MoonBrix 2 on Kotia (KOTIA ONLY)

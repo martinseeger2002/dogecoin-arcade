@@ -58,7 +58,7 @@ offers for KOT, all in OP_RETURN outputs.</p>
   <a href="/moonbrix/explorer{{ '?q=' ~ q|urlencode if q }}">Explorer</a> · <a href="/moonbrix.json">As data</a> · <a href="/docs/moonbrix">The protocol</a></p>
 
 <form class="mb-find" method="get" action="/moonbrix">
-  <input name="q" value="{{ q }}" placeholder="lwq · rpg.lwq · rpg.lwq/www/index.html · MBX · txid · address" aria-label="Search MoonBrix">
+  <input name="q" autocomplete="off" value="{{ q }}" placeholder="lwq · rpg.lwq · rpg.lwq/www/index.html · MBX · txid · address" aria-label="Search MoonBrix">
   <button class="btn" type="submit">Search</button>
 </form>
 
@@ -149,7 +149,7 @@ offers for KOT, all in OP_RETURN outputs.</p>
   <form id="mb-form" autocomplete="off">
     <label>Command <select id="mb-op">{% for name in form %}<option>{{ name }}</option>{% endfor %}</select></label>
     <div id="mb-fields"></div>
-    <label id="mb-to-row" hidden>To <input id="mb-to" placeholder="@name or a Kotia address"></label>
+    <label id="mb-to-row" hidden>To <input id="mb-to" autocomplete="off" placeholder="@name or a Kotia address"></label>
     <label id="mb-payall-row" hidden><input type="checkbox" id="mb-payall"> Pay the whole price now, not only the deposit</label>
     <button class="btn" type="submit" id="mb-go">Send</button>
     <p class="who" id="mb-said" aria-live="polite"></p>
