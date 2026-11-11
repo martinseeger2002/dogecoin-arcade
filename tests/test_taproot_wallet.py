@@ -23,6 +23,8 @@ from test_litecoin_network import _with_ltc                      # noqa: E402
 from test_litecoin_testnet import _with_ltc_test                  # noqa: E402
 from test_extension import H, _bip32, _pubkey                    # noqa: E402
 from test_taproot import schnorr                                 # noqa: E402
+from address_claim import file_address, proof, register_segwit   # noqa: E402
+from signup_proof import coin_key                                # noqa: E402
 
 from arcade import blkscan, funding, rawchain, script, seed, taproot, txbuild, utxos, wallet_imports  # noqa: E402
 from arcade.config import NETWORKS                               # noqa: E402
@@ -395,7 +397,7 @@ def _ready_ltc(client, monkeypatch, net="ltc"):
     _seat(app)
     params = NETWORKS[net]
     legacy = b58check_encode(params.pubkeyhash_version, script.hash160(_pubkey(_secret(0x36))))
-    r = app.post("/account/address", json={"address": legacy, "chain": net})
+    r = file_address(app, legacy, coin_key(0x36), chain=net)
     assert r.status_code == 200, r.text
     return app, state, chain, legacy
 
@@ -412,13 +414,17 @@ def test_register_balance_and_send_from_a_taproot_address_on_real_litecoin(clien
     pub = _pubkey(_secret(0x86))
     mine = taproot.address(NETWORKS["ltc"], pub)
     assert mine.startswith("ltc1p")
-    # registered with the key it was made from, never by the address alone
+    # registered with the key it was made from and that key's proof, never by the address alone
     r = app.post("/account/segwit/register", json={"chain": "ltc", "address": mine})
-    assert r.status_code == 400 and "public key" in r.json()["detail"], r.text
-    r = app.post("/account/segwit/register", json={"chain": "ltc", "address": mine,
-                                                   "pubkey": _pubkey(_secret(0x87)).hex()})
-    assert r.status_code == 400, r.text
-    r = app.post("/account/segwit/register", json={"chain": "ltc", "address": mine, "pubkey": pub.hex()})
+    assert r.status_code == 400 and "proved" in r.json()["detail"], r.text
+    r = register_segwit(app, mine, coin_key(0x87), chain="ltc")
+    assert r.status_code == 400, "another key's proof is not this address's"
+    account = app.get("/account?only=addresses").json()["pubkey"]
+    r = app.post("/account/segwit/register", json={"chain": "ltc", "address": mine, "pubkey": pub.hex(),
+                                                   "address_signature": proof(account, "ltc", mine, 0x87,
+                                                                              field="pubkey")["address_signature"]})
+    assert r.status_code == 400, "this address's key, signed by another"
+    r = register_segwit(app, mine, coin_key(0x86), chain="ltc")
     assert r.status_code == 200 and r.json()["kind"] == "p2tr", r.text
     assert app.post("/account/segwit/register", json={"chain": "ltc", "address": mine}).status_code == 200, \
         "the same address again needs no key"
@@ -464,8 +470,7 @@ def test_litecoin_testnet_sends_from_and_to_taproot_too(client, monkeypatch):
     pub = _pubkey(_secret(0x4C))
     mine = taproot.address(NETWORKS["ltctest"], pub)
     assert mine.startswith("tltc1p")
-    assert app.post("/account/segwit/register",
-                    json={"chain": "ltctest", "address": mine, "pubkey": pub.hex()}).status_code == 200
+    assert register_segwit(app, mine, coin_key(0x4C), chain="ltctest").status_code == 200
     _fund(state, chain, mine)
     r = app.post("/account/send", json={"to": mine, "amount": "1", "chain": "ltctest", "from": mine})
     assert r.status_code == 200, r.text
@@ -482,11 +487,10 @@ def test_a_taproot_send_on_digibyte_keeps_inscribed_coins_out(client, monkeypatc
     monkeypatch.setattr(type(state), "chain_ready", lambda self, c: True)
     _seat(app)
     legacy = b58check_encode(30, script.hash160(_pubkey(_secret(0x36))))
-    assert app.post("/account/address", json={"address": legacy, "chain": "dgb"}).status_code == 200
+    assert file_address(app, legacy, coin_key(0x36), chain="dgb").status_code == 200
     pub = _pubkey(_secret(0xD6))
     mine = taproot.address(NETWORKS["dgb"], pub)
-    assert app.post("/account/segwit/register",
-                    json={"chain": "dgb", "address": mine, "pubkey": pub.hex()}).status_code == 200
+    assert register_segwit(app, mine, coin_key(0xD6), chain="dgb").status_code == 200
     _fund(state, chain, mine, "aa", 10 ** 9)
     _fund(state, chain, mine, "bb", 3 * 10 ** 8)
     guard = _Guard({("aa" * 32, 1)})

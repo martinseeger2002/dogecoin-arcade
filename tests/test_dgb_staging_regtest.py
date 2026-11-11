@@ -322,15 +322,17 @@ def test_a_send_from_each_kind_is_built_by_the_wallet_checked_by_the_browser_and
 
 def test_the_restore_kits_commands_open_the_twelve_words_in_a_fresh_digibyte_core(dgb, derived):
     """The DigiByte testnet kit's lines, run as printed (only `-testnet` said as this regtest Core's datadir and port),
-    into a Core that never saw the words: the same addresses are its own, it finds the coins on all four kinds, and it
+    into a Core that never saw the words: the same addresses are its own, it finds the coins on all five kinds, and it
     can spend them."""
     kit = next(k for k in derived["kits"] if k["network"] == "dgbtest")
     addresses = {"legacy": kit["address"], "p2sh-segwit": kit["segwit"][0]["address"],
-                 "bech32": _regtest(kit["segwit"][1]["address"]), "bech32m": _regtest(kit["taproot"]["address"])}
+                 "bech32": _regtest(kit["segwit"][1]["address"]), "bech32m": _regtest(kit["taproot"]["address"]),
+                 # the Wallet's own Taproot address type (BIP-86, m/86', 2026-11-07), a key of its own
+                 "bip86": _regtest(next(one for one in kit["segwit"] if one.get("kind") == "taproot")["address"])}
     assert addresses["legacy"] == derived["wallets"]["dgbtest"][0]["legacy"]["address"]
     funded = {kind: dgb.miner.call("sendtoaddress", address, 2 + n) for n, (kind, address) in enumerate(addresses.items())}
     dgb.mine(1)
-    assert len(funded) == 4
+    assert len(funded) == 5
 
     assert len(kit["commands"]) == 2 and kit["recipe"] == "descriptors"
     for line in kit["commands"]:
@@ -341,7 +343,7 @@ def test_the_restore_kits_commands_open_the_twelve_words_in_a_fresh_digibyte_cor
         assert out.returncode == 0, (line[:80], out.stderr)
         if "importdescriptors" in line:
             said = json.loads(out.stdout)
-            assert len(said) == 8 and all(one["success"] for one in said), said
+            assert len(said) == 10 and all(one["success"] for one in said), said
 
     restored = _wallet(dgb, "arcade")
     try:
