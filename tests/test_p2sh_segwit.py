@@ -151,7 +151,10 @@ TO_LEGACY = THEIRS
 TO_NESTED = script.p2sh_p2wpkh_address(P, bytes(range(80, 100)))
 TO_NATIVE = script.p2wpkh_address(P, bytes(range(100, 120)))
 TO_WSH = script.segwit_encode("tltc", 0, bytes(range(32)))
-TO_TAPROOT = script.segwit_encode("tltc", 1, bytes(range(32)))
+# A Taproot key a coin can be spent from, BIP-86's first (2026-11-07: Taproot is paid on L test too,
+# tests/test_taproot_wallet.py).
+KEY86 = bytes.fromhex("a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c")
+TO_TAPROOT = script.segwit_encode("tltc", 1, KEY86)
 
 
 def _three_funded(app, state, chain):
@@ -170,6 +173,7 @@ def _three_funded(app, state, chain):
      + bytes([0x87])),
     (TO_NATIVE, bytes([0x00, 0x14]) + bytes(range(100, 120))),
     (TO_WSH, bytes([0x00, 0x20]) + bytes(range(32))),
+    (TO_TAPROOT, bytes([0x51, 0x20]) + KEY86),
 ])
 def test_every_kind_pays_every_kind(client, monkeypatch, to, want):
     app, state, chain = _ready(client, monkeypatch)
@@ -186,11 +190,13 @@ def test_every_kind_pays_every_kind(client, monkeypatch, to, want):
         assert outs[0] == (100_000_000, want), (source, to)
 
 
-def test_a_taproot_recipient_is_refused_for_what_it_is(client, monkeypatch):
+def test_a_witness_version_nobody_here_has_read_is_refused_for_what_it_is(client, monkeypatch):
+    """Taproot (v1) is paid since 2026-11-07; v2 and up stay refused, said as what they are."""
     app, state, chain = _ready(client, monkeypatch)
     _three_funded(app, state, chain)
-    r = app.post("/account/send", json={"to": TO_TAPROOT, "amount": "1", "chain": "ltctest"})
-    assert r.status_code == 400 and "Taproot" in r.json()["detail"], r.text
+    r = app.post("/account/send", json={"to": script.segwit_encode("tltc", 2, bytes(range(32))), "amount": "1",
+                                        "chain": "ltctest"})
+    assert r.status_code == 400 and "witness version 2" in r.json()["detail"], r.text
 
 
 def test_a_broken_bech32_is_an_address_with_a_bad_checksum_not_a_long_tag(client, monkeypatch):

@@ -97,7 +97,13 @@ export function drawKit({chain, kit}) {
       + " shows an empty wallet: your coins are not lost, the wallet is looking somewhere else)."
       : " (coin type 1, as on every test chain)."]));
   for (const one of kit.segwit)
-    box.append(para(["SegWit, if you used it here: ", code(one.address), " on ", code(one.path), "."]));
+    box.append(para([one.kind === "taproot" ? "Taproot, if you used it here: " : "SegWit, if you used it here: ",
+      code(one.address), " on ", code(one.path), "."]));
+  // The Wallet's Taproot address type (2026-11-07) where this chain's Core cannot import a tr() key (Litecoin 0.21).
+  if (kit.segwit.some((one) => one.kind === "taproot" && !one.imported))
+    box.append(para([`${chain.core} cannot import a Taproot key (it has no tr() descriptors), so the lines below do `
+      + "not bring back coins at your Taproot address. They are not lost: the twelve words and the path above open "
+      + "them in any wallet that does BIP-86 Taproot for this coin, or on any arcade."], "rk-note rk-warn"));
   if (kit.keys.length)
     for (const one of kit.keys) box.append(para([`Private key (WIF), ${KIND_SAID[one.kind]}: `, code(one.wif)]));
   else box.append(para(["Private key (WIF): ", code(kit.wif)]));
@@ -105,7 +111,9 @@ export function drawKit({chain, kit}) {
   if (kit.recipe === "descriptors") {
     box.append(para([`In ${chain.core} or newer: make an empty descriptor wallet named "arcade", then import the `
       + `descriptors (the legacy P2PKH address the arcade uses${kit.segwit.length ? ", both SegWit kinds" : ""}`
-      + `${kit.taproot ? ", and Taproot" : ""}; the first 21 receiving and change addresses of each). The rescan starts `
+      + `${kit.segwit.some((one) => one.kind === "taproot" && one.imported) ? ", Taproot (m/86')" : ""}`
+      + `${kit.taproot ? ", and the Taproot of the legacy key" : ""}; the first 21 receiving and change addresses of `
+      + "each). The rescan starts "
       + (kit.since ? `on ${day(kit.since)} (timestamp ${kit.since}); coins sent here before that are not looked for `
           + "unless you pick the whole chain, or put 0 for the timestamp."
         : "at the chain's first block (timestamp 0), which finds everything and takes a while.")]));

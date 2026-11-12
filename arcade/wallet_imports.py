@@ -26,9 +26,10 @@ CAP_PER_CHAIN = 20
 #: of the chain, and an account that imported and removed wallets in a loop would keep every other import waiting.
 PER_DAY = 40
 
-#: The address kinds an import may be: P2PKH on every chain; on a test chain with SegWit (L test), its two SegWit
-#: kinds too, the same ones the account's own words offer there (wallet.js ADDRESS_KINDS).
-KINDS = ("p2pkh", "p2wpkh", "p2sh-p2wpkh")
+#: The address kinds an import may be: P2PKH on every chain; on a chain with SegWit, its two SegWit kinds too, and
+#: Taproot (BIP-86, m/86') where the chain has it here (taproot.CHAINS, 2026-11-07), the same ones the account's own
+#: words offer there (wallet.js ADDRESS_KINDS).
+KINDS = ("p2pkh", "p2wpkh", "p2sh-p2wpkh", "p2tr")
 
 #: The longest name a wallet may have.
 NAME_MAX = 40
@@ -92,6 +93,14 @@ def address_of(params, pubkey: bytes, kind: str) -> str:
                             "import it as Native SegWit")
     if len(pubkey) != 33:
         raise ImportRefused("a SegWit address is made from a compressed public key")
+    if kind == "p2tr":
+        from . import taproot
+        if not taproot.on(params):
+            raise ImportRefused(f"{getattr(params, 'label', 'this chain')} has no Taproot wallets here")
+        try:
+            return taproot.address(params, pubkey)
+        except ValueError:
+            raise ImportRefused("that is not a public key") from None
     if kind == "p2wpkh":
         return p2wpkh_address(params, hash160(pubkey))
     return p2sh_p2wpkh_address(params, hash160(pubkey))

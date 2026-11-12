@@ -213,28 +213,37 @@ export async function everyChain(wallet, chains) {
  * able to have the most updated or choice of address type as opposed to only legacy") real DigiByte, Litecoin and
  * Bellscoin offer it too. Legacy stays first, so it stays the default and the address tokens, names and every
  * other page use. Bellscoin has no nested kind: its P2SH byte is Dogecoin's "D" (config.unpayable_versions).
- * The order is the menu's (2026-10-20, tbuuol): Legacy, P2SH, Native SegWit.
+ * The order is the menu's (2026-10-20, tbuuol): Legacy, P2SH, Native SegWit, then Taproot.
+ * Taproot since 2026-11-07 (SadFrog: "all litecoin addresses send and receive like we just did with digibyte", Taproot
+ * on both Litecoin and DigiByte): BIP-86, the key at m/86', its address the key-path output (coins.taprootAddress,
+ * bech32m: ltc1p.../dgb1p...), spent with Schnorr by the tweaked key (coins.signSchnorr). Where the chain has it here
+ * (arcade/taproot.py CHAINS); Litecoin's ords live on such addresses, so a send from one keeps inscribed coins out by
+ * outpoint (funding.guard_for with the chain).
  */
 export const ADDRESS_KINDS = {
   ltctest: [
     {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
     {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58, path: "m/49'/1'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "tltc", path: "m/84'/1'/0'/0/0"},
+    {id: "p2tr", label: "Taproot", hrp: "tltc", path: "m/86'/1'/0'/0/0"},
   ],
   ltc: [
     {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
     {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 50, path: "m/49'/3'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "ltc", path: "m/84'/3'/0'/0/0"},
+    {id: "p2tr", label: "Taproot", hrp: "ltc", path: "m/86'/3'/0'/0/0"},
   ],
   dgb: [
     {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
     {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 63, path: "m/49'/3'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "dgb", path: "m/84'/3'/0'/0/0"},
+    {id: "p2tr", label: "Taproot", hrp: "dgb", path: "m/86'/3'/0'/0/0"},
   ],
   dgbtest: [
     {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
     {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 140, path: "m/49'/1'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "dgbt", path: "m/84'/1'/0'/0/0"},
+    {id: "p2tr", label: "Taproot", hrp: "dgbt", path: "m/86'/1'/0'/0/0"},
   ],
   bel: [
     {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
@@ -273,6 +282,12 @@ async function kindKey(wallet, network, kind) {
     const seg = await coins.p2shSegwitKey(wallet.seed, network, 0);
     return {...base, key: seg.key, pubkey: seg.pubkey, nested: true,
             address: await coins.p2shSegwitAddress(seg.pubkey, kind.scripthash)};
+  }
+  if (kind.id === "p2tr") {
+    // BIP-86 (2026-11-07): the key at m/86', its address the key-path output. `key` is the untweaked secret: the
+    // offer's Taproot inputs say "key" and signOffer signs them by its tweak (coins.signSchnorr keyPath).
+    const tap = await coins.taprootKey(wallet.seed, network, 0);
+    return {...base, key: tap.key, pubkey: tap.pubkey, address: await coins.taprootAddress(tap.pubkey, kind.hrp)};
   }
   throw new Error(`this wallet cannot make a ${kind.label} address yet`);
 }
@@ -5188,11 +5203,13 @@ export async function syncImported(account, said, onStart) {
   return n;
 }
 
-const KIND_IDS = {legacy: "p2pkh", "p2sh-p2wpkh": "p2sh-p2wpkh", p2wpkh: "p2wpkh"};
+const KIND_IDS = {legacy: "p2pkh", "p2sh-p2wpkh": "p2sh-p2wpkh", p2wpkh: "p2wpkh", p2tr: "p2tr"};
 
 /** The keys an imported wallet signs with on its chain, shaped as a wallet's `on[network]` (so `checked` and
  *  `confirm` take it as they take the account's own): from its private key, or its phrase at the arcade's own
- *  path (m/44'/<coin>'/0'/0/0), or the SegWit kind's path (m/49', m/84'), as the main wallet derives them. */
+ *  path (m/44'/<coin>'/0'/0/0), or the SegWit or Taproot kind's path (m/49', m/84', m/86'), as the main wallet derives
+ *  them. A Taproot one (2026-11-07) proves its address with the same ECDSA proof by its untweaked key: the node checks
+ *  the address is that key's BIP-86 output (wallet_imports.address_of). */
 export async function importedKeys(entry, chain) {
   const network = chain.network;
   const kind = addressKinds(network).find((k) => k.id === (entry.addr_kind || "legacy")) || {id: "legacy"};
@@ -5207,11 +5224,13 @@ export async function importedKeys(entry, chain) {
     const seed = await signer.toSeed(signer.normalise(entry.secret));
     const made = kind.id === "p2wpkh" ? await coins.nativeSegwitKey(seed, network, 0)
       : kind.id === "p2sh-p2wpkh" ? await coins.p2shSegwitKey(seed, network, 0)
+      : kind.id === "p2tr" ? await coins.taprootKey(seed, network, 0)
       : await coins.coinKey(seed, network, 0);
     ({key, pubkey} = made);
   }
   const address = kind.id === "p2wpkh" ? await coins.p2wpkhAddress(pubkey, kind.hrp)
     : kind.id === "p2sh-p2wpkh" ? await coins.p2shSegwitAddress(pubkey, kind.scripthash)
+    : kind.id === "p2tr" ? await coins.taprootAddress(pubkey, kind.hrp)
     : await coins.address(pubkey, chain.version);
   const keys = {network, version: chain.version, key, pubkey, address, ...(kind.id === "p2sh-p2wpkh" ? {nested: true} : {})};
   return {on: {[network]: keys}, kind: KIND_IDS[kind.id] || "p2pkh"};

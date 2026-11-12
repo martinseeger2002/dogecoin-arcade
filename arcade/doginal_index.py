@@ -43,16 +43,17 @@ log = logging.getLogger("arcade.doginal_index")
 #: 2026-10-20: "The block height on each chain varies so find the official block height for each chains ord index"),
 #: read from each indexer's src/chain.rs `first_inscription_height`. Every arcade cuts the same chunks from these,
 #: so they never change without a new protocol word.
-#: Litecoin and Litecoin testnet are not here (2026-11-05, tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei
-#: Token Protokolle benutzen"): no ord index, no guard, no ords or -20 tokens on them, as on Kotia. ord-litecoin's
-#: readings (ord_rules.ORD_LITE, TAPROOT below) stay as code, read by no index.
-STARTS = {"doge": 4_600_000, "main": 186_920, "test": 34_237,
+#: Litecoin mainnet is back (2026-11-07, SadFrog: "please setup litecoin ordinals"; it had been taken out on 2026-11-05
+#: at tbuuol's "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token Protokolle benutzen"). Litecoin testnet stays
+#: out: its index was never built anywhere, so every small coin there waited "unknown" (the 2026-11-05 finding).
+STARTS = {"doge": 4_600_000, "main": 186_920, "test": 34_237, "ltc": 2_424_429,
           "bel": 22_470, "lky": 88_554, "wjk": 1, "dgb": 0,
           "flop": 18_295}
 SOURCES = {
     "doge": "ord-dogecoin (apezord) and wonky-ord: 4,600,000",
     "main": "ord-pepecoin (mvdnbrk) and pepecoin-ord-indexer: 186,920",
     "test": "pepecoin-ord-indexer (reallyshadydev): 34,237",
+    "ltc": "ord-litecoin (ynohtna92): 2,424,429",
     "bel": "Nintondo/ord (Bellscoin): 22,470",
     "lky": "the first Doginals-style envelope on Luckycoin (no official indexer height found; scanned): 88,554",
     "wjk": "ord-wojakcoin chain.rs first_inscription_height: 1 (Doginals envelopes; SegWit is not active)",

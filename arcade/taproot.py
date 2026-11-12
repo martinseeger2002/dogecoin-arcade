@@ -84,6 +84,55 @@ def p2tr(output_key: bytes) -> bytes:
     return b"\x51\x20" + output_key
 
 
+# --- a Taproot address of the user's own (2026-11-07) ---------------------------------------------------------------
+# SadFrog (2026-11-07): "all litecoin addresses send and receive like we just did with digibyte", and Taproot on BOTH
+# Litecoin and DigiByte. The Wallet's "Taproot" address type is BIP-86: the key at m/86'/<coin>'/0'/0/0, its output key
+# TapTweak(P) with no script tree, spent by the key path alone (one 64-byte Schnorr signature, SIGHASH_DEFAULT). Its
+# address is bech32m, witness version 1 (ltc1p.../tltc1p.../dgb1p.../dgbt1p...).
+
+#: The chains whose Taproot this arcade pays and receives on: active on each (Litecoin with MWEB at 2,161,152; DigiByte
+#: at 21,168,000, buried from the first blocks on testnet26; Litecoin testnet4). Bellscoin has Taproot too, but nobody
+#: asked for it yet, so a bel1p... address stays refused. Every other chain has no witness version 1.
+CHAINS = frozenset({"ltc", "ltctest", "dgb", "dgbtest"})
+
+
+def on(params) -> bool:
+    """Whether this chain pays and receives Taproot here."""
+    return getattr(params, "name", None) in CHAINS and bool(getattr(params, "bech32_hrp", ""))
+
+
+def payable(program: bytes) -> bool:
+    """Whether a witness v1 program is a Taproot output key a coin can be paid to: 32 bytes, an x on secp256k1. A Core
+    pays any 32 bytes, but coins paid to an x off the curve can never be spent by anyone."""
+    if len(program) != 32:
+        return False
+    try:
+        lift_x(program)
+    except ValueError:
+        return False
+    return True
+
+
+def key_path_script(pubkey: bytes) -> bytes:
+    """The BIP-86 output of a compressed public key: OP_1 <TapTweak(P), no script tree>."""
+    return p2tr(tweak(xonly(pubkey))[0])
+
+
+def address(params, pubkey: bytes) -> str:
+    """The BIP-86 Taproot address of a compressed public key on this chain (ltc1p..., dgb1p...)."""
+    from .script import segwit_encode
+    if not on(params):
+        raise ValueError(f"{getattr(params, 'label', 'this chain')} has no Taproot addresses here")
+    return segwit_encode(params.bech32_hrp, 1, tweak(xonly(pubkey))[0])
+
+
+#: What one key-path input weighs once signed: 41 bytes outside the witness (outpoint, an empty scriptSig, sequence),
+#: times four, and its witness (one item of 64 bytes: 1 + 1 + 64). 57.5 virtual bytes.
+INPUT_WEIGHT = 41 * 4 + 66
+#: A payment back to a Taproot address: 8 bytes of value, 1 of length, the 34 of OP_1 <32 bytes>.
+CHANGE_BYTES = 43
+
+
 def _compact(n: int) -> bytes:
     return bytes([n]) if n < 0xFD else b"\xfd" + n.to_bytes(2, "little")
 

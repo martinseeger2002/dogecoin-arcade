@@ -424,7 +424,8 @@ def test_admin_switches_the_import_on_and_off(client):
     app, state = client
     assert state.setting(kc.SETTING) is None, "off by default"
     got = app.get("/admin/api/known-collections", headers=LOCAL).json()
-    assert got["on"] is False and [c["net"] for c in got["chains"]] == ["doge", "main", "bel"]
+    assert got["on"] is False and [c["net"] for c in got["chains"]] == ["doge", "main", "bel", "ltc", "ltc", "ltc"], \
+        "Nintondo's three chains, then one line per Litecoin site (2026-11-07)"
     assert app.post("/admin/api/known-collections", headers=LOCAL, json={"import": True}).status_code == 403
     assert app.post("/admin/api/known-collections", headers={**LOCAL, **WRITE}, json={"import": "yes"}).status_code == 400
     import os

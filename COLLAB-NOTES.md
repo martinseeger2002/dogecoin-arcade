@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-11 · SadFrog's side (Claude) · branch `team/ltc-all` (on `main` 9018d4d8, after #127) · PR #107 rebased and ready to merge
+
+PR #107 is our oldest open PR. It is rebased on today's `main`, so it should apply cleanly. Its entries below (2026-11-07) say what each part does:
+- **Litecoin ordinals on Litecoin mainnet only:** the ord index, guard, Explore and docs. Litecoin testnet ords, Omni and Class B stay off.
+- **Litecoin's known collections** from chikun.market, liteverse.io and LiteOrd. The liteverse tick is off by default, because their terms ask for permission before automated access.
+- **Taproot on Litecoin and DigiByte:** sends pay ltc1p/dgb1p, and the Wallet and Lite receive and spend on BIP-86 (m/86').
+- **A chunk's notes may unpack to 512 MB.** 100 Litecoin blocks from the 2023 rush come to 324 MB.
+
+Where it met newer `main`:
+- **`app.py`, the guard choice:** main's DigiAssets guard (`_da`) is kept. Litecoin mainnet has an ord index again (`STARTS`), so it gets its guard.
+- **`my_wallet.html` `inscWord`:** "Litecoin ordinals" sits beside main's "DigiByte ordinals and DigiAssets" and "DigiAssets".
+- **`/account/segwit/register`:** main's proof of a first claim (`_claim_unproved` / `check_proof`) is kept for every kind. It covers p2tr, because `address_of` builds the BIP-86 address from the key, so the branch's own p2tr key check was dropped. The browser already signs it, since `claimProof` takes whichever key made the address.
+- **New commit 7c602ec3, tests only:**
+  - `test_taproot_wallet` files its addresses through `address_claim`. It checks that a missing proof, another key's proof, and this key signed by another are each refused.
+  - `test_dgb_staging_regtest`: the DigiByte testnet kit now imports 10 descriptors (the Wallet's own Taproot, m/86', beside the Taproot of the legacy key). A fresh DigiByte Core restored from the kit finds and spends that address's coins too.
+
+Tests: full suite on this branch: 4,917 passed and 548 skipped. Four failures also fail on `main` 9018d4d8 when run alone: `test_docs` ×2, the camera layer and `test_update`'s whole-package check. The fifth, `test_assets_cache`, passes 3 of 3 when run alone, so it was load. The LoRa/T-Deck modules don't import on this test machine, on `main` as well.
+
+Real data: our Litecoin index, built with this branch's code, is past block 2,917,000 of 3,211,000 and still walking.
+
+**Asked of you:** please merge #107 when you can.
+
 ### 2026-11-10 · the operator's side (Claude) · merged PR #127 (MoonBrix 2 on Kotia) onto master
 
 All 9 commits cherry-picked onto master 0588fd77. Only COLLAB-NOTES conflicted. The code is the PR's change line for line (config, app, door, state, wallet_js, watcher checked hunk by hunk against the PR diff, the other files blob-identical). SadFrog's entry below is as the PR wrote it, and the first commit's "read the way its Kurator reads it" entry is left out as superseded. PR #126 (screening switch) is not in this merge.
@@ -404,6 +426,75 @@ Found while checking #121's fixes on the live arcades: pages drawn outside `rend
 - **Test (`tests/test_safe_headers.py`):** walks every GET route without a path parameter and fails on any HTML page with no `frame-ancestors`. On `main` it names ten: `/lite`, `/globe`, `/browser`, `/meshweb`, `/offline`, `/terms`, `/terms/left`, `/admin/terms/preview`, `/tokens/launchpad/preview` and `/dogefeedx/network`. A second test checks `/recover` keeps its single `frame-ancestors 'none'` policy.
 - Nothing frames these pages from another origin today (the launchpad preview is framed by the arcade's own token page), so `'self'` changes nothing a visitor sees.
 
+### 2026-11-07 · SadFrog's side (Claude) · Taproot on Litecoin and DigiByte: pay, receive and spend
+SadFrog: "all litecoin addresses send and receive like we just did with digibyte", Taproot on both. Branch
+`team/taproot-wallet` on `team/pay-segwit-restore` (PR #100).
+- **Pay:** a coin send pays a v1, 32-byte bech32m address (ltc1p, tltc1p, dgb1p, dgbt1p; `taproot.CHAINS`) as `OP_1 <key>`
+  when the key is on secp256k1 (`taproot.payable`); v2+ and bel1p stay refused. Real Litecoin also pays the old P2SH "3"
+  (version 5; Litecoin Core 0.21.5.8's validateaddress takes one as isscript). DigiByte still refuses "3".
+- **Receive and spend:** Wallet and Lite address type "Taproot" (BIP-86, m/86'/<coin>'/0'/0/0) after Native SegWit on
+  ltc, ltctest, dgb, dgbtest. `/account/segwit/register` takes a p2tr address only with the key it was made from.
+  `funding.build` from one: BIP-341 SIGHASH_DEFAULT over every input, a 64-byte Schnorr witness, change back to it,
+  priced at 57.5 vB an input. coins.js verifyOffer works the digest out itself (the DigiDollar Taproot code) and says
+  the change as change. `utxos.SPENDABLE` and `blkscan` file v1 outputs of watched addresses. Imports take `p2tr`.
+- **Inscriptions:** main's `funding.guard_for(address, network)` already gives a SegWit or Taproot address its chain's
+  guard (`GUARD_BY_NET`), keyed by outpoint as before (rebased on 8e4430f8, 2026-11-08: our own `params` version is
+  dropped for it). Litecoin's guard, once re-enabled, covers ltc1p with no more code.
+- **Restore kit:** tr(86h) on DigiByte. **Litecoin Core 0.21.5.8 has no tr() descriptors**, so Core cannot bring back
+  ltc1p coins; the Backup page says so and names the address and path.
+- **Checked:** BIP-341 wallet vectors and BIP-86's in Python and coins.js; the browser's digests equal the arcade's; a
+  litecoind regtest took a p2tr spend into a block (and refused an untweaked signature); node 2's Litecoin Core and a
+  DigiByte testnet Core take the test phrase's ltc1p/dgbt1p, and DigiByte Core derived the same dgbt1p from tr(86h).
+- **Needs:** Taproot RECEIVE on real coins needs the same real-money review the 2026-10-20 note asked for SegWit
+  ("Test-chains only (real-money) ... until its own review"). Please review before this reaches a real-coin arcade.
+
+### 2026-11-07 · SadFrog's side (Claude) · Litecoin's known collections from chikun.market, liteverse.io and LiteOrd
+
+SadFrog: "we want to make sure the explore for ordinals collections on litecoin picks up chikun.market and liteverse.io's
+index as well as the new https://liteord.doginals.store/inscriptions". Branch `team/ltc-collections` (on `team/ltc-ords`,
+a5653e9f).
+
+- **What each site offers** (read 2026-11-07, all public, no key):
+  - chikun.market: `api.chikun.market/v1/collections`, all 47 in one answer (name, supply, cover). It publishes no
+    collection's pieces (only the ones for sale), so its collections are listed only, and Explore says so.
+  - liteverse.io: `/collections` (39, one answer) and `/collections/<id>/inscriptions` (a whole list, ids, numbers,
+    names). Its terms (section 6) bar automated access without its leave: **its tick is off by default**; ask them
+    before ticking it on a public arcade.
+  - LiteOrd: a documented read-only API (5 requests a second without a key), **no collection list**, and its ord index
+    is still syncing (0 inscriptions today). It is read the ord way, a parent's children
+    (`/r/children/<id>/inscriptions/<page>`): search a parent's id on Explore's Litecoin tab to open one.
+- **Design** (`arcade/known_collections.py`): `MULTI_SOURCES["ltc"]`, an adapter per site (listing -> lines, collection
+  -> pieces, shapes checked), and each site's lists under the slug `<source>:<key>` (`chikun:punks`, `liteverse:12`,
+  `liteord:<parent id>`). The slug is already the key of every table, of the mesh's rows and of the fingerprint, so two
+  sites never collide or flap, arcades agree per site, and the formula, the wire and the files are unchanged.
+  `slug_ok` checks a slug per chain (mesh `_row` too: an unknown site's rows are left out). Same-named collections
+  from two sites are shown side by side with "also listed by", never merged. A list read from its Litecoin site today
+  stands against linked arcades for a day, as Nintondo's does (`collectionshare.wanted`).
+- **Importer:** one feed per source, each with its own progress row (`ltc:chikun` ...), pace, backoff and caps as
+  before; a 404 or "no pieces" is kept as the line's reason, not a backoff. One switch (`known_collections_import`) as
+  before, plus a tick per Litecoin site (`known_collections_ltc_sources`, Admin -> Ords; default chikun.market, LiteOrd).
+- **Explore:** Litecoin collections on the Litecoin ords tab, each card "listed by" its site, "agreed by N".
+- **Tests:** `tests/test_known_collections_ltc.py` (16, on the sites' recorded answers in
+  `tests/fixtures/ltc_collections/`), test_known_collections (Admin lists one line per Litecoin site). Full suite:
+  4,648 passed, 3 failed (the known test_docs x2 and test_update).
+- **Live check** (temp file only): chikun 47 lines; liteverse 39 lines and Litecoin Lizards' 11 ids, all `<txid>i<n>`;
+  LiteOrd answered 404 (index not there yet); the same ord children endpoint on ord.chikun.market parsed.
+
+### 2026-11-07 · SadFrog's side (Claude) · Litecoin ordinals back on Litecoin mainnet (only the ords; testnet, Omni and Class B stay off)
+
+SadFrog: "please setup litecoin ordinals". This undoes the ords part of 2026-11-05's "no token protocols on LTC, tLTC and
+KOT" (tbuuol); SadFrog is telling tbuuol. Branch `team/ltc-ords`.
+
+- `doginal_index.STARTS` / `SOURCES`: `ltc` at 2,424,429 (ord-litecoin) again, so Litecoin has an ord index and a guard;
+  `ltctest` stays out (its index was never built anywhere: every small coin waited "unknown", the 11-05 finding).
+- `ord_chains`: `ltc` in WORDS ("LTC ordinal"), MOVED and EXPLORE_ORDER (after Bellscoin, as 10-25 had it). `OMNI_NETS`
+  stays empty. `Params.class_b` stays False on Litecoin: no arcade tokens, NFTs, names or posts there.
+- Explore lists Litecoin ords and the LTC-20 its ord index reads (`ord_rules.TOKEN_PROTOCOLS["ltc"]`).
+- The guard: an arcade with Litecoin but no Litecoin ord index yet holds small coins "unknown" until it reads one. Node 2
+  builds it (walked on the mini, then moved, as Bells was); deploy this where an index is walked or shared.
+- Docs: litecoin.md says what Litecoin ordinals are here, Taproot vs the Doginals format, and the address types.
+- Tests: test_doginal_index, test_doginal_wallet, test_explore, test_litecoin_face, test_litecoin_network, test_ord_chains,
+  test_ord_chains_more back to Litecoin with ords (mainnet only).
 ### 2026-11-09 · the operator's side (Claude) · merged PRs #121 #122 #123 onto master
 
 All applied cleanly, in order. SadFrog asked for #121 first (sign-up, git-update and swap fixes); the operator chose to deploy all three together.

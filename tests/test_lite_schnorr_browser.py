@@ -146,7 +146,7 @@ def test_the_wallet_reads_a_mints_record_whose_last_item_is_its_owners_key(loade
     import importlib
     from test_taproot import keypair
     from test_module_host import p2pkh_script
-    from arcade.script import b58check_encode, hash160
+    from arcade.script import b58check_encode, hash160, segwit_encode
     driver, _, _ = loaded
     pilot_dir = str(Path(__file__).parent.parent / "examples" / "packages" / "digidollar")
     sys.path.insert(0, pilot_dir)

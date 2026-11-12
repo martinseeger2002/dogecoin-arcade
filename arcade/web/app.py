@@ -1361,10 +1361,10 @@ def create_app(state: AppState) -> FastAPI:
         _others.setdefault(5, set()).add("ltc")            # Litecoin's legacy "3" P2SH
         for _lchain in state.addons:
             # Kotia (2026-10-23) has no ord envelopes on its coins, and the guard's reader does not know its
-            # timed transactions (Params.tx_time): no guard there, as on any chain without ords. Litecoin and
-            # Litecoin testnet neither (2026-11-05, tbuuol: no token protocols on LTC, tLTC and KOT): with no ord
-            # index every small coin there waited "unknown" and the Wallet called it "held in Litecoin
-            # inscriptions". A chain without an ord index (doginal_index.STARTS) has no guard.
+            # timed transactions (Params.tx_time): no guard there, as on any chain without ords. Litecoin testnet
+            # neither (2026-11-05: with no ord index every small coin there waited "unknown" and the Wallet called it
+            # "held in Litecoin inscriptions"); Litecoin mainnet has its ords and its guard again (2026-11-07). A chain
+            # without an ord index (doginal_index.STARTS) has no guard.
             # DigiByte and its testnet read DigiAssets too (2026-11-09, security review, arcade/digiassets.py): the
             # testnet, with no ord index, gets a guard that reads DigiAssets alone.
             _da = _lchain.network in _digiassets.CHAINS
@@ -28201,16 +28201,20 @@ def create_app(state: AppState) -> FastAPI:
                       signed_in=signed_in(request) is not None)
 
     def _segwit_kind(chain, addr: str) -> str | None:
-        """"p2wpkh" (native, m/84') or "p2sh-p2wpkh" (nested, m/49') for an
-        address of that shape on this chain, else None. Nested segwit is only
-        offered where native segwit is (a chain with a bech32 prefix)."""
+        """"p2wpkh" (native, m/84'), "p2sh-p2wpkh" (nested, m/49') or "p2tr"
+        (Taproot, m/86', 2026-11-07: a v1 32-byte program, on a chain with Taproot
+        here) for an address of that shape on this chain, else None. Nested segwit
+        is only offered where native segwit is (a chain with a bech32 prefix)."""
         from ..script import segwit_decode
+        from .. import taproot as taprootlib
         hrp = getattr(chain.params, "bech32_hrp", "")
         if not hrp or not addr:
             return None
         ver, prog = segwit_decode(hrp, addr)
         if ver == 0 and prog is not None and len(prog) == 20:
             return "p2wpkh"
+        if ver == 1 and prog is not None and taprootlib.on(chain.params) and taprootlib.payable(prog):
+            return "p2tr"
         try:
             version, payload = b58check_decode(addr)
         except Exception:
@@ -28251,7 +28255,9 @@ def create_app(state: AppState) -> FastAPI:
         key's `address_signature` (wallet_imports.check_proof, 2026-11-09): the
         node checks the address is that key's and the key signed it over to this
         account. A nested address hides its key hash, which is kept from it to
-        build sends."""
+        build sends. A Taproot one (2026-11-07) must be that key's BIP-86 output
+        (taproot.address), so an account never registers a stranger's
+        ltc1p.../dgb1p... by its address alone."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
@@ -28286,8 +28292,8 @@ def create_app(state: AppState) -> FastAPI:
                 state.set_setting(f"segwit_keyhash:{account.pubkey}:{chain.network}",
                                   hash160(bytes.fromhex(str(said.get("pubkey")).strip())).hex())
         state.set_setting(key, addr)
-        _watch(addr, "account segwit (m/84')" if kind == "p2wpkh"
-               else "account segwit (m/49')", chain)
+        _watch(addr, {"p2wpkh": "account segwit (m/84')", "p2tr": "account taproot (m/86')"}.get(
+            kind, "account segwit (m/49')"), chain)
         return JSONResponse({"ok": True, "watching": addr, "kind": kind,
                              "chain": chain.network})
 
@@ -28394,7 +28400,7 @@ def create_app(state: AppState) -> FastAPI:
         main = _account_address(account.pubkey, chain)
         if main:
             out[main] = "main"
-        for kind in ("p2wpkh", "p2sh-p2wpkh"):
+        for kind in ("p2wpkh", "p2sh-p2wpkh", "p2tr"):
             seg = str(state.setting(_segwit_setting(account, chain, kind), "") or "")
             if seg:
                 out.setdefault(seg, "segwit")
@@ -29967,12 +29973,16 @@ def create_app(state: AppState) -> FastAPI:
     def _pay_script(to: str, chain) -> bytes:
         """The output that pays `to` on this chain: native segwit v0 for a bech32
         address (2026-10-20; `_check_address(..., segwit_ok=True)` let it through),
+        OP_1 <32-byte key> for a Taproot one where the chain has it (2026-11-07),
         else P2PKH or P2SH by its version byte (txbuild)."""
+        from .. import taproot as taprootlib
         hrp = getattr(chain.params, "bech32_hrp", "")
         if hrp and to.lower().startswith(hrp + "1"):
             version, program = segwit_decode(hrp, to.lower())
+            if version == 1 and taprootlib.on(chain.params) and taprootlib.payable(program or b""):
+                return taprootlib.p2tr(program)
             if version != 0:
-                raise ValueError("that is not a native SegWit address for this chain")
+                raise ValueError("that is not a SegWit or Taproot address this arcade pays on this chain")
             return bytes([0x00, len(program)]) + program
         return txbuild.p2pkh_script(to)
 
@@ -31334,11 +31344,15 @@ def create_app(state: AppState) -> FastAPI:
 
     def _known_row(r: dict, agreed: int | None) -> dict:
         """A known collection as Explore shows it (2026-10-26): held or not ("imported"), with Nintondo's listing
-        details when the arcade read them."""
+        details when the arcade read them. `lister` the site that lists it and `link` its page there (2026-11-07:
+        Litecoin's come from chikun.market, liteverse.io and LiteOrd; `source` stays where this list came from)."""
+        lister = knownlib.source_of(r["chain"], r["slug"])
         return {"kind": "known", "slug": r["slug"], "name": r["name"], "chain": r["chain"], "supply": r["supply"],
                 "count": r.get("count") or 0, "imported": bool(r.get("imported", True)), "cover": r.get("cover") or "",
                 "source": r.get("source") or "", "fp": r.get("fp") or "", "fetched_at": r.get("fetched_at"),
-                "agreed": agreed, **{k: r.get(k) for k in _KNOWN_FACTS}}
+                "agreed": agreed, "lister": lister, "listed_by": knownlib.SOURCE_LABELS.get(lister, lister),
+                "link": knownlib.source_link(r["chain"], r["slug"]), "also": r.get("also") or [],
+                **{k: r.get(k) for k in _KNOWN_FACTS}}
 
     def _known_share():
         return getattr(getattr(state, "mesh", None), "collectionshare", None)
@@ -31370,8 +31384,27 @@ def create_app(state: AppState) -> FastAPI:
                              "imported": False, "count": 0, "cover": "", "fp": "", "source": "mesh",
                              "fetched_at": None, "owners": None, "height": None, "created": None,
                              **knownlib.sig_details(row.get("sig") or "")})
+        if net in knownlib.MULTI_SOURCES:
+            # Two sites with a collection of the same name (2026-11-07): both shown, never merged -- their lists may
+            # differ -- each saying which other site lists one by that name.
+            by_name: dict[str, list[dict]] = {}
+            for r in rows:
+                by_name.setdefault(str(r["name"] or "").casefold().strip(), []).append(r)
+            for same in by_name.values():
+                for r in same:
+                    r["also"] = [{"slug": o["slug"], "listed_by": knownlib.SOURCE_LABELS.get(
+                        knownlib.source_of(net, o["slug"]), "")} for o in same if o is not r]
         return [_known_row(r, agreed.get(r["slug"], 1) if r["imported"]
                            else (offers.get(r["slug"]) or {}).get("agree", 0)) for r in rows]
+
+    def _liteord_row(net: str, iid: str) -> dict:
+        """A parent inscription searched on Litecoin, as a collection of its children read from LiteOrd (2026-11-07):
+        LiteOrd has no list of collections, so a visitor opens one by its parent's id."""
+        return _known_row({"chain": net, "slug": f"liteord:{iid}", "name": _liteord_name(iid), "supply": None,
+                           "imported": False, "count": 0, "source": "liteord"}, 0)
+
+    def _liteord_name(iid: str) -> str:
+        return f"Children of {iid[:8]}…{iid[-6:]}"
 
     #: The collection search's choices (2026-10-26, SadFrog: "more in depth with sorting and filters and lazy loading
     #: one at a time on demand").
@@ -31495,6 +31528,9 @@ def create_app(state: AppState) -> FastAPI:
         if source in ("all", "known") and store is not None and net in knownlib.CHAINS:
             found += [r for r in _known_catalog(store, net)
                       if not low or low in str(r["name"] or "").lower() or low in r["slug"].lower()]
+            if "liteord" in knownlib.MULTI_SOURCES.get(net, {}) and knownlib.ID.match(low) \
+                    and not any(r["slug"] == f"liteord:{low}" for r in found):
+                found.append(_liteord_row(net, low))         # its children, read from LiteOrd when opened
         lo, hi = bounds["min"], bounds["max"]
         found = [c for c in found
                  if (complete != "1" or (c.get("supply") and (c.get("count") or 0) == c["supply"]))
@@ -31543,11 +31579,14 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(said, headers={"Cache-Control": "no-store"})
         if slug:
             store = state.known_collections() if hasattr(state, "known_collections") else None
-            if net not in knownlib.CHAINS or not knownlib.SLUG.match(slug) \
+            if net not in knownlib.CHAINS or not knownlib.slug_ok(net, slug) \
                     or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
                 return JSONResponse({"detail": "a chain, a collection's slug and an offset"}, status_code=400)
             if store is None:
                 return JSONResponse({"detail": "no such collection"}, status_code=404)
+            if knownlib.source_of(net, slug) == "liteord" and knownlib.ID.match(slug.split(":", 1)[1]) \
+                    and store.listed(net, slug) is None and store.collection(net, slug) is None:
+                store.open_line(net, slug, _liteord_name(slug.split(":", 1)[1]))   # a parent opened: read when asked
             row = next((r for r in _known_catalog(store, net) if r["slug"] == slug), None)
             if row is None:
                 return JSONResponse({"detail": "no such collection"}, status_code=404)
@@ -31560,9 +31599,12 @@ def create_app(state: AppState) -> FastAPI:
                     return JSONResponse({"collection": row, "items": [], "loading": False, "skipped": skipped},
                                         headers={"Cache-Control": "no-store"})
                 _known_wanted(store, net, slug)
+                lister = knownlib.source_of(net, slug)
+                importing = bool(state.setting(knownlib.SETTING)) and (
+                    lister == "nintondo" or lister in knownlib.ltc_sources(state.setting(knownlib.LTC_SETTING)))
                 return JSONResponse({"collection": row, "items": [], "loading": True,
                                      "have": store.fetching(net, slug), "of": row["supply"],
-                                     "importing": bool(state.setting(knownlib.SETTING))},
+                                     "importing": importing},
                                     headers={"Cache-Control": "no-store"})
             items = store.items(net, slug, offset=int(offset), limit=48)
             return JSONResponse({"collection": row, "loading": False,
@@ -31610,18 +31652,27 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"on": False, "chains": [], "detail": "this arcade keeps no files"})
         share = _known_share()
         return JSONResponse({**importer.status(), "mesh": share is not None,
+                             "ltc_choices": [{"source": s, "label": knownlib.SOURCE_LABELS.get(s, s)}
+                                             for s in knownlib.MULTI_SOURCES["ltc"]],
                              "fetched": [{"net": n, "slug": s, "from": p[:12], "ok": ok}
                                          for n, s, p, ok in (share.fetched if share is not None else [])][-10:]},
                             headers={"Cache-Control": "no-store"})
 
     @app.post("/admin/api/known-collections")
     def admin_known_collections_set(request: Request, payload: Any = Body(None)):
-        """The import switch ({"import": true|false}) and what it fetches ({"mode": "demand"|"all"}, 2026-10-26: "lazy
-        loading one at a time on demand": a collection's pieces when somebody opens it, or every collection)."""
+        """The import switch ({"import": true|false}), what it fetches ({"mode": "demand"|"all"}, 2026-10-26: "lazy
+        loading one at a time on demand": a collection's pieces when somebody opens it, or every collection), and which
+        Litecoin sites it reads ({"ltc_sources": ["chikun", "liteverse", "liteord"]}, 2026-11-07; liteverse.io's
+        terms ask for its leave before automated reading, so it is not ticked until the operator does)."""
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
-        if "import" not in said and "mode" not in said:
-            return JSONResponse({"detail": "import: true or false; mode: demand or all"}, status_code=400)
+        if "import" not in said and "mode" not in said and "ltc_sources" not in said:
+            return JSONResponse({"detail": "import: true or false; mode: demand or all; ltc_sources: a list"},
+                                status_code=400)
+        sites = knownlib.MULTI_SOURCES["ltc"]
+        if "ltc_sources" in said and (not isinstance(said["ltc_sources"], list)
+                                      or not all(isinstance(s, str) and s in sites for s in said["ltc_sources"])):
+            return JSONResponse({"detail": "ltc_sources: a list of " + ", ".join(sites)}, status_code=400)
         if "import" in said and not isinstance(said["import"], bool):
             return JSONResponse({"detail": "import: true or false"}, status_code=400)
         if "mode" in said and said["mode"] not in knownlib.MODES:
@@ -31630,6 +31681,12 @@ def create_app(state: AppState) -> FastAPI:
         if "mode" in said:
             state.set_setting(knownlib.MODE_SETTING, said["mode"])
             out["mode"] = said["mode"]
+            importer = state.known_importer() if hasattr(state, "known_importer") else None
+            if importer is not None:
+                importer.wake.set()
+        if "ltc_sources" in said:
+            out["ltc_sources"] = [s for s in sites if s in said["ltc_sources"]]
+            state.set_setting(knownlib.LTC_SETTING, out["ltc_sources"])
             importer = state.known_importer() if hasattr(state, "known_importer") else None
             if importer is not None:
                 importer.wake.set()
@@ -38660,16 +38717,28 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
             # A coin send pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok` is that caller saying it
             # builds the output (`_pay_script`). Test chains first; real coins too since 2026-11-07 (SadFrog: a
             # DigiByte Core or exchange address is dgb1q... by default, and a send refused to pay it). Paying one is
-            # only an output script, OP_0 <program>, checked by segwit_decode; RECEIVING on SegWit stays test-only
-            # (wallet_js ADDRESS_KINDS). Taproot is not paid yet.
+            # only an output script, OP_0 <program>, checked by segwit_decode.
+            # Taproot too since 2026-11-07 (SadFrog: "all litecoin addresses send and receive like we just did with
+            # digibyte", Taproot on both): a v1, 32-byte program, OP_1 <key>, where the chain has Taproot
+            # (taproot.CHAINS) and the key is a point a coin could ever be spent from. Any other witness version is
+            # a soft fork nobody here has read: refused, as Taproot on a chain without it.
             if segwit_ok and params.name in {p.name for p in wanted}:
+                from .. import taproot as taprootlib
                 version, program = segwit_decode(hrp, lowered)
                 if version == 0:
                     return None
                 if version is None:
                     return "that does not look like an address (the checksum does not match)."
-                return (f"that is a {params.label} Taproot address ({hrp}1p…). This arcade pays legacy, "
-                        "P2SH and native SegWit addresses for now; ask for one of those.")
+                if version == 1 and len(program) == 32 and taprootlib.on(params):
+                    if taprootlib.payable(program):
+                        return None
+                    return (f"that {params.label} Taproot address names no key anybody can hold, so coins sent "
+                            "there could never be spent. Check it and ask again.")
+                if version == 1 and len(program) == 32:
+                    return (f"that is a {params.label} Taproot address ({hrp}1p…). This arcade pays legacy, "
+                            "P2SH and native SegWit addresses on this chain; ask for one of those.")
+                return (f"that is a {params.label} SegWit address of a kind this arcade does not pay (witness "
+                        f"version {version}); ask for a legacy, SegWit or Taproot one.")
             return (f"that is a {params.label} SegWit or Taproot address ({hrp}1…). This arcade pays "
                     f"{params.label}'s legacy addresses for now; ask for one of those.")
     try:
@@ -38688,6 +38757,11 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
                     f"version with another chain's ordinary addresses. This arcade cannot tell them apart "
                     f"safely, so it pays {p.label}'s ordinary addresses only; ask for one of those.")
     if any(version in (p.pubkeyhash_version, p.scripthash_version) for p in wanted):
+        return None
+    # Litecoin's old P2SH "3..." (version 5, Litecoin Core 0.21's SCRIPT_ADDRESS2, 2026-11-07): still what some exchanges
+    # and old wallets hand out, and a Litecoin Core takes one (validateaddress: isscript). txbuild reads 5 as P2SH. Real
+    # Litecoin only: DigiByte Core 9.26.7 refuses a 3 address, and on Luckycoin and Wojakcoin 5 is the chain's own.
+    if version == 5 and any(p.name == "ltc" for p in wanted):
         return None
     other = [p.name for p in NETWORKS.values()
              if version in (p.pubkeyhash_version, p.scripthash_version)]
