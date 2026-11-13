@@ -27,6 +27,7 @@ Mints and redeems (vaults) stay in the DigiDollar node module (examples/packages
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from . import taproot
@@ -167,6 +168,17 @@ def seed_from_core(index, rpc, net: str, dd_address: str, upto: int) -> int | No
                     filed += cur.rowcount
         db.conn.execute("UPDATE dd_watched SET seeded = 1 WHERE address = ?", (dd_address,))
     return filed
+
+
+#: How many times a borrower asks its sharer for an address's earlier DigiDollars, coinscan.ASK_AGAIN apart, before it
+#: waits for the Wallet's next visit: about the hour a sharer keeps a read (coinscan.KEEP_SECONDS). A sharer reads every
+#: coinscan.SCAN_GAP, so the first ask is mostly "waiting" (2026-11-12, the HP laptop: asked only on a Wallet visit,
+#: the visits never fell between the sharer's read and its expiry, and the history stayed not whole for days).
+LENDER_TRIES = 12
+
+
+def wait_to_ask(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def seed_from_lender(index, rpc, net: str, dd_address: str, upto: int) -> int | None:

@@ -209,6 +209,41 @@ def test_a_borrowing_arcade_reads_the_history_whole_through_its_lender(client, m
     assert sum(coinscan.SCAN_METHOD in b for b in rpc.batches) == 1, "asked once"
 
 
+def test_a_borrower_asks_again_by_itself_while_the_sharer_reads(client, monkeypatch):
+    """2026-11-12, the HP laptop: asked only on a Wallet visit, the visits never fell between the sharer's read and its
+    expiry, and the history stayed not whole for days. One visit now asks again, coinscan.ASK_AGAIN apart."""
+    app, state = client
+    rpc = _Lent({})
+    _borrowed(state, monkeypatch, rpc)
+    address, pub, ask = _wallet(app, state)
+    rpc.answer = {address: "wait"}
+    rpc.blocks = {120: {"tx": [_paid("a1" * 32, (pub, 6500))]}}
+    waited = []
+
+    def wait(seconds):
+        waited.append(seconds)
+        if len(waited) == 2:
+            rpc.answer = {address: [["a1" * 32, 0, 0, 120]]}
+    monkeypatch.setattr(dd, "wait_to_ask", wait)
+    ask()
+    got = ask()
+    assert got["whole"] is True and got["cents"] == 6500, got
+    assert waited == [coinscan.ASK_AGAIN] * 2, "asked three times from one visit"
+
+
+def test_a_sharer_still_reading_after_the_tries_is_asked_again_on_a_later_visit(client, monkeypatch):
+    app, state = client
+    rpc = _Lent({})
+    _borrowed(state, monkeypatch, rpc)
+    address, _pub, ask = _wallet(app, state)
+    rpc.answer = {address: "wait"}
+    waited = []
+    monkeypatch.setattr(dd, "wait_to_ask", waited.append)
+    assert ask()["whole"] is False
+    assert sum(coinscan.SCAN_METHOD in b for b in rpc.batches) == dd.LENDER_TRIES
+    assert len(waited) == dd.LENDER_TRIES - 1
+
+
 def test_a_lender_that_reads_none_is_said_and_not_asked_on_every_visit(client, monkeypatch):
     app, state = client
     rpc = _Lent({}, refuse="a shared Core does not answer arcade_coinscan")
