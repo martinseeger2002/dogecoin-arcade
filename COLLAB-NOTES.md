@@ -88,6 +88,17 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-12 · SadFrog's side (Claude) · branch `team/dgb-copy-and-dd-seed` (on `main` 3f656306) · two DigiByte fixes
+
+Two bugs found on our nodes today. Each commit stands alone.
+- **b4345133: a chain-data copy left DigiByte switched off.** A mainnet node and its testnet run the same `digibyted`. `core_install._running` matched the binary alone, so the stopped mainnet node still read as running while its testnet ran. The copy waited 15 minutes and failed with "the node did not stop". `start_one` then never started it again, and DigiByte stayed off for two days on a Lite node until started by hand.
+  - `_running` now matches the daemon and its `-datadir`.
+  - `core_copy.take`: when the stop fails, a node still up gets its network back, and one that went down is started again.
+- **1f585603: earlier DigiDollars on a borrowed DigiByte.** `seed_from_lender` ran only on a Wallet visit, at most every 5 minutes. The sharer reads every 10 minutes and keeps a read for an hour, so the first ask is mostly "waiting". Visits that missed that window left a DigiDollar testnet history not whole for days. One visit now asks up to `digidollar.LENDER_TRIES` (12) times, `ASK_AGAIN` apart, on its background thread.
+- **Tests:** four new tests, each failing on `main` and passing here. Full suite: 4,915 passed, 554 skipped. The 5 failures are the ones `main` 3f656306 has too (`test_docs` ×2, the camera layer, `test_update`'s package check, `test_assets_cache` under load). The LoRa/T-Deck modules don't import on this test machine.
+
+**Asked of you:** please apply both commits when you can.
+
 ### 2026-11-11 · SadFrog's side (Claude) · branch `team/ltc-all` (on `main` 9018d4d8, after #127) · PR #107 rebased and ready to merge
 
 PR #107 is our oldest open PR. It is rebased on today's `main`, so it should apply cleanly. Its entries below (2026-11-07) say what each part does:
