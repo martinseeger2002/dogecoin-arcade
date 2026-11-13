@@ -294,7 +294,16 @@ def take(core: Core, folder: Path, into: Path, say: Callable[[str], None] = lamb
             core.call("setnetworkactive", True)
         raise
     say("stopping the node")
-    core.stop()
+    try:
+        core.stop()
+    except Exception:
+        # Not left paused or down (2026-11-12, the ThinkCentre: a copy whose stop timed out left DigiByte off for days).
+        with contextlib.suppress(Exception):
+            if core.running():
+                core.call("setnetworkactive", True)
+            else:
+                core.start()
+        raise
     try:
         shutil.rmtree(into, ignore_errors=True)
         into.mkdir(parents=True)

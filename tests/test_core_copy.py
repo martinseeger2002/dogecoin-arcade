@@ -189,6 +189,45 @@ def test_an_unsynced_node_makes_no_copy():
         cc.take(Behind(), Path("/nonexistent"), Path("/nonexistent2"))
 
 
+class StopsSlowly(cc.Core):
+    """A synced node whose stop times out (2026-11-12, the ThinkCentre): `down` says whether it went down anyway."""
+
+    def __init__(self, down):
+        self.down, self.calls, self.started = down, [], 0
+
+    def call(self, method, *a, timeout=0):
+        self.calls.append((method, *a))
+        if method == "getblockchaininfo":
+            return {"blocks": 100, "headers": 100, "verificationprogress": 1.0}
+        if method == "getnetworkinfo":
+            return {"version": 1}
+        if method in ("getblockhash", "getbestblockhash"):
+            return "h100"
+        if method == "gettxoutsetinfo":
+            return {"height": 100, "bestblock": "h100", "txouts": 1, "hash_serialized_2": "00", "total_amount": 1}
+        return None
+
+    def stop(self):
+        raise cc.CopyError("the node did not stop")
+
+    def running(self):
+        return not self.down
+
+    def start(self, extra=()):
+        self.started += 1
+
+
+def test_a_copy_whose_node_did_not_stop_leaves_it_running_or_starts_it_again(tmp_path):
+    up = StopsSlowly(down=False)
+    with pytest.raises(cc.CopyError, match="did not stop"):
+        cc.take(up, tmp_path / "chain", tmp_path / "copy")
+    assert up.calls[-1] == ("setnetworkactive", True) and up.started == 0, "still up: its network back on"
+    down = StopsSlowly(down=True)
+    with pytest.raises(cc.CopyError, match="did not stop"):
+        cc.take(down, tmp_path / "chain", tmp_path / "copy")
+    assert down.started == 1, "down after all: started again, not left off"
+
+
 class Headers(cc.Core):
     """A node's header chain: heights 0..top, hash 'h<height>' (or a fork's above `fork`)."""
 
