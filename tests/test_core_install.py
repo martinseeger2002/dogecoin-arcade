@@ -330,3 +330,21 @@ def test_a_test_chain_beside_its_mainnet_is_measured_in_its_own_folder(tmp_path,
     monkeypatch.setattr(disk_sizes, "PROC", procs)
     assert disk_sizes._process_datadir("digibyted", chain.conf) == test
     assert disk_sizes.node_folder(chain) == test
+
+
+def test_a_node_is_told_from_its_testnet_running_the_same_daemon(tmp_path):
+    """2026-11-12, the ThinkCentre: DigiByte and its testnet run one digibyted. The binary alone read the stopped mainnet
+    node as running, so a chain-data copy said "did not stop" and start_one never started it again."""
+    import subprocess
+    daemon = "/home/a/.dogecoinarcade/cores/digibyte-9.26.7/bin/digibyted"
+    pattern = core_install._running_pattern({"daemon": daemon, "datadir": "/home/a/.digibyte"})
+    lines = {"main": f"{daemon} -datadir=/home/a/.digibyte -conf=/home/a/.digibyte/digibyte.conf",
+             "bare": f"{daemon} -datadir=/home/a/.digibyte",
+             "test": f"{daemon} -datadir=/home/a/.digibyte-testnet -conf=/home/a/.digibyte-testnet/digibyte.conf",
+             "dots": "/home/a/xdogecoinarcade/cores/digibyte-9x26x7/bin/digibyted -datadir=/home/a/.digibyte"}
+    path = tmp_path / "lines"
+    path.write_text("".join(f"{k} {v}\n" for k, v in lines.items()))
+    # pgrep reads the pattern as an extended regex, as grep -E does.
+    got = subprocess.run(["sh", "-c", f"cut -d' ' -f2- {path} | grep -nE -- \"$0\"", pattern], capture_output=True,
+                         text=True).stdout
+    assert [int(line.split(":")[0]) for line in got.splitlines()] == [1, 2], got

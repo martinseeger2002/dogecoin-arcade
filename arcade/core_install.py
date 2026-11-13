@@ -293,11 +293,21 @@ def _running(installed: dict) -> bool:
             if out.stdout.strip() in ("active", "activating"):
                 return True
         # pgrep's own command line holds no "-conf=": the pattern names the daemon's argument, so it never matches it.
-        out = subprocess.run(["pgrep", "-f", "--", "^" + installed["daemon"] + " "], capture_output=True, text=True,
+        # Its -datadir too (start_one's order): a chain's testnet runs the same daemon binary, and the binary alone
+        # matched it (2026-11-12, the ThinkCentre: DigiByte stopped for a chain-data copy read as "did not stop"
+        # while its testnet ran, and start_one then never started it again).
+        out = subprocess.run(["pgrep", "-f", "--", _running_pattern(installed)], capture_output=True, text=True,
                              timeout=10)
         return bool(out.stdout.strip())
     except Exception:                                          # noqa: BLE001
         return False
+
+
+def _running_pattern(installed: dict) -> str:
+    """pgrep's pattern (an extended regex) for this node's daemon: its binary and its -datadir, as start_one runs it."""
+    def ere(s: str) -> str:
+        return "".join("\\" + c if c in ".[]()*+?{}|^$\\" else c for c in s)
+    return f"^{ere(installed['daemon'])} -datadir={ere(str(installed['datadir']))}( |$)"
 
 
 def start_one(installed: dict, extra: tuple = ()) -> bool:

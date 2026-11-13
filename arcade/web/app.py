@@ -26108,7 +26108,8 @@ def create_app(state: AppState) -> FastAPI:
     def _dd_seed(chain, dd_address: str, upto: int) -> None:
         """The DigiDollar coins an address got before it was watched, read once from this arcade's own Core's coin set
         (minutes on a big chain), in the background. On a borrowed DigiByte, from its sharer's coin-set read
-        (digidollar.seed_from_lender), asked no more than once every coinscan.ASK_AGAIN seconds per address."""
+        (digidollar.seed_from_lender), asked no more than once every coinscan.ASK_AGAIN seconds per address, and asked
+        again on its own while the sharer is still reading (digidollar.LENDER_TRIES)."""
         from .. import coinscan as coinscanlib
         earlier = _dd_earlier(chain)
         if not earlier or dd_address in _dd_seeding:
@@ -26124,10 +26125,14 @@ def create_app(state: AppState) -> FastAPI:
                 if earlier == "core":
                     digidollib.seed_from_core(state.token_index(chain), chain.rpc(), chain.network, dd_address, upto)
                 else:
-                    with chain.rpc() as rpc:
-                        if digidollib.seed_from_lender(state.token_index(chain), rpc, chain.network, dd_address,
-                                                       upto) is not None:
-                            _dd_ask_again.pop(dd_address, None)
+                    for attempt in range(digidollib.LENDER_TRIES):
+                        if attempt:
+                            digidollib.wait_to_ask(coinscanlib.ASK_AGAIN)
+                        with chain.rpc() as rpc:
+                            if digidollib.seed_from_lender(state.token_index(chain), rpc, chain.network, dd_address,
+                                                           upto) is not None:
+                                _dd_ask_again.pop(dd_address, None)
+                                break
             except coinscanlib.NotLent as exc:
                 _dd_ask_again[f"none:{chain.network}"] = time.time() + coinscanlib.NONE_AGAIN
                 log.info("digidollar %s: the sharer reads no coin set for this arcade (%s); asked again later",
