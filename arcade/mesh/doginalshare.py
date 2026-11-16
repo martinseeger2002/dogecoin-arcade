@@ -42,6 +42,14 @@ ROWS_PER_FRAME = 500           # at most this many words in one "dn" frame...
 #: ...and at most this many bytes (2026-11-09, V1.0's report): a word row grew to [c, hash, births, nd], so 500 came to
 #: ~73 KB, over the link's 64 KB frame and the 16-bit header length, and link_up stopped after the first frame.
 FRAME_BYTES = 48 * 1024
+#: What link_up says to a new link costs the same for every link: all of this arcade's chunk words (2026-11-16, node 3:
+#: 285,000 rows, 245,000 of them DigiByte's, ~20 MB of JSON). Linked arcades that came and went about once a minute each
+#: had it rebuilt from the database and re-encoded every time, which held one core and kept every page waiting. So the
+#: frames are built once and kept this long for the links that follow (rows that change meanwhile still go out live,
+#: by post())...
+DUMP_SECONDS = 90.0
+#: ...and at most this many links are sent the whole list at the same time (the others wait their turn).
+DUMPS_AT_ONCE = 2
 
 
 def row_frames(frame: dict, rows: list) -> list[dict]:
@@ -127,6 +135,9 @@ class DxShare:
         self._notes_wait: dict[int, dict] = {}         # request id -> {net, c, peer, nd, hash, parts, size}
         self._get_wait: dict[int, dict] = {}           # request id -> {net, peer, what, snap, i, parts, size}
         self._serving = None                           # asyncio.Semaphore(NOTES_AT_ONCE), made on the loop
+        self._dumps: dict[str, tuple[float, list]] = {}  # net -> (monotonic time built, its "dn" frames)
+        self._dump_locks: dict[str, asyncio.Lock] = {}     # one build per net at a time, made on the loop
+        self._dump_gate = None                          # asyncio.Semaphore(DUMPS_AT_ONCE), made on the loop
         self.indexes()
 
     def indexes(self) -> dict:
@@ -148,14 +159,28 @@ class DxShare:
                 if index.mode() == "off":
                     continue
                 await link.send({"t": "dx", **await asyncio.to_thread(index.hello)})
-                rows = await asyncio.to_thread(index.all_mine)
-                for part in row_frames({"t": "dx", "op": "dn", "net": net}, rows):
-                    await link.send(part)
+                if self._dump_gate is None:
+                    self._dump_gate = asyncio.Semaphore(DUMPS_AT_ONCE)
+                async with self._dump_gate:
+                    for part in await self._row_dump(net, index):
+                        await link.send(part)
                 for lane in list(index.chunks.lanes):              # every lane this arcade holds
                     await link.send({"t": "dx", "op": "ls", "net": net, "c": lane["c"], "at": lane["at"],
                                      "until": time.time() + LEASE_SECONDS})
         except Exception:                                      # noqa: BLE001 -- the link went
             log.debug("dx link_up", exc_info=True)
+
+    async def _row_dump(self, net: str, index) -> list:
+        """This arcade's "dn" frames for `net`, built at most once every DUMP_SECONDS whatever the number of links."""
+        lock = self._dump_locks.setdefault(net, asyncio.Lock())
+        async with lock:
+            got = self._dumps.get(net)
+            if got is not None and time.monotonic() - got[0] < DUMP_SECONDS:
+                return got[1]
+            frames = await asyncio.to_thread(
+                lambda: row_frames({"t": "dx", "op": "dn", "net": net}, index.all_mine()))
+            self._dumps[net] = (time.monotonic(), frames)
+            return frames
 
     async def link_down(self, peer_id: str) -> None:
         for index in self.indexes().values():
